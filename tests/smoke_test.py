@@ -48,6 +48,8 @@ def _qemu_accel_for(target_arch: str) -> list:
     return ["-cpu", "qemu64"]
 
 
+DISK = os.environ.get("PYTHONOS_DISK", "build/disk.img")
+
 QEMU_CMD = [
     "qemu-system-x86_64",
     "-machine", "q35",
@@ -56,6 +58,8 @@ QEMU_CMD = [
     "-netdev", f"user,id=net0,hostfwd=tcp::{HOST_PORT}-:5000,hostfwd=tcp::{FILE_HOST_PORT}-:7000",
     "-device", "virtio-net-pci,netdev=net0",
     "-device", "intel-hda", "-device", "hda-duplex",
+    "-drive", f"if=none,file={DISK},format=raw,id=hd0",
+    "-device", "virtio-blk-pci,drive=hd0",
     "-no-reboot", "-no-shutdown",
     "-cdrom", ISO, "-boot", "d",
     "-nographic",
@@ -86,6 +90,11 @@ TEST_CASES = [
     ("__import__('_hal').linenoise_history_set_max_len(50)\n", "1"),
     ("__import__('_hal').linenoise_history_add('test entry')\n", "1"),
     ("__import__('_hal').linenoise(':no-tty: ') is None\n", "True"),
+    # virtio-blk-pci (ef6.3): driver bound, num_sectors matches the 64 MiB
+    # ext2 disk image (64*1024*1024/512 = 131072 sectors). num_sectors comes
+    # from device config space, so this proves enumeration → bind → init all
+    # succeeded end-to-end.
+    ("virtio_blk.blk.num_sectors\n", "131072"),
 ]
 
 if SMP_CPUS.isdigit():

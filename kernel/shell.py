@@ -84,6 +84,7 @@ class Shell:
         from kernel.scheduler import scheduler
         import kernel.display as display
         from kernel.bridge import py_desktop
+        from kernel.drivers.block import virtio_blk
 
         ns = {
             "__name__":  "pythonos_shell",
@@ -97,6 +98,7 @@ class Shell:
             "scheduler": scheduler,
             "display":   display,
             "py_desktop": py_desktop,
+            "virtio_blk": virtio_blk,
             "help":      lambda: self._help(),
             "clear":     lambda: self._clear(),
             "sh":        lambda cmd=None: self._sh(cmd),

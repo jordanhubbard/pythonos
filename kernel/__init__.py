@@ -225,15 +225,15 @@ async def _kernel_main(
         else:
             log.info("kernel: no audio device found (arm64)")
 
-    # ── VirtIO-MMIO block device (arm64 only — x86 uses PCI VirtIO) ───────
-    if _ARCH == 'arm64':
-        from kernel.drivers.block import virtio_blk
-        _blk = virtio_blk.find_virtio_blk()
-        if _blk:
-            virtio_blk.blk = _blk
-            log.info(f"kernel: virtio-blk ready, {_blk.num_sectors} sectors")
-        else:
-            log.info("kernel: no virtio-blk device found")
+    # ── VirtIO block device (arm64 → MMIO, x86 → PCI; transport dispatch
+    # lives in kernel.drivers.block.virtio_blk.find_virtio_blk).
+    from kernel.drivers.block import virtio_blk
+    _blk = virtio_blk.find_virtio_blk()
+    if _blk:
+        virtio_blk.blk = _blk
+        log.info(f"kernel: virtio-blk ready, {_blk.num_sectors} sectors")
+    else:
+        log.info("kernel: no virtio-blk device found")
 
     # ── Shell ──────────────────────────────────────────────────────────────
     from kernel.shell import Shell
