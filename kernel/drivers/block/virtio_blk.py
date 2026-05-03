@@ -229,6 +229,45 @@ class VirtioMmioBlk:
             result[i+3] = (w >> 24) & 0xFF
         return bytes(result)
 
+    async def write_sector(self, lba: int, data: bytes) -> None:
+        """Write 512 bytes at logical block address lba."""
+        if len(data) != 512:
+            raise ValueError(f"write_sector: data must be 512 bytes, got {len(data)}")
+
+        hdr = _hal.dma_alloc(16)
+        _w32(hdr + 0, VIRTIO_BLK_T_OUT)
+        _w32(hdr + 4, 0)
+        _w32(hdr + 8,  lba & 0xFFFFFFFF)
+        _w32(hdr + 12, (lba >> 32) & 0xFFFFFFFF)
+
+        data_phys = _hal.dma_alloc(512)
+        for i in range(0, 512, 4):
+            w = (data[i]
+                 | (data[i+1] << 8)
+                 | (data[i+2] << 16)
+                 | (data[i+3] << 24))
+            _w32(data_phys + i, w)
+
+        stat_phys = _hal.dma_alloc(4)
+
+        d0 = self._next_desc; self._next_desc = (self._next_desc + 1) % QUEUE_SIZE
+        d1 = self._next_desc; self._next_desc = (self._next_desc + 1) % QUEUE_SIZE
+        d2 = self._next_desc; self._next_desc = (self._next_desc + 1) % QUEUE_SIZE
+
+        # Data descriptor is device-read (no VRING_DESC_F_WRITE on the data
+        # buffer for T_OUT). Status descriptor is device-write as always.
+        self._write_desc(d0, hdr,       16,  VRING_DESC_F_NEXT, d1)
+        self._write_desc(d1, data_phys, 512, VRING_DESC_F_NEXT, d2)
+        self._write_desc(d2, stat_phys, 1,   VRING_DESC_F_WRITE, 0)
+
+        self._avail_push(d0)
+        _w32(self._base, 0x050, 0)
+
+        target = (self._last_used + 1) & 0xFFFF
+        while self._used_idx() != target:
+            await asyncio.sleep(0.001)
+        self._used_pop()
+
     @property
     def num_sectors(self) -> int:
         return self._num_sectors
@@ -256,10 +295,6 @@ def find_virtio_blk():
     ``read_sector(lba)`` / ``write_sector(lba, data)`` coroutines), so
     higher layers (kernel.fs.ext2, /home + /apps boot wiring) don't care
     which transport is in use.
-
-    Note: the arm64 ``VirtioMmioBlk`` here only implements ``read_sector``
-    today — ``write_sector`` lives on the PCI driver.  Sibling tasks
-    closing the storage epic add write to MMIO too.
     """
     arch = getattr(_hal, 'ARCH', 'x86_64')
     if arch == 'arm64':
