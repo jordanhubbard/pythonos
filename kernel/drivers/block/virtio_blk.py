@@ -234,7 +234,7 @@ class VirtioMmioBlk:
         return self._num_sectors
 
 
-def find_virtio_blk() -> 'VirtioMmioBlk | None':
+def _find_virtio_mmio_blk() -> 'VirtioMmioBlk | None':
     """Scan virtio-mmio slots and return the first block device found."""
     for i in range(VIRTIO_MMIO_DEVS):
         base = VIRTIO_MMIO_BASE + i * VIRTIO_MMIO_STRIDE
@@ -244,4 +244,29 @@ def find_virtio_blk() -> 'VirtioMmioBlk | None':
     return None
 
 
-blk: VirtioMmioBlk | None = None
+def find_virtio_blk():
+    """
+    Locate a VirtIO block device using the transport appropriate to this
+    architecture.
+
+    arm64:   virtio-mmio scan (legacy and modern).
+    x86_64:  virtio-blk-pci via the PCI bus.
+
+    The returned driver exposes a uniform surface (``num_sectors`` int and
+    ``read_sector(lba)`` / ``write_sector(lba, data)`` coroutines), so
+    higher layers (kernel.fs.ext2, /home + /apps boot wiring) don't care
+    which transport is in use.
+
+    Note: the arm64 ``VirtioMmioBlk`` here only implements ``read_sector``
+    today — ``write_sector`` lives on the PCI driver.  Sibling tasks
+    closing the storage epic add write to MMIO too.
+    """
+    arch = getattr(_hal, 'ARCH', 'x86_64')
+    if arch == 'arm64':
+        return _find_virtio_mmio_blk()
+    # Lazy import keeps arm64 boots free of any PCI machinery.
+    from kernel.drivers.block import virtio_blk_pci
+    return virtio_blk_pci.find_virtio_blk_pci()
+
+
+blk = None  # populated by kernel.boot once a device is bound
