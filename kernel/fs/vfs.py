@@ -71,6 +71,9 @@ class FSNode(Protocol):
 @runtime_checkable
 class Filesystem(Protocol):
     def root(self) -> FSNode: ...
+    # Optional: a filesystem MAY implement flush() to persist pending writes
+    # before unmount. The VFS calls it best-effort and tolerates its absence.
+    # def flush(self) -> Awaitable[None] | None: ...
 
 
 # ── File descriptor table ─────────────────────────────────────────────────────
@@ -91,11 +94,34 @@ class VFS:
     # ── Mount / unmount ───────────────────────────────────────────────────────
 
     def mount(self, path: str, fs: Filesystem) -> None:
-        self._mounts.append((path.rstrip("/") or "/", fs))
+        """Attach `fs` at `path`. If something is already mounted there it
+        is replaced (the previous FS is dropped without flushing — caller
+        should unmount first if persistence matters)."""
+        norm = path.rstrip("/") or "/"
+        self._mounts = [(p, f) for p, f in self._mounts if p != norm]
+        self._mounts.append((norm, fs))
+        # Sort longest-prefix-first so _resolve() finds the most specific
+        # mount before falling back to a shorter (e.g. root) mount.
         self._mounts.sort(key=lambda m: len(m[0]), reverse=True)
 
-    def unmount(self, path: str) -> None:
-        self._mounts = [(p, fs) for p, fs in self._mounts if p != path]
+    async def unmount(self, path: str) -> None:
+        """Detach the filesystem at `path`. Calls `flush()` on it best-effort
+        so durable filesystems (ext2 over virtio-blk, etc.) can persist any
+        pending writes before they go away. Raises KeyError if no FS is
+        mounted at `path`."""
+        norm = path.rstrip("/") or "/"
+        for i, (p, fs) in enumerate(self._mounts):
+            if p == norm:
+                # Best-effort flush: support both sync and async flush(), and
+                # tolerate filesystems that don't implement it at all.
+                flush = getattr(fs, "flush", None)
+                if flush is not None:
+                    result = flush()
+                    if asyncio.iscoroutine(result):
+                        await result
+                del self._mounts[i]
+                return
+        raise KeyError(f"No filesystem mounted at {path!r}")
 
     # ── Path resolution ───────────────────────────────────────────────────────
 
@@ -182,7 +208,26 @@ class VFS:
 
     async def readdir(self, path: str) -> list[str]:
         node = await self._resolve(path)
-        return await node.readdir()
+        entries = await node.readdir()
+        # Cross mount boundaries: if any FS is mounted as an immediate child
+        # of `path`, surface its mount-point name even though it lives in a
+        # different filesystem. e.g. readdir('/') on the root tmpfs should
+        # also list 'home' and 'apps' when they have ext2 mounts.
+        norm = "/" + path.strip("/")
+        prefix = "/" if norm == "/" else norm + "/"
+        seen = set(entries)
+        for mp, _fs in self._mounts:
+            if mp == "/" or mp == norm:
+                continue
+            if not mp.startswith(prefix):
+                continue
+            child = mp[len(prefix):]
+            if "/" in child:        # not an immediate child
+                continue
+            if child not in seen:
+                entries.append(child)
+                seen.add(child)
+        return entries
 
     async def unlink(self, path: str) -> None:
         parent_path = str(PurePosixPath(path).parent)
