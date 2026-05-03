@@ -21,6 +21,7 @@ import select
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 
@@ -29,7 +30,22 @@ def _macos() -> bool:
     return platform.system() == "Darwin"
 
 
-def _qemu_cmd_x86_64(iso: str, repl_port: int, display: str, audiodev: str) -> list:
+def _bridge_chardev_args(socket_path: str | None) -> list:
+    """If a bridge socket is provided, return the QEMU `-chardev` + `-serial`
+    flags that wire a second UART (COM2 on x86, PL011 #1 at 0x09040000 on
+    arm64) to that unix socket. The bridge listens on the socket; QEMU
+    connects as a client. `reconnect=2` survives bridge restarts."""
+    if not socket_path:
+        return []
+    return [
+        # QEMU 9+ uses reconnect-ms; older releases used reconnect=N (seconds).
+        "-chardev", f"socket,id=br,path={socket_path},reconnect-ms=2000",
+        "-serial", "chardev:br",
+    ]
+
+
+def _qemu_cmd_x86_64(iso: str, repl_port: int, display: str, audiodev: str,
+                      bridge_socket: str | None = None) -> list:
     return [
         "qemu-system-x86_64",
         "-machine", "q35",
@@ -46,10 +62,11 @@ def _qemu_cmd_x86_64(iso: str, repl_port: int, display: str, audiodev: str) -> l
         "-display", display,
         "-vga", "std",
         "-serial", "stdio",
-    ]
+    ] + _bridge_chardev_args(bridge_socket)
 
 
-def _qemu_cmd_arm64(elf: str, repl_port: int, display: str, audiodev: str) -> list:
+def _qemu_cmd_arm64(elf: str, repl_port: int, display: str, audiodev: str,
+                     bridge_socket: str | None = None) -> list:
     disk = os.environ.get("PYTHONOS_ARM64_DISK", "disk-arm64.img")
     return [
         "qemu-system-aarch64",
@@ -70,10 +87,39 @@ def _qemu_cmd_arm64(elf: str, repl_port: int, display: str, audiodev: str) -> li
         "-drive", f"if=none,file={disk},format=raw,id=hd0",
         "-device", "virtio-blk-device,drive=hd0",
         "-kernel", elf,
-    ]
+    ] + _bridge_chardev_args(bridge_socket)
 
 
-def _launch_via_tcp(cmd: list, port: int, boot_app: str) -> int:
+def _spawn_bridge(socket_path: str) -> subprocess.Popen:
+    """Spawn pythonos_bridge --listen <socket> and wait for the listen
+    socket to appear. Returns the running subprocess; caller is
+    responsible for terminating it on exit."""
+    bridge_bin = os.environ.get(
+        "PYTHONOS_BRIDGE_BIN",
+        os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                     "pythonos_bridge", "pythonos_bridge"))
+    if not os.path.isfile(bridge_bin):
+        raise RuntimeError(f"pythonos_bridge binary not found at {bridge_bin} "
+                           "(run `make bridge`)")
+    if os.path.exists(socket_path):
+        try: os.unlink(socket_path)
+        except OSError: pass
+    print(f"[run-desktop] spawning {bridge_bin} on {socket_path}",
+          file=sys.stderr)
+    proc = subprocess.Popen([bridge_bin, "--listen", socket_path])
+    deadline = time.time() + 5.0
+    while time.time() < deadline:
+        if os.path.exists(socket_path):
+            return proc
+        if proc.poll() is not None:
+            raise RuntimeError(
+                f"pythonos_bridge exited early with rc={proc.returncode}")
+        time.sleep(0.05)
+    proc.terminate()
+    raise RuntimeError("pythonos_bridge never created its listen socket")
+
+
+def _launch_via_tcp(cmd: list, port: int, boot_cmd: str) -> int:
     """x86_64 path: connect to the forwarded TCP REPL and send the command."""
     proc = subprocess.Popen(cmd)
     deadline = time.time() + 30.0
@@ -103,15 +149,15 @@ def _launch_via_tcp(cmd: list, port: int, boot_app: str) -> int:
             continue
 
     try:
-        s.sendall(f"pythonos_gui {boot_app}\n".encode())
-        print(f"[run-desktop] sent: pythonos_gui {boot_app}", file=sys.stderr)
+        s.sendall((boot_cmd + "\n").encode())
+        print(f"[run-desktop] sent: {boot_cmd}", file=sys.stderr)
     finally:
         s.close()
 
     return _wait_proc(proc)
 
 
-def _launch_via_serial(cmd: list, boot_app: str) -> int:
+def _launch_via_serial(cmd: list, boot_cmd: str) -> int:
     """arm64 path: pipe the command through QEMU's stdin (PL011 serial)."""
     proc = subprocess.Popen(
         cmd,
@@ -140,10 +186,10 @@ def _launch_via_serial(cmd: list, boot_app: str) -> int:
                     buf.extend(chunk)
                     if b">>>" in buf:
                         try:
-                            in_pipe.write(f"pythonos_gui {boot_app}\n".encode())
+                            in_pipe.write((boot_cmd + "\n").encode())
                             in_pipe.flush()
                             sent.set()
-                            print(f"\n[run-desktop] sent: pythonos_gui {boot_app}",
+                            print(f"\n[run-desktop] sent: {boot_cmd}",
                                   file=sys.stderr)
                         except OSError as e:
                             print(f"[run-desktop] write failed: {e}", file=sys.stderr)
@@ -181,6 +227,11 @@ def main() -> int:
     default_port = "5560" if arch == "x86_64" else "5561"
     port = int(os.environ.get("PYTHONOS_DESKTOP_PORT", default_port))
     boot_app = os.environ.get("PYTHONOS_DESKTOP_APP", "bouncing_ball")
+    # PYTHONOS_DESKTOP_BOOT_CMD overrides the line we inject at the kernel
+    # prompt — useful for one-shots like `bridge_ping` that don't go
+    # through the compositor at all.
+    boot_cmd = os.environ.get("PYTHONOS_DESKTOP_BOOT_CMD",
+                               f"pythonos_gui {boot_app}")
 
     display  = os.environ.get("QEMU_DISPLAY",  "cocoa" if _macos() else "sdl")
     audiodev = os.environ.get("QEMU_AUDIODEV", "coreaudio" if _macos() else "sdl")
@@ -189,15 +240,48 @@ def main() -> int:
         print(f"run-desktop: {image} not found; run `make` first", file=sys.stderr)
         return 1
 
-    print(f"[run-desktop] booting {image} (arch={arch}) with -display {display}, "
-          f"will auto-launch pythonos_gui {boot_app} once the shell prompt is ready",
+    # PYTHONOS_BRIDGE_SOCKET=<path> enables the host-side companion. Empty
+    # / unset = run-desktop legacy in-kernel framebuffer path. Default ON
+    # if the bridge binary exists, so the bridge gets exercised by default.
+    bridge_socket_env = os.environ.get("PYTHONOS_BRIDGE_SOCKET")
+    if bridge_socket_env is None:
+        bridge_default = os.path.join(tempfile.gettempdir(),
+                                       "pythonos-bridge.sock")
+        bridge_bin_default = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "pythonos_bridge", "pythonos_bridge")
+        bridge_socket = bridge_default if os.path.isfile(bridge_bin_default) else None
+    elif bridge_socket_env == "":
+        bridge_socket = None
+    else:
+        bridge_socket = bridge_socket_env
+
+    bridge_proc = None
+    if bridge_socket:
+        try:
+            bridge_proc = _spawn_bridge(bridge_socket)
+        except RuntimeError as e:
+            print(f"[run-desktop] bridge unavailable: {e}", file=sys.stderr)
+            print("[run-desktop] continuing without bridge "
+                  "(set PYTHONOS_BRIDGE_SOCKET= to silence)", file=sys.stderr)
+            bridge_socket = None
+
+    print(f"[run-desktop] booting {image} (arch={arch}) with -display {display}"
+          + (f", bridge=on ({bridge_socket})" if bridge_socket else ", bridge=off")
+          + f"; will inject {boot_cmd!r} once the shell prompt is ready",
           file=sys.stderr)
 
-    if arch == "arm64":
-        cmd = _qemu_cmd_arm64(image, port, display, audiodev)
-        return _launch_via_serial(cmd, boot_app)
-    cmd = _qemu_cmd_x86_64(image, port, display, audiodev)
-    return _launch_via_tcp(cmd, port, boot_app)
+    try:
+        if arch == "arm64":
+            cmd = _qemu_cmd_arm64(image, port, display, audiodev, bridge_socket)
+            return _launch_via_serial(cmd, boot_cmd)
+        cmd = _qemu_cmd_x86_64(image, port, display, audiodev, bridge_socket)
+        return _launch_via_tcp(cmd, port, boot_cmd)
+    finally:
+        if bridge_proc is not None and bridge_proc.poll() is None:
+            bridge_proc.terminate()
+            try: bridge_proc.wait(timeout=2)
+            except subprocess.TimeoutExpired: bridge_proc.kill()
 
 
 if __name__ == "__main__":

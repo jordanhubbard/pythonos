@@ -293,6 +293,7 @@ HAL_SRC    := $(wildcard src/hal/*.c  src/hal/*.h)
 LIBC_SRC   := $(wildcard src/libc/*.c src/libc/include/*.h src/libc/include/sys/*.h)
 KERNEL_PY  := $(wildcard \
                    kernel/*.py \
+                   kernel/bridge/*.py \
                    kernel/bus/*.py \
                    kernel/display/*.py \
                    kernel/drivers/*.py \
@@ -419,6 +420,7 @@ STDLIB_REAL_FILES := \
 
 $(STDLIB_SHIM)/.stamp: $(CPYTHON_LIB)/enum.py $(CPYTHON_LIB)/struct.py $(CPYTHON_LIB)/codeop.py \
                         $(CPYTHON_LIB)/__future__.py \
+                        $(CPYTHON_LIB)/json/__init__.py \
                         tools/stdlib_stubs/inspect.py \
                         tools/stdlib_stubs/pathlib.py \
                         tools/stdlib_stubs/functools.py \
@@ -429,7 +431,8 @@ $(STDLIB_SHIM)/.stamp: $(CPYTHON_LIB)/enum.py $(CPYTHON_LIB)/struct.py $(CPYTHON
                         tools/stdlib_stubs/traceback.py \
                         tools/stdlib_stubs/linecache.py \
                         tools/stdlib_stubs/sdl2.py
-	@mkdir -p $(STDLIB_SHIM)/re $(STDLIB_SHIM)/collections $(STDLIB_SHIM)/ctypes
+	@mkdir -p $(STDLIB_SHIM)/re $(STDLIB_SHIM)/collections $(STDLIB_SHIM)/ctypes \
+	          $(STDLIB_SHIM)/json
 	@$(foreach f,$(STDLIB_REAL_FILES),cp $(CPYTHON_LIB)/$(f) $(STDLIB_SHIM)/$(f);)
 	@cp $(CPYTHON_LIB)/re/__init__.py    $(STDLIB_SHIM)/re/
 	@cp $(CPYTHON_LIB)/re/_compiler.py  $(STDLIB_SHIM)/re/
@@ -438,6 +441,10 @@ $(STDLIB_SHIM)/.stamp: $(CPYTHON_LIB)/enum.py $(CPYTHON_LIB)/struct.py $(CPYTHON
 	@cp $(CPYTHON_LIB)/re/_casefix.py   $(STDLIB_SHIM)/re/
 	@cp $(CPYTHON_LIB)/collections/__init__.py $(STDLIB_SHIM)/collections/
 	@cp $(CPYTHON_LIB)/_collections_abc.py     $(STDLIB_SHIM)/collections/abc.py
+	@cp $(CPYTHON_LIB)/json/__init__.py $(STDLIB_SHIM)/json/
+	@cp $(CPYTHON_LIB)/json/decoder.py  $(STDLIB_SHIM)/json/
+	@cp $(CPYTHON_LIB)/json/encoder.py  $(STDLIB_SHIM)/json/
+	@cp $(CPYTHON_LIB)/json/scanner.py  $(STDLIB_SHIM)/json/
 	@cp tools/stdlib_stubs/inspect.py     $(STDLIB_SHIM)/inspect.py
 	@cp tools/stdlib_stubs/pathlib.py     $(STDLIB_SHIM)/pathlib.py
 	@cp tools/stdlib_stubs/functools.py   $(STDLIB_SHIM)/functools.py
