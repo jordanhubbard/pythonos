@@ -44,11 +44,18 @@ def _bridge_chardev_args(socket_path: str | None) -> list:
     ]
 
 
+def _disk_path() -> str:
+    return (os.environ.get("PYTHONOS_DISK")
+            or os.environ.get("PYTHONOS_ARM64_DISK")
+            or "build/disk.img")
+
+
 def _qemu_cmd_x86_64(iso: str, repl_port: int, display: str, audiodev: str,
                       bridge_socket: str | None = None) -> list:
     # When the bridge is on, the host SDL window IS the desktop —
     # QEMU's own framebuffer console window is redundant noise.
     qdisp = "none" if bridge_socket else display
+    disk = _disk_path()
     cmd = [
         "qemu-system-x86_64",
         "-machine", "q35",
@@ -59,6 +66,8 @@ def _qemu_cmd_x86_64(iso: str, repl_port: int, display: str, audiodev: str,
         "-device", "virtio-net-pci,netdev=net0",
         "-device", "intel-hda",
         "-device", "hda-duplex",
+        "-drive", f"if=none,file={disk},format=raw,id=hd0",
+        "-device", "virtio-blk-pci,drive=hd0",
         "-no-reboot", "-no-shutdown",
         "-cdrom", iso,
         "-boot", "d",
@@ -72,7 +81,7 @@ def _qemu_cmd_x86_64(iso: str, repl_port: int, display: str, audiodev: str,
 
 def _qemu_cmd_arm64(elf: str, repl_port: int, display: str, audiodev: str,
                      bridge_socket: str | None = None) -> list:
-    disk = os.environ.get("PYTHONOS_ARM64_DISK", "disk-arm64.img")
+    disk = _disk_path()
     qdisp = "none" if bridge_socket else display
     cmd = [
         "qemu-system-aarch64",

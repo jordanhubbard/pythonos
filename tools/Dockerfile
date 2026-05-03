@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     grub-common \
     xorriso \
     mtools \
+    e2fsprogs \
     curl \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*

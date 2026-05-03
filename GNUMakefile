@@ -89,6 +89,13 @@ ARCH       := x86_64
 ISO_OUT    := pythonos.iso
 DOCKER_IMG := pythonos-builder
 LIBPYTHON  := deps/cpython/libpython3.14.a
+
+# Persistent storage for /home and /apps (epic pythonos-ef6). One ext2 image
+# shared between x86_64 and arm64 — / stays tmpfs. Built inside the Docker
+# container via tools/build_disk.sh; see tools/Dockerfile for e2fsprogs.
+DISK_IMG     := build/disk.img
+DISK_SIZE_MB ?= 64
+ARM64_DISK   := $(DISK_IMG)
 REPL_HOST_PORT ?= $(if $(PYTHONOS_HOST_PORT),$(PYTHONOS_HOST_PORT),5555)
 FILE_HOST_PORT ?= $(if $(PYTHONOS_FILE_PORT),$(PYTHONOS_FILE_PORT),17000)
 ARM64_REPL_HOST_PORT ?= 5556
@@ -100,6 +107,8 @@ QEMU_FLAGS := -machine q35 $(QEMU_X86_CPU) $(QEMU_X86_ACCEL) -m 2G -smp $(SMP_CP
               -netdev user,id=net0,hostfwd=tcp::$(REPL_HOST_PORT)-:5000,hostfwd=tcp::$(FILE_HOST_PORT)-:7000 -device virtio-net-pci,netdev=net0 \
               -device intel-hda -device hda-duplex \
               -no-reboot -no-shutdown \
+              -drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
+              -device virtio-blk-pci,drive=hd0 \
               -cdrom $(ISO_OUT) -boot d -nographic -serial mon:stdio
 
 # Same flags as QEMU_FLAGS, except `-nographic -serial mon:stdio` is replaced
@@ -111,12 +120,14 @@ QEMU_GUI_FLAGS := -machine q35 $(QEMU_X86_CPU) $(QEMU_X86_ACCEL) -m 2G -smp $(SM
               -netdev user,id=net0,hostfwd=tcp::$(REPL_HOST_PORT)-:5000,hostfwd=tcp::$(FILE_HOST_PORT)-:7000 -device virtio-net-pci,netdev=net0 \
               -device intel-hda -device hda-duplex \
               -no-reboot -no-shutdown \
+              -drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
+              -device virtio-blk-pci,drive=hd0 \
               -cdrom $(ISO_OUT) -boot d -display $(QEMU_DISPLAY) -vga std -serial stdio
 
 # ── User-facing targets ───────────────────────────────────────────────────────
 
 .PHONY: all build build-gui run run-gui start stop restart test clean cleanall \
-        docker-build help \
+        docker-build help disk-image \
         bridge bridge-clean test-bridge \
         _freeze _iso _libpython \
         x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 test-gui-x86_64 run-desktop-x86_64 run-fb-x86_64 \
@@ -148,6 +159,7 @@ help:
 	@echo "  make TARGET_ARCH=x86_64   Cross-build for x86_64"
 	@echo "  make TARGET_ARCH=arm64    Cross-build for arm64"
 	@echo "  make docker-build         Rebuild the Docker cross-toolchain image"
+	@echo "  make disk-image           Build build/disk.img (ext2, /home + /apps)"
 	@echo "  make clean                Remove build artifacts (keeps libpython cache)"
 	@echo "  make cleanall             Remove everything including libpython"
 	@echo ""
@@ -219,6 +231,18 @@ run-gui:   run-desktop
 start:     run
 restart:   stop start
 
+# ── Persistent disk image (ext2, /home + /apps) ──────────────────────────────
+# Built inside the build container — see tools/build_disk.sh and
+# tools/Dockerfile (e2fsprogs). The image is consumed by the QEMU run
+# targets on both arches via virtio-blk. `make clean` removes build/.
+
+disk-image: $(DISK_IMG)
+
+$(DISK_IMG): tools/build_disk.sh .docker-image
+	@mkdir -p build
+	docker run --rm --platform linux/amd64 -v $(PWD):/work -w /work $(DOCKER_IMG) \
+	    bash tools/build_disk.sh $(DISK_IMG) $(DISK_SIZE_MB)
+
 # ── pythonos_bridge (host-side companion linking SDL2) ───────────────────────
 # See tools/pythonos_bridge/main.c. The bridge is a host program — entirely
 # separate from the kernel build. Slice 1 ships the protocol loop + a
@@ -237,21 +261,22 @@ test-bridge: bridge
 # Explicit x86_64 targets (also reachable as the dispatch default on x86 hosts).
 x86_64: $(ISO_OUT)
 
-run-x86_64: $(ISO_OUT)
+run-x86_64: $(ISO_OUT) $(DISK_IMG)
 	qemu-system-x86_64 $(QEMU_FLAGS)
 
 # Legacy framebuffer mode for x86_64: opens QEMU's own SDL window
 # driven by the bochs-VBE adapter. Kernel writes pixels straight to
 # ramfb. Pre-bridge path; kept for `make run-fb`.
-run-fb-x86_64: $(ISO_OUT)
+run-fb-x86_64: $(ISO_OUT) $(DISK_IMG)
 	qemu-system-x86_64 $(QEMU_GUI_FLAGS)
 
 # Bridge desktop mode for x86_64: spawns pythonos_bridge as a sibling
 # process, wires QEMU's COM2 to its unix socket, and lets py_desktop()
 # in the kernel REPL bring up the host SDL window. This is what
 # `make run-gui` resolves to.
-run-desktop-x86_64: $(ISO_OUT) bridge
+run-desktop-x86_64: $(ISO_OUT) $(DISK_IMG) bridge
 	QEMU_DISPLAY=$(QEMU_DISPLAY) QEMU_AUDIODEV=$(QEMU_AUDIODEV) \
+	    PYTHONOS_DISK=$(DISK_IMG) \
 	    python3 tools/run_desktop.py $(ISO_OUT)
 
 # Per-arch alias so make run-gui-x86_64 keeps working post-rename.
@@ -286,7 +311,7 @@ clean:
 	       build-arm64 $(ARM64_ELF) \
 	       deps/cpython deps/cpython-src \
 	       deps-arm64/cpython deps-arm64/cpython-src \
-	       $(ARM64_DISK)
+	       disk-arm64.img
 
 cleanall: clean
 	rm -rf .docker-image deps/Python-*.tar.xz deps-arm64/Python-*.tar.xz
@@ -515,12 +540,8 @@ QEMU_ARM64_GUI_FLAGS := -machine virt $(QEMU_ARM64_CPU) $(QEMU_ARM64_ACCEL) -m 2
                     -audiodev $(QEMU_AUDIODEV),id=a -device virtio-sound-device,audiodev=a \
                     -netdev user,id=net1,hostfwd=tcp::$(ARM64_REPL_HOST_PORT)-:5000,hostfwd=tcp::$(ARM64_FILE_HOST_PORT)-:7000 -device virtio-net-device,netdev=net1
 
-ARM64_DISK := disk-arm64.img
-
-# Build a 16 MiB raw disk image (FAT16 compatible) if it doesn't exist
-$(ARM64_DISK):
-	dd if=/dev/zero of=$@ bs=512 count=32768 2>/dev/null
-	@echo "Created blank disk image: $@"
+# arm64 attaches the same persistent ext2 image as x86 — see DISK_IMG/ARM64_DISK
+# at the top of the file.
 
 arm64: $(ARM64_ELF)
 
@@ -545,6 +566,7 @@ run-fb-arm64: $(ARM64_ELF) $(ARM64_DISK)
 # resolves to.
 run-desktop-arm64: $(ARM64_ELF) $(ARM64_DISK) bridge
 	PYTHONOS_DESKTOP_ARCH=arm64 PYTHONOS_ARM64_DISK=$(ARM64_DISK) \
+	    PYTHONOS_DISK=$(ARM64_DISK) \
 	    QEMU_DISPLAY=$(QEMU_DISPLAY) QEMU_AUDIODEV=$(QEMU_AUDIODEV) \
 	    python3 tools/run_desktop.py $(ARM64_ELF)
 
