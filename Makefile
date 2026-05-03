@@ -14,6 +14,7 @@ GMAKE ?= $(if $(shell which gmake 2>/dev/null),gmake,make)
 # `make TARGET_ARCH=arm64 build` work as expected.
 TOP_GOALS := all build run start stop restart test test-gui clean cleanall \
              docker-build help \
+             bridge bridge-clean test-bridge \
              x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 \
                  test-gui-x86_64 run-desktop-x86_64 \
              arm64 run-arm64 stop-arm64 test-arm64 run-gui-arm64 \

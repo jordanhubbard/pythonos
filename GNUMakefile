@@ -116,6 +116,7 @@ QEMU_GUI_FLAGS := -machine q35 $(QEMU_X86_CPU) $(QEMU_X86_ACCEL) -m 2G -smp $(SM
 # ── User-facing targets ───────────────────────────────────────────────────────
 
 .PHONY: all build run start stop restart test clean cleanall docker-build help \
+        bridge bridge-clean test-bridge \
         _freeze _iso _libpython \
         x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 test-gui-x86_64 run-desktop-x86_64 \
         arm64 run-arm64 stop-arm64 test-arm64 run-gui-arm64 run-desktop-arm64 _iso_arm64 \
@@ -201,6 +202,21 @@ endif
 build:   all
 start:   run
 restart: stop start
+
+# ── pythonos_bridge (host-side companion linking SDL2) ───────────────────────
+# See tools/pythonos_bridge/main.c. The bridge is a host program — entirely
+# separate from the kernel build. Slice 1 ships the protocol loop + a
+# --selftest mode that opens an SDL2 window directly. Later slices add the
+# display/audio/input ops that PythonOS apps will drive.
+
+bridge:
+	$(MAKE) -C tools/pythonos_bridge
+
+bridge-clean:
+	$(MAKE) -C tools/pythonos_bridge clean
+
+test-bridge: bridge
+	python3 tools/pythonos_bridge/test_client.py
 
 # Explicit x86_64 targets (also reachable as the dispatch default on x86 hosts).
 x86_64: $(ISO_OUT)
