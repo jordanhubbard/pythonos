@@ -115,12 +115,13 @@ QEMU_GUI_FLAGS := -machine q35 $(QEMU_X86_CPU) $(QEMU_X86_ACCEL) -m 2G -smp $(SM
 
 # ── User-facing targets ───────────────────────────────────────────────────────
 
-.PHONY: all build run start stop restart test clean cleanall docker-build help \
+.PHONY: all build build-gui run run-gui start stop restart test clean cleanall \
+        docker-build help \
         bridge bridge-clean test-bridge \
         _freeze _iso _libpython \
-        x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 test-gui-x86_64 run-desktop-x86_64 \
-        arm64 run-arm64 stop-arm64 test-arm64 run-gui-arm64 run-desktop-arm64 _iso_arm64 \
-        run-gui test-gui run-desktop
+        x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 test-gui-x86_64 run-desktop-x86_64 run-fb-x86_64 \
+        arm64 run-arm64 stop-arm64 test-arm64 run-gui-arm64 run-desktop-arm64 run-fb-arm64 _iso_arm64 \
+        run-fb test-gui run-desktop
 
 
 # ── Help ─────────────────────────────────────────────────────────────────────
@@ -132,24 +133,32 @@ QEMU_GUI_FLAGS := -machine q35 $(QEMU_X86_CPU) $(QEMU_X86_ACCEL) -m 2G -smp $(SM
 help:
 	@echo "PythonOS — top-level make targets"
 	@echo ""
-	@echo "Build:"
-	@echo "  make                      Build for the host arch (default: $(HOST_ARCH))"
+	@echo "Two flavors, two pairs of targets:"
+	@echo ""
+	@echo "  Minimal (text REPL, no GUI):"
+	@echo "    make build              Build the kernel ISO/ELF only"
+	@echo "    make run                Boot in QEMU; serial REPL on stdio"
+	@echo ""
+	@echo "  Full GUI (kernel + pythonos_bridge host companion):"
+	@echo "    make build-gui          Build kernel AND pythonos_bridge"
+	@echo "    make run-gui            Boot kernel + spawn bridge + open SDL"
+	@echo "                              desktop with full app dock"
+	@echo ""
+	@echo "Build flags:"
 	@echo "  make TARGET_ARCH=x86_64   Cross-build for x86_64"
 	@echo "  make TARGET_ARCH=arm64    Cross-build for arm64"
 	@echo "  make docker-build         Rebuild the Docker cross-toolchain image"
 	@echo "  make clean                Remove build artifacts (keeps libpython cache)"
 	@echo "  make cleanall             Remove everything including libpython"
 	@echo ""
-	@echo "Run (serial REPL — boot directly to >>>, no GUI):"
-	@echo "  make run                  Boot in QEMU on serial (default behavior)"
+	@echo "Lifecycle:"
 	@echo "  make stop                 Kill the running QEMU instance"
 	@echo "  make restart              stop + run"
 	@echo ""
-	@echo "Run (GUI desktop — opens an SDL window):"
-	@echo "  make run-gui              Boot with SDL window + framebuffer REPL;"
-	@echo "                            type 'pythonos_gui' at >>> to open the desktop"
-	@echo "  make run-desktop          Boot AND auto-launch pythonos_gui — opens"
-	@echo "                            directly to the compositor + an app"
+	@echo "Legacy GUI (QEMU framebuffer console window — pre-bridge path):"
+	@echo "  make run-fb               Open QEMU's own SDL/cocoa window;"
+	@echo "                            kernel pushes pixels to ramfb directly"
+	@echo "  make run-desktop          Alias for run-gui (back-compat)"
 	@echo ""
 	@echo "Test:"
 	@echo "  make test                 Boot in QEMU, run TCP-REPL smoke tests"
@@ -183,25 +192,32 @@ help:
 
 # Top-level dispatch. These pick x86_64 or arm64 based on TARGET_ARCH (which
 # defaults to the host arch). Explicit per-arch targets are listed below.
+#
+#   build / run        — minimal text-REPL kernel.
+#   build-gui / run-gui — kernel + pythonos_bridge + host SDL desktop.
+#   run-fb              — legacy: QEMU's own framebuffer window (no bridge).
+#   run-desktop         — alias for run-gui.
 ifeq ($(TARGET_ARCH),arm64)
 all:         arm64
 run:         run-arm64
 stop:        stop-arm64
 test:        test-arm64
-run-gui:     run-gui-arm64
+run-fb:      run-fb-arm64
 run-desktop: run-desktop-arm64
 else
 all:         x86_64
 run:         run-x86_64
 stop:        stop-x86_64
 test:        test-x86_64
-run-gui:     run-gui-x86_64
+run-fb:      run-fb-x86_64
 run-desktop: run-desktop-x86_64
 endif
 
-build:   all
-start:   run
-restart: stop start
+build:     all
+build-gui: all bridge
+run-gui:   run-desktop
+start:     run
+restart:   stop start
 
 # ── pythonos_bridge (host-side companion linking SDL2) ───────────────────────
 # See tools/pythonos_bridge/main.c. The bridge is a host program — entirely
@@ -224,19 +240,22 @@ x86_64: $(ISO_OUT)
 run-x86_64: $(ISO_OUT)
 	qemu-system-x86_64 $(QEMU_FLAGS)
 
-# GUI mode for x86_64: opens an SDL window driven by QEMU's bochs-VBE adapter.
-# Default `run`/`test` paths are unaffected and stay on `-nographic`.
-run-gui-x86_64: $(ISO_OUT)
+# Legacy framebuffer mode for x86_64: opens QEMU's own SDL window
+# driven by the bochs-VBE adapter. Kernel writes pixels straight to
+# ramfb. Pre-bridge path; kept for `make run-fb`.
+run-fb-x86_64: $(ISO_OUT)
 	qemu-system-x86_64 $(QEMU_GUI_FLAGS)
 
-# Desktop mode: same as run-gui but auto-launches `pythonos_gui` over the
-# TCP REPL once the kernel comes up, so the SDL window opens directly to
-# the compositor + the chosen app (default: bouncing_ball). Override with
-# `make run-desktop-x86_64 PYTHONOS_DESKTOP_APP=terminal` (or editor / files /
-# image_viewer / audio_tone).
-run-desktop-x86_64: $(ISO_OUT)
+# Bridge desktop mode for x86_64: spawns pythonos_bridge as a sibling
+# process, wires QEMU's COM2 to its unix socket, and lets py_desktop()
+# in the kernel REPL bring up the host SDL window. This is what
+# `make run-gui` resolves to.
+run-desktop-x86_64: $(ISO_OUT) bridge
 	QEMU_DISPLAY=$(QEMU_DISPLAY) QEMU_AUDIODEV=$(QEMU_AUDIODEV) \
 	    python3 tools/run_desktop.py $(ISO_OUT)
+
+# Per-arch alias so make run-gui-x86_64 keeps working post-rename.
+run-gui-x86_64: run-desktop-x86_64
 
 stop-x86_64:
 	@pkill -f "qemu-system-x86_64.*$(ISO_OUT)" || echo "No x86_64 QEMU running."
@@ -512,20 +531,25 @@ run-arm64: $(ARM64_ELF) $(ARM64_DISK)
 	    -device virtio-blk-device,drive=hd0 \
 	    -kernel $(ARM64_ELF)
 
-# arm64 GUI mode: SDL window backed by `-device ramfb`.
-run-gui-arm64: $(ARM64_ELF) $(ARM64_DISK)
+# Legacy framebuffer mode for arm64: QEMU's own SDL window backed by
+# `-device ramfb`. Pre-bridge path; reachable via `make run-fb`.
+run-fb-arm64: $(ARM64_ELF) $(ARM64_DISK)
 	qemu-system-aarch64 $(QEMU_ARM64_GUI_FLAGS) \
 	    -drive if=none,file=$(ARM64_DISK),format=raw,id=hd0 \
 	    -device virtio-blk-device,drive=hd0 \
 	    -kernel $(ARM64_ELF)
 
-# arm64 desktop mode: like run-gui-arm64 but auto-launches `pythonos_gui`
-# over the TCP REPL once the kernel comes up. Override the boot app with
-# PYTHONOS_DESKTOP_APP=terminal (or editor / files / image_viewer / audio_tone).
-run-desktop-arm64: $(ARM64_ELF) $(ARM64_DISK)
+# Bridge desktop mode for arm64: spawns pythonos_bridge as a sibling and
+# wires QEMU's PL011 #1 to its unix socket. py_desktop() in the kernel
+# REPL brings up the host SDL window. This is what `make run-gui`
+# resolves to.
+run-desktop-arm64: $(ARM64_ELF) $(ARM64_DISK) bridge
 	PYTHONOS_DESKTOP_ARCH=arm64 PYTHONOS_ARM64_DISK=$(ARM64_DISK) \
 	    QEMU_DISPLAY=$(QEMU_DISPLAY) QEMU_AUDIODEV=$(QEMU_AUDIODEV) \
 	    python3 tools/run_desktop.py $(ARM64_ELF)
+
+# Per-arch alias so make run-gui-arm64 keeps working post-rename.
+run-gui-arm64: run-desktop-arm64
 
 stop-arm64:
 	@pkill -f "qemu-system-aarch64.*$(ARM64_ELF)" || echo "No arm64 QEMU running."

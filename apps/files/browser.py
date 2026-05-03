@@ -123,16 +123,9 @@ class _Browser:
         if kind == "dir":
             self.cwd = full
             await self.reload()
-        else:
-            try:
-                node = await vfs.stat(full)
-                size = getattr(node, "size", -1)
-            except Exception:
-                size = -1
-            self.win.surface.draw_text(4, self.win.h - GLYPH_H,
-                                         (full + "  " + str(size) + " bytes")[: self.cols],
-                                         fg=_HL_FG, bg=_BG)
-            self.win.dirty = True
+            return
+        # File — open in the editor app.
+        compositor.launch_app("editor", [full])
 
 
 async def main(*args, **kwargs) -> None:
@@ -144,9 +137,28 @@ async def main(*args, **kwargs) -> None:
 
     closed = False
     pending = None
+    last_click = [0.0, -1]   # [timestamp, row_idx] for double-click detection
 
     def on_event(ev):
         nonlocal closed, pending
+        if ev.kind == _gui_input.MOUSE_DOWN and ev.code == 1:
+            # Mouse hits arrive in window-local coords (compositor adjusts for body).
+            local_y = ev.y - (win.y + 16)   # 16 = TITLE_BAR_H
+            if local_y < _HEADER_H:
+                return
+            row = (local_y - _HEADER_H) // GLYPH_H
+            idx = b.scroll_top + row
+            if 0 <= idx < len(b.entries):
+                b.selected = idx
+                b.redraw()
+                # Double-click? Same row, within 500 ms → open.
+                import time
+                now = time.monotonic() if hasattr(time, "monotonic") else 0.0
+                if last_click[1] == idx and now - last_click[0] < 0.5:
+                    pending = "enter"
+                last_click[0] = now
+                last_click[1] = idx
+            return
         if ev.kind != _gui_input.KEY_DOWN:
             return
         if ev.code == _gui_input.KEY_ESC:
@@ -183,8 +195,11 @@ async def main(*args, **kwargs) -> None:
     win.close()
 
 
+from apps._icons import files_icon
+
 registry.register(
     name="files",
     description="Arrow-key file browser",
     entry=main,
+    icon_factory=files_icon,
 )

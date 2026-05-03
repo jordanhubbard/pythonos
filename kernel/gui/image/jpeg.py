@@ -391,7 +391,7 @@ class _Decoder:
         return self._compose()
 
     def _compose(self) -> SDL_Surface:
-        s = SDL_Surface(self.width, self.height)
+        s = SDL_Surface(self.width, self.height, host_backed=False)
         plane_w = self.h_max * 8 * ((self.width + self.h_max * 8 - 1) // (self.h_max * 8))
         if len(self.components) == 1:
             y = self.components[0]["data"]

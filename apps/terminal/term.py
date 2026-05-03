@@ -16,15 +16,19 @@ async def main(*args, **kwargs) -> None:
     view = TextWin(win)
     win.set_event_handler(view.on_event)
 
-    shell = Shell(read_char=view.read_char, write=view.write)
+    shell = Shell(read_char=view.read_char, write=view.write,
+                   read_byte=view.read_byte, write_raw=view.write_raw)
     try:
         await shell.run()
     finally:
         win.close()
 
 
+from apps._icons import terminal_icon
+
 registry.register(
     name="terminal",
     description="Python REPL in a window",
     entry=main,
+    icon_factory=terminal_icon,
 )

@@ -392,21 +392,18 @@ async def pythonos_gui(argv: list[str], cwd: str, write) -> None:
 
 async def bridge_ping(argv: list[str], cwd: str, write) -> None:
     """Round-trip a hello + ping through the host pythonos_bridge
-    companion. Useful as a smoke test for Slice 2 wiring; in the v1
-    kernel this is the only consumer of kernel.bridge."""
-    import asyncio
+    companion. bridge.call is synchronous now."""
     from kernel import bridge as br
     try:
-        r = await asyncio.wait_for(br.bridge.hello(), timeout=2.0)
+        r = br.bridge.hello()
         _line(write, f"hello: agent={r.get('agent')} "
                      f"protocol={r.get('protocol')} sdl={r.get('sdl_ver')}")
-    except (TimeoutError, br.BridgeError) as e:
+    except br.BridgeError as e:
         _line(write, f"bridge_ping: hello failed: {e}")
         return
     tag = argv[0] if argv else "from-pythonos"
     try:
-        r = await asyncio.wait_for(
-            br.bridge.call("ping", {"tag": tag}), timeout=2.0)
+        r = br.bridge.call("ping", {"tag": tag})
         _line(write, f"ping:  pong={r.get('pong')} tag={r.get('tag')}")
-    except (TimeoutError, br.BridgeError) as e:
+    except br.BridgeError as e:
         _line(write, f"bridge_ping: ping failed: {e}")

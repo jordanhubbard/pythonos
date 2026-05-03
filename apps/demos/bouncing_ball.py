@@ -57,8 +57,11 @@ async def main(*args, **kwargs) -> None:
     await _run(win)
 
 
+from apps._icons import bouncing_ball_icon
+
 registry.register(
     name="bouncing_ball",
     description="A bouncing rectangle (graphics demo)",
     entry=main,
+    icon_factory=bouncing_ball_icon,
 )

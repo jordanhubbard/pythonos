@@ -243,6 +243,86 @@ static PyObject *py_buf_fill32(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
+// Bulk UART transmit. The bridge ships frames up to a few MiB at 30 Hz;
+// per-byte Python loops over mmio_write32/outb are too slow. These C
+// primitives poll the TX-ready flag once per byte but spend zero time
+// in the Python interpreter between bytes.
+
+#ifdef ARCH_ARM64
+/* PL011: DR = base + 0x000, FR = base + 0x018, FR.TXFF = bit 5,
+ *        FR.RXFE = bit 4. */
+static PyObject *py_pl011_write_buf(PyObject *self, PyObject *args) {
+    unsigned long long base;
+    Py_buffer buf;
+    if (!PyArg_ParseTuple(args, "Ky*", &base, &buf)) return NULL;
+    volatile uint32_t *dr = (volatile uint32_t *)(uintptr_t)(base + 0x000);
+    volatile uint32_t *fr = (volatile uint32_t *)(uintptr_t)(base + 0x018);
+    const uint8_t *src = (const uint8_t *)buf.buf;
+    for (Py_ssize_t i = 0; i < buf.len; i++) {
+        while (*fr & (1u << 5)) { /* TXFF: spin until host drains */ }
+        *dr = src[i];
+    }
+    PyBuffer_Release(&buf);
+    Py_RETURN_NONE;
+}
+
+/* Tight blocking read of n bytes from a PL011 RX FIFO. Used by
+ * synchronous bridge.call() — no asyncio yields, so the scheduler is
+ * blocked for the duration of the read. Acceptable because bridge
+ * responses are small (typically under 200 bytes). */
+static PyObject *py_pl011_read_buf(PyObject *self, PyObject *args) {
+    unsigned long long base;
+    Py_ssize_t n;
+    if (!PyArg_ParseTuple(args, "Kn", &base, &n)) return NULL;
+    if (n < 0) {
+        PyErr_SetString(PyExc_ValueError, "negative count");
+        return NULL;
+    }
+    PyObject *result = PyBytes_FromStringAndSize(NULL, n);
+    if (!result) return NULL;
+    char *out = PyBytes_AsString(result);
+    volatile uint32_t *dr = (volatile uint32_t *)(uintptr_t)(base + 0x000);
+    volatile uint32_t *fr = (volatile uint32_t *)(uintptr_t)(base + 0x018);
+    for (Py_ssize_t i = 0; i < n; i++) {
+        while (*fr & (1u << 4)) { /* RXFE: spin until byte arrives */ }
+        out[i] = (char)(*dr & 0xFF);
+    }
+    return result;
+}
+#else
+/* 16550: data port = base, LSR = base+5, LSR.THRE = bit 5, LSR.DR = bit 0. */
+static PyObject *py_uart16550_write_buf(PyObject *self, PyObject *args) {
+    unsigned int base;
+    Py_buffer buf;
+    if (!PyArg_ParseTuple(args, "Iy*", &base, &buf)) return NULL;
+    const uint8_t *src = (const uint8_t *)buf.buf;
+    for (Py_ssize_t i = 0; i < buf.len; i++) {
+        while ((inb((uint16_t)(base + 5)) & 0x20) == 0) { /* THRE wait */ }
+        outb((uint16_t)base, src[i]);
+    }
+    PyBuffer_Release(&buf);
+    Py_RETURN_NONE;
+}
+
+static PyObject *py_uart16550_read_buf(PyObject *self, PyObject *args) {
+    unsigned int base;
+    Py_ssize_t n;
+    if (!PyArg_ParseTuple(args, "In", &base, &n)) return NULL;
+    if (n < 0) {
+        PyErr_SetString(PyExc_ValueError, "negative count");
+        return NULL;
+    }
+    PyObject *result = PyBytes_FromStringAndSize(NULL, n);
+    if (!result) return NULL;
+    char *out = PyBytes_AsString(result);
+    for (Py_ssize_t i = 0; i < n; i++) {
+        while ((inb((uint16_t)(base + 5)) & 0x01) == 0) { /* DR wait */ }
+        out[i] = (char)(inb((uint16_t)base) & 0xFF);
+    }
+    return result;
+}
+#endif
+
 // Per-row in-place fill of a writable buffer: write `count` 32-bit
 // words at byte offset `off`. Used by Surface.fill_rect to avoid
 // allocating a fresh `pixel * span` bytes object per row.
@@ -956,6 +1036,13 @@ static PyMethodDef hal_methods[] = {
     {"mmio_write_buf32",     py_mmio_write_buf32,     METH_VARARGS, "MMIO bulk write: copy a 4-byte-multiple bytes-like buffer as 32-bit words"},
     {"buf_fill32",           py_buf_fill32,           METH_VARARGS, "Fill a writable buffer with a 32-bit pattern (in-place, no alloc)"},
     {"buf_fill32_at",        py_buf_fill32_at,        METH_VARARGS, "Fill `count` 32-bit words at byte offset `off` of a writable buffer"},
+#ifdef ARCH_ARM64
+    {"pl011_write_buf",      py_pl011_write_buf,      METH_VARARGS, "Bulk transmit a bytes-like through a PL011 UART (TXFF-polled)"},
+    {"pl011_read_buf",       py_pl011_read_buf,       METH_VARARGS, "Bulk receive `n` bytes from a PL011 UART (RXFE-polled, blocking)"},
+#else
+    {"uart16550_write_buf",  py_uart16550_write_buf,  METH_VARARGS, "Bulk transmit a bytes-like through a 16550 UART (THRE-polled)"},
+    {"uart16550_read_buf",   py_uart16550_read_buf,   METH_VARARGS, "Bulk receive `n` bytes from a 16550 UART (DR-polled, blocking)"},
+#endif
     {"invlpg",               HAL_INVLPG,              METH_VARARGS, "Invalidate TLB entry"},
     {"set_interrupt_router", py_set_interrupt_router, METH_VARARGS, "Register Python interrupt dispatcher"},
     {"set_event_loop",       py_set_event_loop,       METH_VARARGS, "Register asyncio event loop for threadsafe dispatch"},

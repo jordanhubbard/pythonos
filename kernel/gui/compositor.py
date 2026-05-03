@@ -23,13 +23,28 @@ from kernel.gui import input as _gui_input
 from kernel.gui.sdl2.surface import SDL_Surface
 
 
-# ── Title-bar geometry ──────────────────────────────────────────────────────
+# ── Title-bar + dock geometry ──────────────────────────────────────────────
 
 TITLE_BAR_H = 16
 CHROME_BORDER = 1
 CHROME_FOCUS_BG   = 0x224488
 CHROME_UNFOCUS_BG = 0x303030
 CHROME_FG         = 0xFFFFFF
+CLOSE_BOX_W       = 12
+CLOSE_BOX_PAD     = 2
+CLOSE_BG          = 0xC04040
+CLOSE_BG_HOT      = 0xE05050
+CLOSE_FG          = 0xFFFFFF
+
+DOCK_H            = 72
+DOCK_BG           = 0x14182A
+DOCK_PAD          = 8
+DOCK_ICON_SIZE    = 48
+DOCK_ICON_GAP     = 12
+DOCK_ICON_HOT_BG  = 0x4860A0
+DOCK_FG           = 0xFFFFFF
+DOCK_LABEL_BG     = 0x000000
+DOCK_LABEL_FG     = 0xFFFFFF
 
 
 # ── CompositorWindow ────────────────────────────────────────────────────────
@@ -88,6 +103,19 @@ class Compositor:
         # a full frame to this and then presenting in one bulk MMIO write
         # eliminates the clear→paint flicker.
         self._back: 'Surface | None' = None
+        # Bridge presenter: when the host pythonos_bridge companion is
+        # reachable, push draw commands directly to it instead of
+        # composing in-guest. Set lazily in start().
+        self._bridge_present = False
+        self._bridge_w = 0
+        self._bridge_h = 0
+        self._bridge_fb_handle = 0    # window's main surface handle
+        # App dock — registered apps surface as clickable buttons at the
+        # bottom of the desktop. Each entry is (name, async_entry_fn).
+        self._dock_apps: list[tuple[str, callable, callable | None]] = []
+        self._dock_hot = -1            # currently-hovered slot index or -1
+        self._dock_icons: dict[str, object] = {}    # name → SDL_Surface
+        self._close_hot_win: 'CompositorWindow | None' = None
 
     # ── Window registry ─────────────────────────────────────────────────────
 
@@ -143,17 +171,241 @@ class Compositor:
         s = win.surface
         fb.blit_buffer(s.pixels, s.w, s.h, win.x, body_y)
 
-    def _redraw(self) -> None:
+    async def _redraw(self) -> None:
+        if self._bridge_present:
+            # Always redraw in bridge mode — per-frame cost is just a
+            # handful of small JSON ops, and the dock + drag + cursor
+            # all want continuous updates.
+            self._redraw_bridge()
+            for w in self._windows:
+                w.dirty = False
+        else:
+            if not any(w.dirty for w in self._windows):
+                return
+            self._redraw_local()
+
+    def _redraw_bridge(self) -> None:
+        """Issue draw commands straight to the host SDL window. No
+        guest back-buffer; per-frame data on the wire is just JSON
+        envelopes (no pixel payloads)."""
+        from kernel.bridge import bridge as _br, BridgeError
+        fb_handle = self._bridge_fb_handle
+        try:
+            # Desktop background — fill whole window surface.
+            _br.call("surface.fill_rect", {
+                "handle": fb_handle, "rect": None,
+                "rgb": (self._desktop_bg & 0xFFFFFF) | 0xFF000000,
+            })
+            for win in self._windows:
+                if win.chrome:
+                    chrome_color = CHROME_FOCUS_BG if win.focused else CHROME_UNFOCUS_BG
+                    _br.call("surface.fill_rect", {
+                        "handle": fb_handle,
+                        "rect": {"x": win.x, "y": win.y,
+                                  "w": win.w, "h": TITLE_BAR_H},
+                        "rgb": (chrome_color & 0xFFFFFF) | 0xFF000000,
+                    })
+                    # Title text
+                    title_max = max(1, (win.w - 8 - CLOSE_BOX_W - 4) // GLYPH_W)
+                    title = (win.title or "")[:title_max]
+                    _br.call("text.draw", {
+                        "handle": fb_handle,
+                        "x": win.x + 4,
+                        "y": win.y + (TITLE_BAR_H - GLYPH_H) // 2,
+                        "text": title,
+                        "fg": (CHROME_FG & 0xFFFFFF) | 0xFF000000,
+                    })
+                    # Close box (top-right of chrome).
+                    cx, cy, cw, ch = self._close_box_rect(win)
+                    is_hot = (self._close_hot_win is win)
+                    _br.call("surface.fill_rect", {
+                        "handle": fb_handle,
+                        "rect": {"x": cx, "y": cy, "w": cw, "h": ch},
+                        "rgb": ((CLOSE_BG_HOT if is_hot else CLOSE_BG)
+                                & 0xFFFFFF) | 0xFF000000,
+                    })
+                    # ASCII × — use the lowercase x glyph for now.
+                    _br.call("text.draw", {
+                        "handle": fb_handle,
+                        "x": cx + (cw - GLYPH_W) // 2,
+                        "y": cy + (ch - GLYPH_H) // 2,
+                        "text": "x",
+                        "fg": (CLOSE_FG & 0xFFFFFF) | 0xFF000000,
+                    })
+                # Window body — blit src surface to dst at body position.
+                # _sync_to_host handles host-backed (no-op), guest-backed
+                # (lazy-create + upload), and mirrored (re-upload if dirty).
+                s = win.surface
+                src_handle = s._sync_to_host()
+                if src_handle != 0:
+                    body_y = win.y + (TITLE_BAR_H if win.chrome else 0)
+                    _br.call("surface.blit", {
+                        "src": src_handle,
+                        "dst": fb_handle,
+                        "dst_rect": {"x": win.x, "y": body_y,
+                                      "w": s.w, "h": s.h},
+                    })
+            self._draw_dock_bridge(fb_handle)
+            _br.call("display.present", {})
+        except BridgeError as e:
+            log.warn(f"compositor: bridge frame failed ({e}); "
+                     f"falling back to local framebuffer")
+            self._bridge_present = False
+            self._redraw_local()
+
+    def _dock_total_w(self) -> int:
+        n = len(self._dock_apps)
+        if n == 0:
+            return 0
+        return n * DOCK_ICON_SIZE + (n - 1) * DOCK_ICON_GAP
+
+    def _dock_first_x(self) -> int:
+        return (self._bridge_w - self._dock_total_w()) // 2
+
+    def _draw_dock_bridge(self, fb_handle: int) -> None:
+        """Paint the app dock at the bottom of the desktop window —
+        macOS-flavored: centered, square icons (not text labels), with
+        a tooltip-style label above the hovered slot."""
+        if not self._dock_apps:
+            return
+        from kernel.bridge import bridge as _br
+        dock_y = self._bridge_h - DOCK_H
+        # Dock backdrop.
+        _br.call("surface.fill_rect", {
+            "handle": fb_handle,
+            "rect": {"x": 0, "y": dock_y,
+                      "w": self._bridge_w, "h": DOCK_H},
+            "rgb": (DOCK_BG & 0xFFFFFF) | 0xFF000000,
+        })
+        first_x = self._dock_first_x()
+        slot_y  = dock_y + (DOCK_H - DOCK_ICON_SIZE) // 2
+        for i, entry_tuple in enumerate(self._dock_apps):
+            name = entry_tuple[0]
+            slot_x = first_x + i * (DOCK_ICON_SIZE + DOCK_ICON_GAP)
+            if i == self._dock_hot:
+                _br.call("surface.fill_rect", {
+                    "handle": fb_handle,
+                    "rect": {"x": slot_x - 4, "y": slot_y - 4,
+                              "w": DOCK_ICON_SIZE + 8,
+                              "h": DOCK_ICON_SIZE + 8},
+                    "rgb": (DOCK_ICON_HOT_BG & 0xFFFFFF) | 0xFF000000,
+                })
+            icon = self._ensure_icon(name)
+            if icon is not None:
+                src_handle = icon._sync_to_host()
+                if src_handle != 0:
+                    _br.call("surface.blit", {
+                        "src": src_handle,
+                        "dst": fb_handle,
+                        "dst_rect": {"x": slot_x, "y": slot_y,
+                                      "w": icon.w, "h": icon.h},
+                    })
+        if self._dock_hot >= 0:
+            label = self._dock_apps[self._dock_hot][0]
+            label_w = len(label) * GLYPH_W + 8
+            label_x = (first_x
+                        + self._dock_hot * (DOCK_ICON_SIZE + DOCK_ICON_GAP)
+                        + (DOCK_ICON_SIZE - label_w) // 2)
+            label_y = dock_y - GLYPH_H - 8
+            label_x = max(4, min(self._bridge_w - 4 - label_w, label_x))
+            _br.call("surface.fill_rect", {
+                "handle": fb_handle,
+                "rect": {"x": label_x, "y": label_y,
+                          "w": label_w, "h": GLYPH_H + 4},
+                "rgb": (DOCK_LABEL_BG & 0xFFFFFF) | 0xFF000000,
+            })
+            _br.call("text.draw", {
+                "handle": fb_handle,
+                "x": label_x + 4, "y": label_y + 2,
+                "text": label,
+                "fg": (DOCK_LABEL_FG & 0xFFFFFF) | 0xFF000000,
+            })
+
+    def _ensure_icon(self, name: str):
+        cached = self._dock_icons.get(name)
+        if cached is not None:
+            return cached
+        for entry_tuple in self._dock_apps:
+            if entry_tuple[0] != name:
+                continue
+            factory = entry_tuple[2]
+            try:
+                if factory is not None:
+                    surf = factory()
+                else:
+                    from apps._icons import default_icon
+                    surf = default_icon(name)
+            except Exception as e:
+                log.warn(f"dock icon factory for {name}: {e}")
+                return None
+            self._dock_icons[name] = surf
+            return surf
+        return None
+
+    def _close_box_rect(self, win: CompositorWindow) -> tuple[int, int, int, int]:
+        """Returns (x, y, w, h) of the close box for `win`'s chrome."""
+        return (
+            win.x + win.w - CLOSE_BOX_W - CLOSE_BOX_PAD,
+            win.y + (TITLE_BAR_H - CLOSE_BOX_W) // 2,
+            CLOSE_BOX_W, CLOSE_BOX_W,
+        )
+
+    def _close_box_hit(self, win: CompositorWindow,
+                        x: int, y: int) -> bool:
+        if not win.chrome:
+            return False
+        cx, cy, cw, ch = self._close_box_rect(win)
+        return cx <= x < cx + cw and cy <= y < cy + ch
+
+    def _dock_slot_at(self, x: int, y: int) -> int:
+        if not self._dock_apps or not self._bridge_present:
+            return -1
+        dock_y = self._bridge_h - DOCK_H
+        if not (dock_y <= y < self._bridge_h):
+            return -1
+        first_x = self._dock_first_x()
+        for i in range(len(self._dock_apps)):
+            slot_x = first_x + i * (DOCK_ICON_SIZE + DOCK_ICON_GAP)
+            if slot_x <= x < slot_x + DOCK_ICON_SIZE:
+                return i
+        return -1
+
+    def register_dock_app(self, name: str, entry,
+                            icon_factory=None) -> None:
+        """Add an app to the dock. `entry` is an awaitable callable;
+        `icon_factory` is an optional zero-arg function that returns
+        a 48x48 SDL_Surface."""
+        for entry_tuple in self._dock_apps:
+            if entry_tuple[0] == name:
+                return
+        self._dock_apps.append((name, entry, icon_factory))
+
+    async def _launch_dock_app(self, name: str, entry) -> None:
+        try:
+            await entry()
+        except Exception as e:
+            log.warn(f"dock: {name} crashed: {e}")
+
+    def launch_app(self, name: str, *args) -> None:
+        """Spawn an app by registry name. Apps inside the desktop call
+        this to open another app (e.g. files browser → editor)."""
+        from apps import registry
+        info = registry.get(name)
+        if info is None:
+            log.warn(f"launch_app: no such app '{name}'")
+            return
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            return
+        loop.create_task(self._launch_dock_app(name,
+                                                lambda: info.entry(*args)))
+
+    def _redraw_local(self) -> None:
+        """Original in-guest compose + ramfb-MMIO present path."""
         fb = _fb_mod.fb
         if fb == None:
             return
-        any_dirty = any(w.dirty for w in self._windows)
-        if not any_dirty:
-            return
-        # Compose the entire frame into an off-screen back buffer, then
-        # blast the whole thing to the visible framebuffer in one MMIO
-        # bulk write. v1 will track dirty rects properly; for now the
-        # full-screen present is fast enough and avoids flicker.
         if self._back is None or \
                 self._back.width != fb.width or self._back.height != fb.height:
             from kernel.display.framebuffer import Surface
@@ -162,7 +414,16 @@ class Compositor:
         back.fill(self._desktop_bg)
         for win in self._windows:
             self._paint_chrome(win, back)
-            self._paint_window_body(win, back)
+            # Window body — only works if surface is guest-backed.
+            s = win.surface
+            if getattr(s, "host_backed", False):
+                # This branch shouldn't normally hit (bridge mode is the
+                # only reason a surface goes host-backed). Skip the body
+                # rather than crashing — chrome alone is still visible.
+                pass
+            else:
+                back.blit_buffer(s.pixels, s.w, s.h, win.x,
+                                 win.y + (TITLE_BAR_H if win.chrome else 0))
             win.dirty = False
         fb.present(back._buf)
 
@@ -207,10 +468,22 @@ class Compositor:
             self.cycle_focus(direction)
             return
 
-        # Mouse-button-down: focus + maybe-start-drag
+        # Mouse-button-down: dock click → focus → maybe-start-drag / close
         if ev.kind == _gui_input.MOUSE_DOWN and ev.code == 1:  # left button
+            slot = self._dock_slot_at(ev.x, ev.y)
+            if slot >= 0:
+                name, entry = self._dock_apps[slot]
+                log.info(f"dock: launching {name}")
+                asyncio.get_event_loop().create_task(self._launch_dock_app(name, entry))
+                return
             win = self._window_at(ev.x, ev.y)
             if win != None:
+                # Close box?
+                if self._close_box_hit(win, ev.x, ev.y):
+                    log.info(f"window: closing '{win.title}'")
+                    win.close()
+                    self.remove_window(win)
+                    return
                 self._focus(win)
                 if win.chrome and ev.y < win.y + TITLE_BAR_H:
                     # Click on title bar — start drag
@@ -231,6 +504,15 @@ class Compositor:
                 for w in self._windows:
                     w.dirty = True
                 return
+            # Dock hover (light visual feedback)
+            new_hot = self._dock_slot_at(ev.x, ev.y)
+            if new_hot != self._dock_hot:
+                self._dock_hot = new_hot
+                if self._windows:
+                    self._windows[-1].dirty = True   # force redraw
+                else:
+                    # Force at least one redraw without windows.
+                    pass
             win = self.focused_window
             if win != None:
                 win.deliver(ev)
@@ -256,7 +538,7 @@ class Compositor:
     async def _draw_loop(self) -> None:
         period = 1.0 / self._tick_hz
         while self._running:
-            self._redraw()
+            await self._redraw()
             await asyncio.sleep(period)
 
     async def _input_loop(self) -> None:
@@ -277,9 +559,41 @@ class Compositor:
             return
         self._running = True
         loop = loop or asyncio.get_event_loop()
+        self._tasks.append(loop.create_task(self._open_bridge_window()))
         self._tasks.append(loop.create_task(self._draw_loop()))
         self._tasks.append(loop.create_task(self._input_loop()))
         log.info("compositor: started")
+
+    async def _open_bridge_window(self) -> None:
+        """Probe the host pythonos_bridge with a hello + display.open.
+        On success, switch the redraw path to issue draw commands
+        directly to the host AND start the input forwarder so SDL
+        events from the host window land in kernel.gui.input.queue."""
+        from kernel.bridge import bridge as _br, BridgeError
+        try:
+            _br.hello()
+        except BridgeError as e:
+            log.info(f"compositor: bridge unavailable ({e}); using local fb")
+            return
+        fb = _fb_mod.fb
+        cw = fb.width  if fb != None else 1024
+        ch = fb.height if fb != None else 768
+        try:
+            r = _br.call("display.open",
+                          {"w": cw, "h": ch, "title": "PythonOS"})
+        except BridgeError as e:
+            log.warn(f"compositor: display.open failed ({e}); using local fb")
+            return
+        self._bridge_w = int(r.get("w", cw))
+        self._bridge_h = int(r.get("h", ch))
+        self._bridge_fb_handle = int(r.get("fb_handle", 0))
+        self._bridge_present = True
+        # Forward host SDL events into kernel.gui.input.queue so the
+        # existing _route_event handler picks them up.
+        from kernel.bridge import input as _br_input
+        _br_input.start_forwarder()
+        log.info(f"compositor: bridge presenter active "
+                 f"({self._bridge_w}x{self._bridge_h}, fb_handle={self._bridge_fb_handle})")
 
     async def stop(self) -> None:
         self._running = False

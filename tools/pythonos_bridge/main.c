@@ -35,6 +35,7 @@
 #include <unistd.h>
 
 #include "vendor/cJSON.h"
+#include "font.h"
 
 #define BRIDGE_PROTOCOL_VERSION 1
 #define MAX_FRAME_BYTES         (16 * 1024 * 1024)   /* 16 MiB hard cap */
@@ -162,6 +163,166 @@ static int send_err(int fd, int id, int code, const char *msg) {
     return rc;
 }
 
+/* ─── Input event queue ─────────────────────────────────────────────────── */
+
+/* Mirrors kernel.gui.input.Event "kind" enum so the guest doesn't have to
+ * remap. Keep values in sync with kernel/gui/input.py. */
+#define EVT_KEY_DOWN    1
+#define EVT_KEY_UP      2
+#define EVT_MOUSE_MOVE  3
+#define EVT_MOUSE_DOWN  4
+#define EVT_MOUSE_UP    5
+#define EVT_QUIT        6
+
+typedef struct {
+    int kind;
+    int x, y, dx, dy;
+    int button;     /* mouse button: 1=L, 2=M, 3=R */
+    int code;       /* keyboard: SDL_Keycode */
+    int mod;        /* keyboard: SDL_Keymod bits */
+    char text[8];   /* keyboard: typed character (UTF-8) */
+} BridgeEvent;
+
+#define EVENT_QUEUE_CAP 256
+static BridgeEvent g_events[EVENT_QUEUE_CAP];
+static int g_evt_head = 0, g_evt_tail = 0;
+
+static void evt_enqueue(const BridgeEvent *e) {
+    int next = (g_evt_head + 1) % EVENT_QUEUE_CAP;
+    if (next == g_evt_tail) {
+        /* Drop oldest to keep the queue from going stale. */
+        g_evt_tail = (g_evt_tail + 1) % EVENT_QUEUE_CAP;
+    }
+    g_events[g_evt_head] = *e;
+    g_evt_head = next;
+}
+
+/* Pull all pending SDL events into our queue. Called on every op so
+ * the OS doesn't think the SDL window has hung. */
+static void drain_sdl_events(void) {
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        BridgeEvent be = {0};
+        switch (e.type) {
+            case SDL_MOUSEMOTION:
+                be.kind = EVT_MOUSE_MOVE;
+                be.x = e.motion.x;  be.y = e.motion.y;
+                be.dx = e.motion.xrel; be.dy = e.motion.yrel;
+                evt_enqueue(&be);
+                break;
+            case SDL_MOUSEBUTTONDOWN:
+                be.kind = EVT_MOUSE_DOWN;
+                be.x = e.button.x;  be.y = e.button.y;
+                be.button = e.button.button;
+                evt_enqueue(&be);
+                break;
+            case SDL_MOUSEBUTTONUP:
+                be.kind = EVT_MOUSE_UP;
+                be.x = e.button.x;  be.y = e.button.y;
+                be.button = e.button.button;
+                evt_enqueue(&be);
+                break;
+            case SDL_KEYDOWN:
+                be.kind = EVT_KEY_DOWN;
+                be.code = (int)e.key.keysym.sym;
+                be.mod  = e.key.keysym.mod;
+                evt_enqueue(&be);
+                break;
+            case SDL_KEYUP:
+                be.kind = EVT_KEY_UP;
+                be.code = (int)e.key.keysym.sym;
+                be.mod  = e.key.keysym.mod;
+                evt_enqueue(&be);
+                break;
+            case SDL_TEXTINPUT:
+                /* SDL emits a separate TEXTINPUT after KEYDOWN for
+                 * printable keys (handles shift/AltGr properly). Tag
+                 * the most recent KEY_DOWN with the typed text. */
+                if (g_evt_head != g_evt_tail) {
+                    int prev = (g_evt_head + EVENT_QUEUE_CAP - 1) % EVENT_QUEUE_CAP;
+                    if (g_events[prev].kind == EVT_KEY_DOWN &&
+                        g_events[prev].text[0] == '\0') {
+                        size_t n = strlen(e.text.text);
+                        if (n >= sizeof(g_events[prev].text)) {
+                            n = sizeof(g_events[prev].text) - 1;
+                        }
+                        memcpy(g_events[prev].text, e.text.text, n);
+                        g_events[prev].text[n] = '\0';
+                    }
+                }
+                break;
+            case SDL_QUIT:
+                be.kind = EVT_QUIT;
+                evt_enqueue(&be);
+                break;
+            default:
+                break;
+        }
+    }
+}
+
+/* ─── Display state + surface handle table ─────────────────────────────── */
+
+typedef struct {
+    int          open;
+    SDL_Window  *win;
+    SDL_Surface *fb;     /* SDL_GetWindowSurface — guest blits land here */
+    int          w, h;
+    int          fb_handle;   /* handle table entry pointing at fb (borrowed) */
+} BridgeWindow;
+
+static BridgeWindow g_window = { 0 };
+
+#define MAX_HANDLES 1024
+typedef struct {
+    SDL_Surface *surface;   /* NULL = unused slot */
+    int          owned;     /* 1 = SDL_FreeSurface on free; 0 = borrowed (window fb) */
+} HandleEntry;
+
+static HandleEntry g_handles[MAX_HANDLES];
+
+static int handle_alloc(SDL_Surface *s, int owned) {
+    /* Slot 0 reserved as "invalid" sentinel. */
+    for (int i = 1; i < MAX_HANDLES; i++) {
+        if (g_handles[i].surface == NULL) {
+            g_handles[i].surface = s;
+            g_handles[i].owned   = owned;
+            return i;
+        }
+    }
+    return 0;
+}
+
+static SDL_Surface *handle_get(int h) {
+    if (h <= 0 || h >= MAX_HANDLES) return NULL;
+    return g_handles[h].surface;
+}
+
+static void handle_free(int h) {
+    if (h <= 0 || h >= MAX_HANDLES) return;
+    SDL_Surface *s = g_handles[h].surface;
+    if (s && g_handles[h].owned) SDL_FreeSurface(s);
+    g_handles[h].surface = NULL;
+    g_handles[h].owned   = 0;
+}
+
+static int read_payload_trailer(int fd, size_t n, char **out_buf) {
+    *out_buf = NULL;
+    if (n == 0) return 0;
+    if (n > MAX_FRAME_BYTES) {
+        LOG_ERROR("payload trailer too large (%zu)", n);
+        return -1;
+    }
+    char *buf = (char *)malloc(n);
+    if (!buf) return -1;
+    if (read_exact(fd, buf, n) != 0) {
+        free(buf);
+        return -1;
+    }
+    *out_buf = buf;
+    return 0;
+}
+
 /* ─── Op dispatch ───────────────────────────────────────────────────────── */
 
 typedef struct {
@@ -205,14 +366,276 @@ static int op_shutdown(BridgeState *st, int id, cJSON *params) {
     return rc;
 }
 
-/* Dispatch table — keep small and stable; SDL ops land in later slices. */
+/* ─── Display + surface ops ─────────────────────────────────────────────── */
+
+static int op_display_open(BridgeState *st, int id, cJSON *params) {
+    cJSON *jw = cJSON_GetObjectItemCaseSensitive(params, "w");
+    cJSON *jh = cJSON_GetObjectItemCaseSensitive(params, "h");
+    cJSON *jt = cJSON_GetObjectItemCaseSensitive(params, "title");
+    if (!cJSON_IsNumber(jw) || !cJSON_IsNumber(jh)) {
+        return send_err(st->fd, id, 4, "w/h required");
+    }
+    int w = jw->valueint, h = jh->valueint;
+    const char *title = cJSON_IsString(jt) ? jt->valuestring : "PythonOS";
+
+    if (g_window.open) {
+        if (g_window.fb_handle) handle_free(g_window.fb_handle);
+        SDL_DestroyWindow(g_window.win);
+        g_window.win = NULL;
+        g_window.open = 0;
+    }
+    if (SDL_WasInit(SDL_INIT_VIDEO) == 0) {
+        if (SDL_Init(SDL_INIT_VIDEO) != 0) {
+            return send_err(st->fd, id, 5, SDL_GetError());
+        }
+    }
+    SDL_Window *win = SDL_CreateWindow(title,
+                                       SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                       w, h, SDL_WINDOW_SHOWN);
+    if (!win) return send_err(st->fd, id, 6, SDL_GetError());
+    g_window.win  = win;
+    g_window.fb   = SDL_GetWindowSurface(win);
+    g_window.w    = w;
+    g_window.h    = h;
+    g_window.open = 1;
+    g_window.fb_handle = handle_alloc(g_window.fb, /*owned=*/0);
+    LOG_INFO("display.open: %dx%d (%s) fb_handle=%d",
+             w, h, title, g_window.fb_handle);
+
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "handle", 1);
+    cJSON_AddNumberToObject(r, "fb_handle", g_window.fb_handle);
+    cJSON_AddNumberToObject(r, "w", w);
+    cJSON_AddNumberToObject(r, "h", h);
+    return send_ok(st->fd, id, r);
+}
+
+static int op_display_close(BridgeState *st, int id, cJSON *params) {
+    if (g_window.open) {
+        if (g_window.fb_handle) {
+            handle_free(g_window.fb_handle);
+            g_window.fb_handle = 0;
+        }
+        SDL_DestroyWindow(g_window.win);
+        g_window.win = NULL;
+        g_window.open = 0;
+    }
+    return send_ok(st->fd, id, NULL);
+}
+
+static int op_display_present(BridgeState *st, int id, cJSON *params) {
+    if (!g_window.open) return send_err(st->fd, id, 7, "display not open");
+    SDL_UpdateWindowSurface(g_window.win);
+    drain_sdl_events();
+    return send_ok(st->fd, id, NULL);
+}
+
+static int op_event_poll(BridgeState *st, int id, cJSON *params) {
+    drain_sdl_events();
+    cJSON *arr = cJSON_CreateArray();
+    while (g_evt_tail != g_evt_head) {
+        BridgeEvent be = g_events[g_evt_tail];
+        g_evt_tail = (g_evt_tail + 1) % EVENT_QUEUE_CAP;
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddNumberToObject(e, "kind",   be.kind);
+        cJSON_AddNumberToObject(e, "x",      be.x);
+        cJSON_AddNumberToObject(e, "y",      be.y);
+        cJSON_AddNumberToObject(e, "dx",     be.dx);
+        cJSON_AddNumberToObject(e, "dy",     be.dy);
+        cJSON_AddNumberToObject(e, "button", be.button);
+        cJSON_AddNumberToObject(e, "code",   be.code);
+        cJSON_AddNumberToObject(e, "mod",    be.mod);
+        if (be.text[0]) cJSON_AddStringToObject(e, "text", be.text);
+        cJSON_AddItemToArray(arr, e);
+    }
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddItemToObject(r, "events", arr);
+    return send_ok(st->fd, id, r);
+}
+
+static int op_surface_create(BridgeState *st, int id, cJSON *params) {
+    cJSON *jw = cJSON_GetObjectItemCaseSensitive(params, "w");
+    cJSON *jh = cJSON_GetObjectItemCaseSensitive(params, "h");
+    if (!cJSON_IsNumber(jw) || !cJSON_IsNumber(jh)) {
+        return send_err(st->fd, id, 4, "w/h required");
+    }
+    int w = jw->valueint, h = jh->valueint;
+    /* XRGB8888 to match guest byte order (B,G,R,X in memory on LE). */
+    SDL_Surface *s = SDL_CreateRGBSurface(0, w, h, 32,
+                                          0x00FF0000, 0x0000FF00,
+                                          0x000000FF, 0x00000000);
+    if (!s) return send_err(st->fd, id, 6, SDL_GetError());
+    int handle = handle_alloc(s, /*owned=*/1);
+    if (handle == 0) {
+        SDL_FreeSurface(s);
+        return send_err(st->fd, id, 10, "handle table full");
+    }
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "handle", handle);
+    return send_ok(st->fd, id, r);
+}
+
+static int op_surface_destroy(BridgeState *st, int id, cJSON *params) {
+    cJSON *jh = cJSON_GetObjectItemCaseSensitive(params, "handle");
+    if (!cJSON_IsNumber(jh)) return send_err(st->fd, id, 4, "handle required");
+    handle_free(jh->valueint);
+    return send_ok(st->fd, id, NULL);
+}
+
+static int parse_rect(cJSON *jrect, SDL_Rect *out) {
+    if (!cJSON_IsObject(jrect)) return -1;
+    cJSON *jx = cJSON_GetObjectItemCaseSensitive(jrect, "x");
+    cJSON *jy = cJSON_GetObjectItemCaseSensitive(jrect, "y");
+    cJSON *jw = cJSON_GetObjectItemCaseSensitive(jrect, "w");
+    cJSON *jh = cJSON_GetObjectItemCaseSensitive(jrect, "h");
+    if (!cJSON_IsNumber(jx) || !cJSON_IsNumber(jy) ||
+        !cJSON_IsNumber(jw) || !cJSON_IsNumber(jh)) return -1;
+    out->x = jx->valueint; out->y = jy->valueint;
+    out->w = jw->valueint; out->h = jh->valueint;
+    return 0;
+}
+
+static int op_surface_fill_rect(BridgeState *st, int id, cJSON *params) {
+    cJSON *jh    = cJSON_GetObjectItemCaseSensitive(params, "handle");
+    cJSON *jrect = cJSON_GetObjectItemCaseSensitive(params, "rect");
+    cJSON *jrgb  = cJSON_GetObjectItemCaseSensitive(params, "rgb");
+    if (!cJSON_IsNumber(jh) || !cJSON_IsNumber(jrgb)) {
+        return send_err(st->fd, id, 4, "handle/rgb required");
+    }
+    SDL_Surface *s = handle_get(jh->valueint);
+    if (!s) return send_err(st->fd, id, 7, "invalid handle");
+    SDL_Rect rect;
+    SDL_Rect *rp = NULL;
+    if (cJSON_IsObject(jrect)) {
+        if (parse_rect(jrect, &rect) != 0) {
+            return send_err(st->fd, id, 4, "rect must have x/y/w/h");
+        }
+        rp = &rect;
+    }
+    Uint32 color = (Uint32)jrgb->valuedouble;   /* may exceed int32 */
+    SDL_FillRect(s, rp, color);
+    return send_ok(st->fd, id, NULL);
+}
+
+static int op_surface_blit(BridgeState *st, int id, cJSON *params) {
+    cJSON *jsh = cJSON_GetObjectItemCaseSensitive(params, "src");
+    cJSON *jdh = cJSON_GetObjectItemCaseSensitive(params, "dst");
+    if (!cJSON_IsNumber(jsh) || !cJSON_IsNumber(jdh)) {
+        return send_err(st->fd, id, 4, "src/dst required");
+    }
+    SDL_Surface *src = handle_get(jsh->valueint);
+    SDL_Surface *dst = handle_get(jdh->valueint);
+    if (!src || !dst) return send_err(st->fd, id, 7, "invalid handle");
+    SDL_Rect src_rect, dst_rect;
+    SDL_Rect *sp = NULL, *dp = NULL;
+    cJSON *jsrc = cJSON_GetObjectItemCaseSensitive(params, "src_rect");
+    cJSON *jdst = cJSON_GetObjectItemCaseSensitive(params, "dst_rect");
+    if (cJSON_IsObject(jsrc)) {
+        if (parse_rect(jsrc, &src_rect) != 0) return send_err(st->fd, id, 4, "src_rect");
+        sp = &src_rect;
+    }
+    if (cJSON_IsObject(jdst)) {
+        if (parse_rect(jdst, &dst_rect) != 0) return send_err(st->fd, id, 4, "dst_rect");
+        dp = &dst_rect;
+    }
+    SDL_BlitSurface(src, sp, dst, dp);
+    return send_ok(st->fd, id, NULL);
+}
+
+/* Draw an ASCII string into the surface using the embedded 8x8 bitmap
+ * font. Pixels are written via SDL_FillRect for the foreground cells —
+ * one fill per "on" pixel. Cheap because rect=1x1 fills are tiny.
+ * params: {handle, x, y, text, fg, bg (optional)} */
+static int op_text_draw(BridgeState *st, int id, cJSON *params) {
+    cJSON *jh  = cJSON_GetObjectItemCaseSensitive(params, "handle");
+    cJSON *jx  = cJSON_GetObjectItemCaseSensitive(params, "x");
+    cJSON *jy  = cJSON_GetObjectItemCaseSensitive(params, "y");
+    cJSON *jt  = cJSON_GetObjectItemCaseSensitive(params, "text");
+    cJSON *jfg = cJSON_GetObjectItemCaseSensitive(params, "fg");
+    cJSON *jbg = cJSON_GetObjectItemCaseSensitive(params, "bg");
+    if (!cJSON_IsNumber(jh) || !cJSON_IsNumber(jx) || !cJSON_IsNumber(jy) ||
+        !cJSON_IsString(jt) || !cJSON_IsNumber(jfg)) {
+        return send_err(st->fd, id, 4, "handle/x/y/text/fg required");
+    }
+    SDL_Surface *s = handle_get(jh->valueint);
+    if (!s) return send_err(st->fd, id, 7, "invalid handle");
+    int x0 = jx->valueint, y0 = jy->valueint;
+    Uint32 fg = (Uint32)jfg->valuedouble;
+    int has_bg = cJSON_IsNumber(jbg);
+    Uint32 bg = has_bg ? (Uint32)jbg->valuedouble : 0;
+    const char *text = jt->valuestring;
+    int cx = x0;
+    int cy = y0;
+    for (const char *p = text; *p; p++) {
+        char c = *p;
+        if (c == '\n') { cy += BRIDGE_GLYPH_H; cx = x0; continue; }
+        if (c < 0x20 || c > 0x7E) c = '?';
+        const uint8_t *glyph = FONT_DATA[c - 0x20];
+        for (int row = 0; row < BRIDGE_GLYPH_H; row++) {
+            uint8_t bits = glyph[row];
+            for (int col = 0; col < BRIDGE_GLYPH_W; col++) {
+                int on = bits & (0x80 >> col);
+                SDL_Rect r = { cx + col, cy + row, 1, 1 };
+                if (on)         SDL_FillRect(s, &r, fg);
+                else if (has_bg) SDL_FillRect(s, &r, bg);
+            }
+        }
+        cx += BRIDGE_GLYPH_W;
+    }
+    return send_ok(st->fd, id, NULL);
+}
+
+/* Bulk pixel upload — used by image decoders + other one-shot pixel
+ * pushes. params: {handle, payload_len:N}, then N raw BGRX bytes. */
+static int op_surface_upload(BridgeState *st, int id, cJSON *params) {
+    cJSON *jh = cJSON_GetObjectItemCaseSensitive(params, "handle");
+    cJSON *jp = cJSON_GetObjectItemCaseSensitive(params, "payload_len");
+    if (!cJSON_IsNumber(jh) || !cJSON_IsNumber(jp)) {
+        if (cJSON_IsNumber(jp)) {
+            char *drop = NULL;
+            (void)read_payload_trailer(st->fd, (size_t)jp->valueint, &drop);
+            free(drop);
+        }
+        return send_err(st->fd, id, 4, "handle/payload_len required");
+    }
+    size_t plen = (size_t)jp->valueint;
+    char *payload = NULL;
+    if (read_payload_trailer(st->fd, plen, &payload) != 0) return -1;
+
+    SDL_Surface *s = handle_get(jh->valueint);
+    if (!s) {
+        free(payload);
+        return send_err(st->fd, id, 7, "invalid handle");
+    }
+    if (plen != (size_t)s->w * s->h * 4) {
+        free(payload);
+        return send_err(st->fd, id, 9, "payload size != w*h*4");
+    }
+    SDL_LockSurface(s);
+    memcpy(s->pixels, payload, plen);
+    SDL_UnlockSurface(s);
+    free(payload);
+    return send_ok(st->fd, id, NULL);
+}
+
+/* Dispatch table — keep small and stable; input/audio ops land in later slices. */
 static const struct {
     const char *name;
     op_handler  fn;
 } OP_TABLE[] = {
-    { "hello",    op_hello    },
-    { "ping",     op_ping     },
-    { "shutdown", op_shutdown },
+    { "hello",              op_hello              },
+    { "ping",               op_ping               },
+    { "shutdown",           op_shutdown           },
+    { "display.open",       op_display_open       },
+    { "display.close",      op_display_close      },
+    { "display.present",    op_display_present    },
+    { "surface.create",     op_surface_create     },
+    { "surface.destroy",    op_surface_destroy    },
+    { "surface.fill_rect",  op_surface_fill_rect  },
+    { "surface.blit",       op_surface_blit       },
+    { "surface.upload",     op_surface_upload     },
+    { "text.draw",          op_text_draw          },
+    { "event.poll",         op_event_poll         },
 };
 
 #define OP_TABLE_LEN ((int)(sizeof(OP_TABLE) / sizeof(OP_TABLE[0])))
@@ -311,6 +734,12 @@ static int serve_unix_socket(const char *path) {
     close(conn);
     close(srv);
     unlink(path);
+    if (g_window.open) {
+        SDL_DestroyWindow(g_window.win);
+        g_window.win = NULL;
+        g_window.open = 0;
+    }
+    if (SDL_WasInit(SDL_INIT_VIDEO)) SDL_Quit();
     return rc;
 }
 

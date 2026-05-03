@@ -69,8 +69,11 @@ async def _wait_close(win: CompositorWindow) -> None:
     win.close()
 
 
+from apps._icons import image_viewer_icon
+
 registry.register(
     name="image_viewer",
     description="Display BMP / PPM images (PNG/JPEG via follow-up decoders)",
     entry=main,
+    icon_factory=image_viewer_icon,
 )

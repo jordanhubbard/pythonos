@@ -12,7 +12,8 @@ GMAKE ?= $(if $(shell which gmake 2>/dev/null),gmake,make)
 # Targets that the user is expected to invoke directly. Every one is
 # forwarded as `gmake -f GNUMakefile <target>` so options like
 # `make TARGET_ARCH=arm64 build` work as expected.
-TOP_GOALS := all build run start stop restart test test-gui clean cleanall \
+TOP_GOALS := all build build-gui run run-gui run-fb start stop restart \
+             test test-gui clean cleanall \
              docker-build help \
              bridge bridge-clean test-bridge \
              x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 \

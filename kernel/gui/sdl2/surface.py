@@ -1,11 +1,21 @@
-"""sdl2.surface — :class:`SDL_Surface`, :func:`SDL_FillRect`, color helpers.
+"""sdl2.surface — SDL_Surface and friends.
 
-A :class:`SDL_Surface` here is a thin Python wrapper around a bytearray
-holding XRGB8888 pixels. Drawing is done by mutating that bytearray;
-:func:`SDL_UpdateWindowSurface` copies it to the framebuffer.
+Surfaces have two backings:
 
-The .contents shim emulates the PySDL2 idiom where ``surface.contents``
-is the ctypes-dereferenced struct — for us it's just ``self``.
+* HOST-backed (default when the pythonos_bridge companion is up): the
+  pixel buffer lives in the host process; `self.handle` is an integer
+  the bridge uses to identify the SDL_Surface. SDL_FillRect /
+  SDL_BlitSurface become bridge ops with NO pixel data on the wire.
+  This is the fast path and what window surfaces use.
+
+* GUEST-backed: classic mode — `self.pixels` is a guest bytearray and
+  drawing mutates it directly. Used by image decoders (PNG/JPEG/BMP),
+  TextWin scroll, and anything else that needs raw pixel access. Such
+  a surface can be uploaded to a fresh host handle via
+  `Surface.upload_to_host()` when it's time to display it.
+
+The `pixels` attribute is None on host-backed surfaces — code that
+needs to poke pixels must request guest backing explicitly.
 """
 
 from dataclasses import dataclass
@@ -48,32 +58,121 @@ class SDL_Color:
     a: int = 255
 
 
+# ── Bridge availability ─────────────────────────────────────────────────────
+
+def _bridge_open() -> bool:
+    """Was a hello() handshake successful? Cheap inline check —
+    avoids a circular import at module load."""
+    try:
+        from kernel.bridge import bridge as _br
+        return _br.opened
+    except Exception:
+        return False
+
+
 # ── Surface ─────────────────────────────────────────────────────────────────
 
 class SDL_Surface:
-    """XRGB8888 software surface."""
+    """XRGB8888 surface — runs in one of three modes:
 
-    def __init__(self, w: int, h: int) -> None:
-        self.w = w
-        self.h = h
+    * `host`     — pure host-backed. `pixels` is None; `handle` is a
+                   bridge handle. SDL_FillRect / SDL_BlitSurface dispatch
+                   as bridge ops with no pixel data on the wire.
+    * `guest`    — pure guest-backed. `pixels` is a bytearray; `handle`
+                   is 0. Drawing mutates the bytearray directly. Used by
+                   image decoders that need raw pixel access.
+    * `mirrored` — guest is the source of truth (so draw_char / pixel
+                   pokes work), but the host has a handle the compositor
+                   blits from. `_sync_to_host()` uploads when dirty.
+
+    Construct with `host_backed=True/False` to force; `None` auto-picks
+    `host` if the bridge is open, `guest` otherwise.
+    """
+
+    def __init__(self, w: int, h: int,
+                 host_backed: bool | None = None) -> None:
+        self.w     = w
+        self.h     = h
         self.pitch = w * 4
-        self.pixels = bytearray(w * h * 4)
         self.format = SDL_PixelFormat(32)
+
+        if host_backed is None:
+            host_backed = _bridge_open()
+        self.host_backed = host_backed
+        self.dirty = False    # guest pixels written since last host sync
+
+        if host_backed:
+            from kernel.bridge import bridge as _br
+            r = _br.call("surface.create", {"w": w, "h": h})
+            self.handle = int(r["handle"])
+            self.pixels = None
+        else:
+            self.handle = 0   # lazy: allocated when first synced to host
+            self.pixels = bytearray(w * h * 4)
 
     @property
     def contents(self):
         return self
 
-    # Internal pixel access (LE-stored XRGB)
+    def _sync_to_host(self) -> int:
+        """Return a host bridge handle the compositor can blit from.
+        For `host` mode, returns `self.handle` directly. For `guest` /
+        `mirrored` mode, lazily allocates a host handle and uploads
+        pixels if `dirty`. Cleared dirty bit on success."""
+        if self.host_backed:
+            return self.handle
+        if not _bridge_open():
+            return 0
+        from kernel.bridge import bridge as _br
+        if self.handle == 0:
+            r = _br.call("surface.create", {"w": self.w, "h": self.h})
+            self.handle = int(r["handle"])
+            self.dirty = True   # force initial upload
+        if self.dirty:
+            _br.call("surface.upload", {"handle": self.handle},
+                     payload=bytes(self.pixels))
+            self.dirty = False
+        return self.handle
+
+    # Backward-compat shim — old code path: just a sync.
+    def _promote_to_host(self) -> None:
+        self._sync_to_host()
+
+    def free(self) -> None:
+        if self.handle:
+            try:
+                from kernel.bridge import bridge as _br
+                _br.call("surface.destroy", {"handle": self.handle})
+            except Exception:
+                pass
+            self.handle = 0
+
+    # ── Pixel access ───────────────────────────────────────────────────────
+    # Guest-backed surfaces support direct pixel pokes. Host-backed
+    # surfaces don't have `pixels`; callers should use SDL_FillRect /
+    # SDL_BlitSurface (which dispatch through the bridge).
+
     def _put(self, x: int, y: int, color: int) -> None:
+        if self.host_backed:
+            return  # silent: host-backed surfaces don't expose pixel pokes
         if 0 <= x < self.w and 0 <= y < self.h:
             o = (y * self.w + x) * 4
             self.pixels[o]     =  color        & 0xFF  # B
             self.pixels[o + 1] = (color >>  8) & 0xFF  # G
             self.pixels[o + 2] = (color >> 16) & 0xFF  # R
             self.pixels[o + 3] = 0xFF                  # X
+            self.dirty = True
 
     def _fill_rect(self, x: int, y: int, w: int, h: int, color: int) -> None:
+        if self.host_backed:
+            from kernel.bridge import bridge as _br
+            word = (color & 0xFFFFFF) | 0xFF000000
+            _br.call("surface.fill_rect", {
+                "handle": self.handle,
+                "rect": {"x": x, "y": y, "w": w, "h": h},
+                "rgb": word,
+            })
+            return
         x1 = max(0, x); y1 = max(0, y)
         x2 = min(self.w, x + w); y2 = min(self.h, y + h)
         if x2 <= x1 or y2 <= y1:
@@ -83,8 +182,26 @@ class SDL_Surface:
         span = x2 - x1
         for row in range(y1, y2):
             buf_fill32_at(self.pixels, (row * self.w + x1) * 4, span, word)
+        self.dirty = True
 
-    def _blit(self, src: "SDL_Surface", dst_x: int, dst_y: int) -> None:
+    def _blit(self, src: "SDL_Surface", dst_x: int, dst_y: int,
+              src_rect: SDL_Rect | None = None) -> None:
+        if self.host_backed:
+            src_handle = src._sync_to_host()
+            from kernel.bridge import bridge as _br
+            params = {
+                "src": src_handle,
+                "dst": self.handle,
+                "dst_rect": {"x": dst_x, "y": dst_y, "w": src.w, "h": src.h},
+            }
+            if src_rect is not None:
+                params["src_rect"] = {"x": src_rect.x, "y": src_rect.y,
+                                       "w": src_rect.w, "h": src_rect.h}
+            _br.call("surface.blit", params)
+            return
+        # guest-backed dst.
+        if src.host_backed:
+            return  # no download path for host→guest blits in v0
         for sy in range(src.h):
             dy = dst_y + sy
             if dy < 0 or dy >= self.h:
@@ -95,11 +212,17 @@ class SDL_Surface:
             if n <= 0:
                 continue
             self.pixels[do:do + n] = src.pixels[so:so + n]
+        self.dirty = True
 
-    # ── Text rendering (8x16 bitmap font, kernel.display.font) ─────────────
+    # ── Text rendering ──────────────────────────────────────────────────────
+    # On host-backed surfaces, route through the bridge `text.draw` op.
+    # On guest-backed surfaces, render via the existing pixel-poke path.
 
     def draw_char(self, x: int, y: int, char: str,
                   fg: int = 0xFFFFFF, bg: int | None = None) -> None:
+        if self.host_backed:
+            self.draw_text(x, y, char, fg=fg, bg=bg)
+            return
         from kernel.display.font import get_glyph
         glyph = get_glyph(char)
         for row, byte in enumerate(glyph):
@@ -114,6 +237,18 @@ class SDL_Surface:
     def draw_text(self, x: int, y: int, text: str,
                   fg: int = 0xFFFFFF, bg: int | None = None) -> tuple[int, int]:
         from kernel.display.font import GLYPH_W, GLYPH_H
+        if self.host_backed:
+            from kernel.bridge import bridge as _br
+            params = {
+                "handle": self.handle,
+                "x": x, "y": y, "text": text,
+                "fg": (fg & 0xFFFFFF) | 0xFF000000,
+            }
+            if bg is not None:
+                params["bg"] = (bg & 0xFFFFFF) | 0xFF000000
+            _br.call("text.draw", params)
+            # Best-effort cursor advance — assumes single-line text.
+            return (x + len(text) * GLYPH_W, y)
         cx, cy = x, y
         for ch in text:
             if ch == '\n':
@@ -139,12 +274,7 @@ def SDL_MapRGBA(fmt, r: int, g: int, b: int, a: int) -> int:
 
 def SDL_FillRect(surface, rect, color: int) -> int:
     """Fill ``rect`` (or whole surface if rect == None) with ``color``."""
-    if isinstance(surface, SDL_Surface):
-        s = surface
-    elif hasattr(surface, "contents"):
-        s = surface.contents
-    else:
-        s = surface
+    s = surface.contents if hasattr(surface, "contents") else surface
     if rect == None:
         s._fill_rect(0, 0, s.w, s.h, color)
     else:
@@ -158,18 +288,22 @@ def SDL_BlitSurface(src, src_rect, dst, dst_rect) -> int:
     s_dst = dst.contents if hasattr(dst, "contents") else dst
     dx = dst_rect.x if dst_rect != None else 0
     dy = dst_rect.y if dst_rect != None else 0
-    s_dst._blit(s_src, dx, dy)
+    sr = (src_rect.contents if hasattr(src_rect, "contents") else src_rect) \
+         if src_rect is not None else None
+    s_dst._blit(s_src, dx, dy, sr)
     return 0
 
 
 def SDL_FreeSurface(surface) -> None:
-    pass  # GC handles it
+    s = surface.contents if hasattr(surface, "contents") else surface
+    s.free()
 
 
 def SDL_LoadBMP(path: bytes | str):
     """Minimal BMP loader sufficient for the compatibility corpus.
 
-    Supports 24- and 32-bit uncompressed BMP only — the common ones."""
+    Always allocates a guest-backed surface (we need raw pixel access
+    to decode), then leaves it for the caller to blit somewhere."""
     p = path.decode() if isinstance(path, (bytes, bytearray)) else str(path)
     with open(p, "rb") as f:
         data = f.read()
@@ -183,7 +317,7 @@ def SDL_LoadBMP(path: bytes | str):
         raise ValueError(f"SDL_LoadBMP: {p}: unsupported bpp={bpp}")
     flip = height > 0
     h = abs(height)
-    s = SDL_Surface(width, h)
+    s = SDL_Surface(width, h, host_backed=False)
     row_bytes = (width * bpp // 8 + 3) & ~3   # 4-byte aligned
     for row in range(h):
         src_row = h - 1 - row if flip else row

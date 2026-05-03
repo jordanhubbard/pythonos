@@ -1,18 +1,27 @@
 """
 kernel.bridge — guest-side client for the pythonos_bridge host
-companion. Apps call ``await bridge.call(op, params)`` to invoke a
-host-side operation; the wire format mirrors NanoVM/pybridge:
+companion.
 
-  4-byte big-endian length, then UTF-8 JSON payload:
+Calls are SYNCHRONOUS: the bulk-read C primitive (kernel.hal.io
+pl011_read_buf / uart16550_read_buf) blocks the kernel scheduler for
+the duration of each call. Acceptable because bridge responses are
+small (typically under 200 bytes) and the round-trip is dominated by
+QEMU's MMIO trap cost, which an async-yield wouldn't help. Apps call
+`bridge.call(...)` from any context — no `await` required.
+
+Wire format (mirrors NanoVM/pybridge):
+  4-byte big-endian length, then UTF-8 JSON payload.
+
+Frame schemas:
     request:  {"v":1, "id":<int>, "op":<str>, "params":{...}}
     response: {"v":1, "id":<int>, "ok":true,  "result":{...}}
     error:    {"v":1, "id":<int>, "ok":false, "error":{"code":..., "msg":...}}
 
-Slice 2 ships the transport + handshake (hello / ping / shutdown).
-Display / audio / input ops land in Slice 3.
+When `params` carries `payload_len: N`, exactly N raw bytes follow the
+JSON envelope (binary trailer). The bridge uses this for one-shot
+pixel uploads (surface.upload).
 """
 
-import asyncio
 import json
 import struct
 
@@ -32,42 +41,48 @@ class BridgeError(Exception):
 
 
 class Bridge:
-    """Singleton client. Serializes calls so concurrent coroutines
-    can't interleave frames on the byte stream."""
+    """Singleton client. Calls are synchronous; the kernel scheduler is
+    blocked for the duration of each call (typically tens of µs)."""
 
     def __init__(self) -> None:
         self._next_id = 1
-        self._lock    = asyncio.Lock()
         self._opened  = False
 
-    async def hello(self) -> dict:
-        """Handshake. Returns the host's hello result (agent name,
-        protocol version, sdl version)."""
-        r = await self.call("hello", {"protocol": PROTOCOL_VERSION})
+    def hello(self) -> dict:
+        """Handshake. Returns the host's hello result."""
+        r = self.call("hello", {"protocol": PROTOCOL_VERSION})
         self._opened = True
         return r
 
-    async def call(self, op: str, params: dict | None = None) -> dict:
-        """Send `op` with `params`, await the response, return the
-        result dict on success or raise BridgeError on failure."""
-        async with self._lock:
-            return await self._call_unlocked(op, params or {})
+    @property
+    def opened(self) -> bool:
+        return self._opened
 
-    async def _call_unlocked(self, op: str, params: dict) -> dict:
+    def call(self, op: str, params: dict | None = None,
+              payload: bytes = b"") -> dict:
+        """Send `op` with `params` (and optional binary `payload`),
+        block on the response, return the result dict on success or
+        raise BridgeError on failure."""
         frame_id = self._next_id
         self._next_id += 1
+        env_params = dict(params or {})
+        if payload:
+            env_params["payload_len"] = len(payload)
         body = json.dumps({
-            "v": PROTOCOL_VERSION, "id": frame_id, "op": op, "params": params,
+            "v": PROTOCOL_VERSION, "id": frame_id,
+            "op": op, "params": env_params,
         }).encode("utf-8")
 
         _uart.write_bytes(struct.pack(">I", len(body)) + body)
+        if payload:
+            _uart.write_bytes(payload)
 
-        hdr = await _uart.read_bytes(4)
+        hdr = _uart.read_bytes(4)
         (length,) = struct.unpack(">I", hdr)
         if length == 0 or length > 16 * 1024 * 1024:
             raise BridgeError(-1, f"absurd response length {length}")
-        payload = await _uart.read_bytes(length)
-        env = json.loads(payload.decode("utf-8"))
+        body = _uart.read_bytes(length)
+        env = json.loads(body.decode("utf-8"))
 
         if env.get("id") != frame_id:
             raise BridgeError(-2, f"id mismatch (sent {frame_id}, got {env.get('id')})")
@@ -81,13 +96,44 @@ class Bridge:
 bridge = Bridge()
 
 
-async def open_bridge() -> bool:
+def open_bridge() -> bool:
     """Probe the host bridge with a hello. Returns True on success.
-    Logs a clear diagnostic and returns False on timeout."""
+    Logs a clear diagnostic and returns False on failure."""
     try:
-        r = await asyncio.wait_for(bridge.hello(), timeout=2.0)
-    except (TimeoutError, BridgeError) as e:
+        r = bridge.hello()
+    except BridgeError as e:
         log.warn(f"bridge: hello failed ({e})")
         return False
     log.info(f"bridge: ready, agent={r.get('agent')} sdl={r.get('sdl_ver')}")
     return True
+
+
+def py_desktop():
+    """Open the PythonOS desktop on the host pythonos_bridge. Returns
+    the compositor instance on success or ``None`` if no bridge is
+    reachable.
+
+    Callable from any REPL session — same behaviour for the kernel
+    shell, the TCP REPL, or a bare invocation. Idempotent: subsequent
+    calls just return the live compositor without re-launching."""
+    try:
+        bridge.hello()
+    except BridgeError:
+        return None
+    from kernel.gui.compositor import compositor
+    # Pull in all apps so their registry.register() calls fire.
+    try:
+        import apps                  # noqa: F401
+        import apps.demos             # noqa: F401
+        import apps.terminal          # noqa: F401
+        import apps.editor            # noqa: F401
+        import apps.image_viewer      # noqa: F401
+        import apps.files             # noqa: F401
+        from apps import registry
+        for info in registry.list_apps():
+            compositor.register_dock_app(info.name, info.entry,
+                                          info.icon_factory)
+    except Exception as e:
+        log.warn(f"py_desktop: app registration: {e}")
+    compositor.start()
+    return compositor

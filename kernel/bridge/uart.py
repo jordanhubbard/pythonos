@@ -78,25 +78,20 @@ else:
     _try_read_byte = _com2_try_read_byte
 
 
-def write_bytes(buf) -> None:
-    """Blocking-ish bulk write. Each TX poll is fast; we don't yield
-    inside writes since frames are small (<= 16 KiB worst case)."""
-    for b in buf:
-        _write_byte(b)
+if _ARCH == "arm64":
+    def write_bytes(buf) -> None:
+        """Bulk write through PL011 #1 in C."""
+        _hal.pl011_write_buf(_PL011_BASE, buf)
 
+    def read_bytes(n: int) -> bytes:
+        """Synchronous tight-poll read of n bytes (blocks the kernel
+        scheduler — bridge responses are small enough that this is
+        cheaper than the async-yield-per-byte alternative)."""
+        return _hal.pl011_read_buf(_PL011_BASE, n)
+else:
+    def write_bytes(buf) -> None:
+        """Bulk write through COM2 in C."""
+        _hal.uart16550_write_buf(_COM2_BASE, buf)
 
-async def read_byte() -> int:
-    """Yield until a byte is ready, then return it."""
-    while True:
-        b = _try_read_byte()
-        if b >= 0:
-            return b
-        await asyncio.sleep(0)
-
-
-async def read_bytes(n: int) -> bytes:
-    """Read exactly n bytes from the bridge UART."""
-    out = bytearray(n)
-    for i in range(n):
-        out[i] = await read_byte()
-    return bytes(out)
+    def read_bytes(n: int) -> bytes:
+        return _hal.uart16550_read_buf(_COM2_BASE, n)

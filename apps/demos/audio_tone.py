@@ -66,8 +66,11 @@ async def main(*args, **kwargs) -> None:
     win.close()
 
 
+from apps._icons import audio_tone_icon
+
 registry.register(
     name="audio_tone",
     description="440 Hz tone through the mixer (audio demo)",
     entry=main,
+    icon_factory=audio_tone_icon,
 )

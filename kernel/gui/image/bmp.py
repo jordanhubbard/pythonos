@@ -19,7 +19,7 @@ def decode_bmp(data: bytes) -> SDL_Surface:
         raise ValueError(f"bmp: unsupported bpp={bpp}")
     flip = height > 0
     h = abs(height)
-    s = SDL_Surface(width, h)
+    s = SDL_Surface(width, h, host_backed=False)
     row_bytes = (width * bpp // 8 + 3) & ~3
     for row in range(h):
         src_row = h - 1 - row if flip else row

@@ -155,7 +155,7 @@ def decode_png(data: bytes) -> SDL_Surface:
 
     pixels = _unfilter(raw, width, height, bpp)
 
-    s = SDL_Surface(width, height)
+    s = SDL_Surface(width, height, host_backed=False)
     if color_type == 2:    # RGB
         for i in range(width * height):
             r = pixels[i*3]; g = pixels[i*3+1]; b = pixels[i*3+2]

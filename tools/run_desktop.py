@@ -46,7 +46,10 @@ def _bridge_chardev_args(socket_path: str | None) -> list:
 
 def _qemu_cmd_x86_64(iso: str, repl_port: int, display: str, audiodev: str,
                       bridge_socket: str | None = None) -> list:
-    return [
+    # When the bridge is on, the host SDL window IS the desktop —
+    # QEMU's own framebuffer console window is redundant noise.
+    qdisp = "none" if bridge_socket else display
+    cmd = [
         "qemu-system-x86_64",
         "-machine", "q35",
         "-cpu", "qemu64",
@@ -59,27 +62,27 @@ def _qemu_cmd_x86_64(iso: str, repl_port: int, display: str, audiodev: str,
         "-no-reboot", "-no-shutdown",
         "-cdrom", iso,
         "-boot", "d",
-        "-display", display,
-        "-vga", "std",
+        "-display", qdisp,
         "-serial", "stdio",
-    ] + _bridge_chardev_args(bridge_socket)
+    ]
+    if not bridge_socket:
+        cmd += ["-vga", "std"]    # only needed for the QEMU-native fb path
+    return cmd + _bridge_chardev_args(bridge_socket)
 
 
 def _qemu_cmd_arm64(elf: str, repl_port: int, display: str, audiodev: str,
                      bridge_socket: str | None = None) -> list:
     disk = os.environ.get("PYTHONOS_ARM64_DISK", "disk-arm64.img")
-    return [
+    qdisp = "none" if bridge_socket else display
+    cmd = [
         "qemu-system-aarch64",
         "-machine", "virt",
         "-cpu", "cortex-a57",
         "-m", "2G",
         "-smp", "2",
         "-no-reboot", "-no-shutdown",
-        "-display", display,
-        "-device", "ramfb",
+        "-display", qdisp,
         "-serial", "stdio",
-        "-device", "virtio-keyboard-device",
-        "-device", "virtio-tablet-device",
         "-audiodev", f"{audiodev},id=a",
         "-device", "virtio-sound-device,audiodev=a",
         "-netdev", f"user,id=net1,hostfwd=tcp::{repl_port}-:5000",
@@ -87,7 +90,16 @@ def _qemu_cmd_arm64(elf: str, repl_port: int, display: str, audiodev: str,
         "-drive", f"if=none,file={disk},format=raw,id=hd0",
         "-device", "virtio-blk-device,drive=hd0",
         "-kernel", elf,
-    ] + _bridge_chardev_args(bridge_socket)
+    ]
+    if not bridge_socket:
+        # ramfb + virtio-input only matter when we're using QEMU's native
+        # display path (the bridge handles input on its own SDL window).
+        cmd += [
+            "-device", "ramfb",
+            "-device", "virtio-keyboard-device",
+            "-device", "virtio-tablet-device",
+        ]
+    return cmd + _bridge_chardev_args(bridge_socket)
 
 
 def _spawn_bridge(socket_path: str) -> subprocess.Popen:
@@ -226,12 +238,18 @@ def main() -> int:
 
     default_port = "5560" if arch == "x86_64" else "5561"
     port = int(os.environ.get("PYTHONOS_DESKTOP_PORT", default_port))
-    boot_app = os.environ.get("PYTHONOS_DESKTOP_APP", "bouncing_ball")
-    # PYTHONOS_DESKTOP_BOOT_CMD overrides the line we inject at the kernel
-    # prompt — useful for one-shots like `bridge_ping` that don't go
-    # through the compositor at all.
-    boot_cmd = os.environ.get("PYTHONOS_DESKTOP_BOOT_CMD",
-                               f"pythonos_gui {boot_app}")
+    boot_app = os.environ.get("PYTHONOS_DESKTOP_APP", "")
+    # PYTHONOS_DESKTOP_BOOT_CMD overrides the line we inject at the
+    # kernel prompt. Default boots straight into the desktop with the
+    # full app dock (py_desktop()). Set PYTHONOS_DESKTOP_APP=<name> to
+    # also auto-launch a specific app, or override the whole command
+    # with PYTHONOS_DESKTOP_BOOT_CMD for one-offs like bridge_ping.
+    if boot_app:
+        # Legacy single-app launch (pre-dock).
+        default_cmd = f"pythonos_gui {boot_app}"
+    else:
+        default_cmd = "py_desktop()"
+    boot_cmd = os.environ.get("PYTHONOS_DESKTOP_BOOT_CMD", default_cmd)
 
     display  = os.environ.get("QEMU_DISPLAY",  "cocoa" if _macos() else "sdl")
     audiodev = os.environ.get("QEMU_AUDIODEV", "coreaudio" if _macos() else "sdl")

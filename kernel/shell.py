@@ -83,6 +83,7 @@ class Shell:
         from kernel.fs.vfs import vfs, OpenFlags
         from kernel.scheduler import scheduler
         import kernel.display as display
+        from kernel.bridge import py_desktop
 
         ns = {
             "__name__":  "pythonos_shell",
@@ -95,6 +96,7 @@ class Shell:
             "sound":     sound,
             "scheduler": scheduler,
             "display":   display,
+            "py_desktop": py_desktop,
             "help":      lambda: self._help(),
             "clear":     lambda: self._clear(),
             "sh":        lambda cmd=None: self._sh(cmd),

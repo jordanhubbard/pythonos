@@ -47,7 +47,7 @@ def decode_ppm(data: bytes) -> SDL_Surface:
     if maxval > 255:
         raise ValueError(f"PPM: 16-bit (maxval={maxval}) not supported")
 
-    s = SDL_Surface(width, height)
+    s = SDL_Surface(width, height, host_backed=False)
     n_pixels = width * height
     body = data[off : off + n_pixels * 3]
     if len(body) < n_pixels * 3:

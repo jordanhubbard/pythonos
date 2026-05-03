@@ -11,16 +11,22 @@ from typing import Callable, Awaitable
 
 @dataclass
 class AppInfo:
-    name:        str
-    description: str
-    entry:       Callable[..., Awaitable[None]]
+    name:          str
+    description:   str
+    entry:         Callable[..., Awaitable[None]]
+    # Optional zero-arg factory returning a 48x48 SDL_Surface — the
+    # dock calls it lazily once the bridge is up. None falls back to
+    # a generated colored square with the app name.
+    icon_factory:  Callable[[], object] | None = None
 
 
 _apps: dict[str, AppInfo] = {}
 
 
-def register(name: str, description: str, entry) -> None:
-    _apps[name] = AppInfo(name=name, description=description, entry=entry)
+def register(name: str, description: str, entry,
+              icon_factory=None) -> None:
+    _apps[name] = AppInfo(name=name, description=description, entry=entry,
+                           icon_factory=icon_factory)
 
 
 def list_apps() -> list[AppInfo]:
