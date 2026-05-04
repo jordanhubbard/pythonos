@@ -119,6 +119,68 @@ def main():
         check("sdl.call unknown == error",   r.get("ok") is False)
         check("sdl.call unknown.error.code", r.get("error", {}).get("code") == 5)
 
+        # SDL_ttf round-trip: init, find a system font, open it, render
+        # a string, measure it, close it. Validates the font handle kind
+        # in the unified handle table and the TTF_RenderUTF8_Blended path.
+        _send(s, 110, "sdl.call", {"name": "TTF_Init", "args": []})
+        r = _recv(s)
+        check("TTF_Init.ok",          r.get("ok") is True)
+        check("TTF_Init rc == 0",     r.get("result", {}).get("rc") == 0)
+
+        _send(s, 111, "sdl.call",
+              {"name": "pyo.default_font_path", "args": []})
+        r = _recv(s)
+        check("pyo.default_font_path.ok", r.get("ok") is True)
+        font_path = r.get("result", {}).get("path", "")
+        check("pyo.default_font_path is str",
+              isinstance(font_path, str) and len(font_path) > 0)
+
+        _send(s, 112, "sdl.call",
+              {"name": "TTF_OpenFont", "args": [font_path, 14]})
+        r = _recv(s)
+        check("TTF_OpenFont.ok",      r.get("ok") is True)
+        font_handle = int(r.get("result", {}).get("handle", 0))
+        check("TTF_OpenFont handle != 0", font_handle != 0)
+
+        _send(s, 113, "sdl.call",
+              {"name": "TTF_SizeUTF8", "args": [font_handle, "PythonOS"]})
+        r = _recv(s)
+        check("TTF_SizeUTF8.ok",      r.get("ok") is True)
+        size_w = r.get("result", {}).get("w", 0)
+        check("TTF_SizeUTF8 width > 0", isinstance(size_w, int) and size_w > 0)
+
+        _send(s, 114, "sdl.call",
+              {"name": "TTF_RenderUTF8_Blended",
+               "args": [font_handle, "Hello", 0xFFFFFFFF]})
+        r = _recv(s)
+        check("TTF_RenderUTF8_Blended.ok", r.get("ok") is True)
+        text_surf = int(r.get("result", {}).get("handle", 0))
+        check("TTF_RenderUTF8_Blended handle != 0", text_surf != 0)
+
+        # Free the rendered surface via the existing surface.destroy op.
+        _send(s, 115, "surface.destroy", {"handle": text_surf})
+        r = _recv(s)
+        check("surface.destroy of TTF surface", r.get("ok") is True)
+
+        _send(s, 116, "sdl.call",
+              {"name": "TTF_CloseFont", "args": [font_handle]})
+        r = _recv(s)
+        check("TTF_CloseFont.ok", r.get("ok") is True)
+
+        # Now that the font handle is closed, rendering with it should
+        # fail with "invalid font handle" (code 7).
+        _send(s, 117, "sdl.call",
+              {"name": "TTF_RenderUTF8_Blended",
+               "args": [font_handle, "after-close", 0xFFFFFFFF]})
+        r = _recv(s)
+        check("render after close == err",
+              r.get("ok") is False
+              and r.get("error", {}).get("code") == 7)
+
+        _send(s, 118, "sdl.call", {"name": "TTF_Quit", "args": []})
+        r = _recv(s)
+        check("TTF_Quit.ok", r.get("ok") is True)
+
         # shutdown
         _send(s, 4, "shutdown", {})
         r = _recv(s)

@@ -19,6 +19,7 @@
  */
 
 #include <SDL.h>
+#include <SDL_ttf.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <getopt.h>
@@ -285,36 +286,66 @@ typedef struct {
 static BridgeWindow g_window = { 0 };
 
 #define MAX_HANDLES 1024
+
+/* Kind tag — keeps surface/font/etc. handles in a single typed table so a
+ * misdirected handle (font passed where surface expected) returns NULL
+ * instead of a hard cast crash. */
+typedef enum {
+    HK_NONE    = 0,
+    HK_SURFACE = 1,
+    HK_FONT    = 2,
+} HandleKind;
+
 typedef struct {
-    SDL_Surface *surface;   /* NULL = unused slot */
-    int          owned;     /* 1 = SDL_FreeSurface on free; 0 = borrowed (window fb) */
+    HandleKind kind;
+    void      *ptr;     /* NULL when kind == HK_NONE */
+    int        owned;   /* 1 = free on destroy; 0 = borrowed (e.g. window fb) */
 } HandleEntry;
 
 static HandleEntry g_handles[MAX_HANDLES];
 
-static int handle_alloc(SDL_Surface *s, int owned) {
+static int handle_alloc_kind(HandleKind kind, void *p, int owned) {
     /* Slot 0 reserved as "invalid" sentinel. */
     for (int i = 1; i < MAX_HANDLES; i++) {
-        if (g_handles[i].surface == NULL) {
-            g_handles[i].surface = s;
-            g_handles[i].owned   = owned;
+        if (g_handles[i].kind == HK_NONE) {
+            g_handles[i].kind  = kind;
+            g_handles[i].ptr   = p;
+            g_handles[i].owned = owned;
             return i;
         }
     }
     return 0;
 }
 
-static SDL_Surface *handle_get(int h) {
+static void *handle_get_typed(int h, HandleKind expected) {
     if (h <= 0 || h >= MAX_HANDLES) return NULL;
-    return g_handles[h].surface;
+    if (g_handles[h].kind != expected) return NULL;
+    return g_handles[h].ptr;
 }
 
+/* Backward-compat: existing code paths assume surfaces. */
+static int handle_alloc(SDL_Surface *s, int owned) {
+    return handle_alloc_kind(HK_SURFACE, s, owned);
+}
+
+static SDL_Surface *handle_get(int h) {
+    return (SDL_Surface *)handle_get_typed(h, HK_SURFACE);
+}
+
+/* Invalidate a handle slot. Cleanup of the underlying object is the
+ * caller's responsibility — this function only forgets the slot. The
+ * SDL_Surface specialisation kept the SDL_FreeSurface side effect for
+ * existing call sites; for other kinds (fonts, …), the kind-specific
+ * wrapper (wrap_TTF_CloseFont) frees the object before invalidating. */
 static void handle_free(int h) {
     if (h <= 0 || h >= MAX_HANDLES) return;
-    SDL_Surface *s = g_handles[h].surface;
-    if (s && g_handles[h].owned) SDL_FreeSurface(s);
-    g_handles[h].surface = NULL;
-    g_handles[h].owned   = 0;
+    HandleEntry *e = &g_handles[h];
+    if (e->kind == HK_SURFACE && e->ptr && e->owned) {
+        SDL_FreeSurface((SDL_Surface *)e->ptr);
+    }
+    e->kind  = HK_NONE;
+    e->ptr   = NULL;
+    e->owned = 0;
 }
 
 static int read_payload_trailer(int fd, size_t n, char **out_buf) {
@@ -749,14 +780,173 @@ static int wrap_SDL_GetTicks(BridgeState *st, int id, cJSON *args) {
     return send_ok_rc(st->fd, id, (int)SDL_GetTicks());
 }
 
+/* ─── SDL_ttf wrappers ─────────────────────────────────────────────────
+ *
+ * Real anti-aliased text rendering via SDL_ttf. Each text-rendering
+ * function returns a freshly-allocated SDL_Surface* — registered into
+ * the same handle table the surface API uses, so guests can blit it
+ * onto any window's backing surface and free it when done.
+ */
+
+/* TTF_Init()  →  int rc. Idempotent: SDL_ttf tracks its own ref count. */
+static int wrap_TTF_Init(BridgeState *st, int id, cJSON *args) {
+    (void)args;
+    return send_ok_rc(st->fd, id, TTF_Init());
+}
+
+/* TTF_Quit()  →  void. */
+static int wrap_TTF_Quit(BridgeState *st, int id, cJSON *args) {
+    (void)args;
+    TTF_Quit();
+    return send_ok(st->fd, id, NULL);
+}
+
+/* TTF_OpenFont(path, ptsize)  →  {"handle": int} on success.
+ * Returns error code 11 + error message if the font can't be loaded. */
+static int wrap_TTF_OpenFont(BridgeState *st, int id, cJSON *args) {
+    if (cJSON_GetArraySize(args) < 2)
+        return send_err(st->fd, id, 4, "TTF_OpenFont: 2 args (path, ptsize)");
+    cJSON *jpath = cJSON_GetArrayItem(args, 0);
+    cJSON *jpt   = cJSON_GetArrayItem(args, 1);
+    if (!cJSON_IsString(jpath) || !cJSON_IsNumber(jpt))
+        return send_err(st->fd, id, 4, "TTF_OpenFont: (string, int)");
+    TTF_Font *f = TTF_OpenFont(jpath->valuestring, jpt->valueint);
+    if (!f) return send_err(st->fd, id, 11, TTF_GetError());
+    int h = handle_alloc_kind(HK_FONT, f, /*owned=*/1);
+    if (h == 0) { TTF_CloseFont(f); return send_err(st->fd, id, 12, "OOM"); }
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "handle", h);
+    return send_ok(st->fd, id, r);
+}
+
+/* TTF_CloseFont(font_handle)  →  void. */
+static int wrap_TTF_CloseFont(BridgeState *st, int id, cJSON *args) {
+    if (cJSON_GetArraySize(args) < 1)
+        return send_err(st->fd, id, 4, "TTF_CloseFont: 1 arg");
+    cJSON *jh = cJSON_GetArrayItem(args, 0);
+    if (!cJSON_IsNumber(jh)) return send_err(st->fd, id, 4, "handle int");
+    TTF_Font *f = (TTF_Font *)handle_get_typed(jh->valueint, HK_FONT);
+    if (f) {
+        TTF_CloseFont(f);
+        /* handle_free's surface-only branch is a no-op for fonts; we've
+         * already freed the underlying object above. */
+        handle_free(jh->valueint);
+    }
+    return send_ok(st->fd, id, NULL);
+}
+
+/* TTF_RenderUTF8_Blended(font, text, color)  →  {"handle": int, "w": w, "h": h}
+ *
+ * Color is packed as a Uint32 0xRRGGBBAA. The returned surface handle
+ * points to a freshly-allocated SDL_Surface that the guest can blit
+ * onto any target. The guest is responsible for freeing the surface
+ * (handle.destroy / SDL_FreeSurface) once it's drawn — typical pattern
+ * is render → blit → free, all in one batched flush.
+ */
+static int wrap_TTF_RenderUTF8_Blended(BridgeState *st, int id, cJSON *args) {
+    if (cJSON_GetArraySize(args) < 3)
+        return send_err(st->fd, id, 4,
+                        "TTF_RenderUTF8_Blended: 3 args (font, text, rgba)");
+    cJSON *jh    = cJSON_GetArrayItem(args, 0);
+    cJSON *jtext = cJSON_GetArrayItem(args, 1);
+    cJSON *jrgba = cJSON_GetArrayItem(args, 2);
+    if (!cJSON_IsNumber(jh) || !cJSON_IsString(jtext) || !cJSON_IsNumber(jrgba))
+        return send_err(st->fd, id, 4, "(int, string, int)");
+    TTF_Font *f = (TTF_Font *)handle_get_typed(jh->valueint, HK_FONT);
+    if (!f) return send_err(st->fd, id, 7, "invalid font handle");
+    Uint32 rgba = (Uint32)jrgba->valuedouble;
+    SDL_Color c = {
+        .r = (rgba >> 24) & 0xFF,
+        .g = (rgba >> 16) & 0xFF,
+        .b = (rgba >>  8) & 0xFF,
+        .a = (rgba      ) & 0xFF,
+    };
+    SDL_Surface *s = TTF_RenderUTF8_Blended(f, jtext->valuestring, c);
+    if (!s) return send_err(st->fd, id, 11, TTF_GetError());
+    /* Convert to the same pixel format the windowing surfaces use, so
+     * SDL_BlitSurface doesn't have to do per-blit conversions. */
+    SDL_Surface *conv = SDL_ConvertSurfaceFormat(s, SDL_PIXELFORMAT_ARGB8888, 0);
+    if (conv) { SDL_FreeSurface(s); s = conv; }
+    int h = handle_alloc_kind(HK_SURFACE, s, /*owned=*/1);
+    if (h == 0) { SDL_FreeSurface(s); return send_err(st->fd, id, 12, "OOM"); }
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "handle", h);
+    cJSON_AddNumberToObject(r, "w", s->w);
+    cJSON_AddNumberToObject(r, "h", s->h);
+    return send_ok(st->fd, id, r);
+}
+
+/* TTF_SizeUTF8(font, text)  →  {"w": w, "h": h, "rc": rc}.
+ * Lets the guest measure text without allocating a surface. */
+static int wrap_TTF_SizeUTF8(BridgeState *st, int id, cJSON *args) {
+    if (cJSON_GetArraySize(args) < 2)
+        return send_err(st->fd, id, 4, "TTF_SizeUTF8: 2 args (font, text)");
+    cJSON *jh = cJSON_GetArrayItem(args, 0);
+    cJSON *jtext = cJSON_GetArrayItem(args, 1);
+    if (!cJSON_IsNumber(jh) || !cJSON_IsString(jtext))
+        return send_err(st->fd, id, 4, "(int, string)");
+    TTF_Font *f = (TTF_Font *)handle_get_typed(jh->valueint, HK_FONT);
+    if (!f) return send_err(st->fd, id, 7, "invalid font handle");
+    int w = 0, h = 0;
+    int rc = TTF_SizeUTF8(f, jtext->valuestring, &w, &h);
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "rc", rc);
+    cJSON_AddNumberToObject(r, "w", w);
+    cJSON_AddNumberToObject(r, "h", h);
+    return send_ok(st->fd, id, r);
+}
+
+/* ─── pyo: small environment-bridging helpers ────────────────────────────
+ *
+ * "pyo." ops are NOT pure SDL — they answer questions the guest can't
+ * answer for itself (host filesystem layout, font discovery). Keep this
+ * set tiny; once a CPython interpreter lives on the host, queries like
+ * font discovery move into Python and these go away.
+ */
+
+/* Search common system font locations and return the first that exists.
+ * Returns {"path": <str>} on success or error code 13 if none found. */
+static int wrap_pyo_default_font_path(BridgeState *st, int id, cJSON *args) {
+    (void)args;
+    static const char *CANDIDATES[] = {
+        /* macOS — monospace first, proportional fallback. */
+        "/System/Library/Fonts/Menlo.ttc",
+        "/System/Library/Fonts/Monaco.ttf",
+        "/System/Library/Fonts/SFNSMono.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        /* Linux distros — varies. */
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf",
+        NULL,
+    };
+    for (int i = 0; CANDIDATES[i]; i++) {
+        struct stat sb;
+        if (stat(CANDIDATES[i], &sb) == 0 && S_ISREG(sb.st_mode)) {
+            cJSON *r = cJSON_CreateObject();
+            cJSON_AddStringToObject(r, "path", CANDIDATES[i]);
+            return send_ok(st->fd, id, r);
+        }
+    }
+    return send_err(st->fd, id, 13, "no default font found on host");
+}
+
 static const struct {
     const char *name;
     sdl_wrapper fn;
 } SDL_FN_TABLE[] = {
-    { "SDL_FillRect",     wrap_SDL_FillRect     },
-    { "SDL_FillRects",    wrap_SDL_FillRects    },
-    { "SDL_BlitSurface",  wrap_SDL_BlitSurface  },
-    { "SDL_GetTicks",     wrap_SDL_GetTicks     },
+    { "SDL_FillRect",            wrap_SDL_FillRect            },
+    { "SDL_FillRects",           wrap_SDL_FillRects           },
+    { "SDL_BlitSurface",         wrap_SDL_BlitSurface         },
+    { "SDL_GetTicks",            wrap_SDL_GetTicks            },
+    { "TTF_Init",                wrap_TTF_Init                },
+    { "TTF_Quit",                wrap_TTF_Quit                },
+    { "TTF_OpenFont",            wrap_TTF_OpenFont            },
+    { "TTF_CloseFont",           wrap_TTF_CloseFont           },
+    { "TTF_RenderUTF8_Blended",  wrap_TTF_RenderUTF8_Blended  },
+    { "TTF_SizeUTF8",            wrap_TTF_SizeUTF8            },
+    { "pyo.default_font_path",   wrap_pyo_default_font_path   },
 };
 #define SDL_FN_TABLE_LEN ((int)(sizeof(SDL_FN_TABLE) / sizeof(SDL_FN_TABLE[0])))
 
