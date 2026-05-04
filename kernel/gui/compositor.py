@@ -472,7 +472,7 @@ class Compositor:
         if ev.kind == _gui_input.MOUSE_DOWN and ev.code == 1:  # left button
             slot = self._dock_slot_at(ev.x, ev.y)
             if slot >= 0:
-                name, entry = self._dock_apps[slot]
+                name, entry, _icon = self._dock_apps[slot]
                 log.info(f"dock: launching {name}")
                 asyncio.get_event_loop().create_task(self._launch_dock_app(name, entry))
                 return
