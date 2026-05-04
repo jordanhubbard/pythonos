@@ -68,10 +68,14 @@ QEMU_X86_CPU   := -cpu host
 endif
 endif
 
-# arm64 HVF would normally accelerate native runs on Apple Silicon, but our
-# kernel only implements GICv2 and HVF on Apple Silicon mandates GICv3. Keep
-# arm64 on TCG until GICv3 lands (tracked by pythonos-h7g). Override with
-# `make ARM64_HVF=1 ...` to opt into the broken combo for debugging.
+# arm64 acceleration. The kernel auto-detects GICv2 vs GICv3
+# (src/boot/gic_arm64.c) and the GICv3 path is verified under TCG via
+# `make test-arm64-gicv3` (cortex-a76 + virt,gic-version=3). Native
+# HVF on Apple Silicon is still gated on a QEMU upstream bug — Apple
+# Silicon's hypervisor framework doesn't set the ISV (Instruction
+# Syndrome Valid) bit on stage-2 data aborts for GIC MMIO and QEMU's
+# hvf.c asserts on that. When the upstream lands, set ARM64_HVF=1 and
+# HVF will Just Work — the GICv3 driver is already in place.
 ARM64_HVF ?= 0
 QEMU_ARM64_ACCEL :=
 QEMU_ARM64_CPU   := -cpu cortex-a57
@@ -131,7 +135,7 @@ QEMU_GUI_FLAGS := -machine q35 $(QEMU_X86_CPU) $(QEMU_X86_ACCEL) -m 2G -smp $(SM
         bridge bridge-clean test-bridge \
         _freeze _iso _libpython \
         x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 test-gui-x86_64 run-fb-x86_64 \
-        arm64 run-arm64 stop-arm64 test-arm64 run-gui-arm64 run-fb-arm64 _iso_arm64 \
+        arm64 run-arm64 stop-arm64 test-arm64 test-arm64-gicv3 run-gui-arm64 run-fb-arm64 _iso_arm64 \
         run-fb test-gui
 
 
@@ -569,6 +573,12 @@ stop-arm64:
 
 test-arm64: $(ARM64_ELF) $(ARM64_DISK)
 	PYTHONOS_ARM64_HOST_PORT=$(ARM64_REPL_HOST_PORT) PYTHONOS_ARM64_FILE_PORT=$(ARM64_FILE_HOST_PORT) PYTHONOS_ARM64_DISK=$(ARM64_DISK) python3 tests/smoke_test_arm64.py $(ARM64_ELF)
+
+# Boot the same kernel under TCG with -cpu cortex-a76 + gic-version=3
+# so the GICv3 driver path (src/boot/gic_arm64.c) is exercised end-to-
+# end. The default test-arm64 hits the GICv2 path via cortex-a57.
+test-arm64-gicv3: $(ARM64_ELF) $(ARM64_DISK)
+	PYTHONOS_ARM64_DISK=$(ARM64_DISK) python3 tests/smoke_test_arm64_gicv3.py $(ARM64_ELF)
 
 # arm64 libpython defaults to GIL-enabled because Py_GIL_DISABLED hangs
 # Py_InitializeFromConfig on aarch64-elf in our build environment (tracked
