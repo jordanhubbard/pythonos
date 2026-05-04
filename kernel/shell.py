@@ -83,8 +83,8 @@ class Shell:
         from kernel.fs.vfs import vfs, OpenFlags
         from kernel.scheduler import scheduler
         import kernel.display as display
-        from kernel.bridge import py_desktop
         from kernel.drivers.block import virtio_blk
+        from kernel.bridge import py_desktop
 
         ns = {
             "__name__":  "pythonos_shell",

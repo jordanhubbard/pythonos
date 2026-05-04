@@ -22,11 +22,20 @@ JSON envelope (binary trailer). The bridge uses this for one-shot
 pixel uploads (surface.upload).
 """
 
-import json
 import struct
 
 from kernel.bridge import uart as _uart
 import kernel.log as log
+
+
+# `json` is not in every frozen-Python build (notably arm64). Defer it
+# behind a function so that simply importing kernel.bridge — which
+# happens transitively whenever anything pulls in kernel.gui.sdl2 —
+# doesn't crash the boot. Bridge calls themselves naturally fail if
+# json is unavailable on the running build.
+def _json():
+    import json
+    return json
 
 
 PROTOCOL_VERSION = 1
@@ -100,6 +109,7 @@ class Bridge:
 
     def _send(self, op: str, params: dict | None,
                payload: bytes) -> dict:
+        json = _json()
         frame_id = self._next_id
         self._next_id += 1
         env_params = dict(params or {})
