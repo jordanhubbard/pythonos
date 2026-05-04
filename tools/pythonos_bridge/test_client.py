@@ -104,6 +104,21 @@ def main():
         check("unknown.ok == false", r.get("ok") is False)
         check("unknown.error.code",  r.get("error", {}).get("code") == 3)
 
+        # sdl.call → SDL_GetTicks: tiny zero-arg SDL function. Proves the
+        # mirror-SDL dispatcher works (registry lookup + arg unpack + return).
+        _send(s, 100, "sdl.call", {"name": "SDL_GetTicks", "args": []})
+        r = _recv(s)
+        check("sdl.call.ok",                 r.get("ok") is True)
+        check("sdl.call SDL_GetTicks rc int",
+              isinstance(r.get("result", {}).get("rc"), int))
+
+        # sdl.call → unknown SDL function: should error cleanly.
+        _send(s, 101, "sdl.call",
+              {"name": "SDL_FunctionThatDoesNotExist", "args": []})
+        r = _recv(s)
+        check("sdl.call unknown == error",   r.get("ok") is False)
+        check("sdl.call unknown.error.code", r.get("error", {}).get("code") == 5)
+
         # shutdown
         _send(s, 4, "shutdown", {})
         r = _recv(s)

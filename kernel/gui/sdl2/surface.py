@@ -283,6 +283,35 @@ def SDL_FillRect(surface, rect, color: int) -> int:
     return 0
 
 
+def SDL_FillRects(surface, rects, color: int) -> int:
+    """Fill multiple rectangles with ``color`` in a single host call.
+
+    ``rects`` is a sequence of ``SDL_Rect`` instances or
+    ``(x, y, w, h)`` tuples. On host-backed surfaces this dispatches as
+    one batched ``sdl.call('SDL_FillRects', ...)`` — one bridge round-trip
+    no matter how many rects, which is the natural batching primitive
+    for animations (starfield, particles, falling sand, …).
+    """
+    s = surface.contents if hasattr(surface, "contents") else surface
+    # Normalize to a list of [x, y, w, h] arrays for compact JSON.
+    flat: list = []
+    for r in rects:
+        if hasattr(r, "x"):
+            flat.append([r.x, r.y, r.w, r.h])
+        else:
+            flat.append([int(r[0]), int(r[1]), int(r[2]), int(r[3])])
+    if s.host_backed:
+        from kernel.gui.sdl2.dispatch import sdl_cast
+        word = (color & 0xFFFFFF) | 0xFF000000
+        sdl_cast("SDL_FillRects", s.handle, flat, word)
+        return 0
+    # Guest-backed: just loop. Eventually a vectorized C primitive could
+    # land in _hal but the pure-Python fallback is simple enough.
+    for x, y, w, h in flat:
+        s._fill_rect(x, y, w, h, color)
+    return 0
+
+
 def SDL_BlitSurface(src, src_rect, dst, dst_rect) -> int:
     s_src = src.contents if hasattr(src, "contents") else src
     s_dst = dst.contents if hasattr(dst, "contents") else dst

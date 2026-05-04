@@ -631,6 +631,163 @@ static int op_surface_upload(BridgeState *st, int id, cJSON *params) {
 
 static op_handler lookup_op(const char *name);
 
+/* ─── Generic SDL dispatcher ─────────────────────────────────────────────
+ *
+ * The bridge protocol's long-term shape is:
+ *   sdl.call:  { "name": "<SDL_FuncName>", "args": [<positional args>] }
+ *
+ * Each registered SDL function lives in SDL_FN_TABLE below as a tiny
+ * wrapper that pulls positional args out of the JSON array, calls the
+ * libSDL2 function, and packs the return value into the response.
+ * Adding a new function = one entry. PythonOS doesn't carry a custom
+ * decomposition of SDL — guest sdl2 wrappers just marshal arguments.
+ *
+ * Convention: every wrapper sends a response shaped {"rc": <int>} for
+ * status-returning functions, {"handle": <int>} for pointer-returning
+ * functions, or {} for void. During op_batch (which sets
+ * g_silent_response), the per-call response is suppressed and the
+ * batch handler sends a single ok at the end.
+ */
+
+typedef int (*sdl_wrapper)(BridgeState *st, int id, cJSON *args);
+
+/* Helper: send {"rc": rc} as the ok response. */
+static int send_ok_rc(int fd, int id, int rc) {
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "rc", rc);
+    return send_ok(fd, id, r);
+}
+
+/* Helper: parse an SDL_Rect from either {x,y,w,h} object or [x,y,w,h] array.
+ * Returns 0 on success, -1 if the JSON shape is wrong. */
+static int parse_rect_any(cJSON *je, SDL_Rect *out) {
+    if (cJSON_IsArray(je) && cJSON_GetArraySize(je) >= 4) {
+        out->x = cJSON_GetArrayItem(je, 0)->valueint;
+        out->y = cJSON_GetArrayItem(je, 1)->valueint;
+        out->w = cJSON_GetArrayItem(je, 2)->valueint;
+        out->h = cJSON_GetArrayItem(je, 3)->valueint;
+        return 0;
+    }
+    return parse_rect(je, out);
+}
+
+/* SDL_FillRect(surface, rect_or_null, color)  →  int rc */
+static int wrap_SDL_FillRect(BridgeState *st, int id, cJSON *args) {
+    if (cJSON_GetArraySize(args) < 3)
+        return send_err(st->fd, id, 4, "SDL_FillRect: 3 args");
+    cJSON *jh = cJSON_GetArrayItem(args, 0);
+    cJSON *jr = cJSON_GetArrayItem(args, 1);
+    cJSON *jc = cJSON_GetArrayItem(args, 2);
+    SDL_Surface *s = handle_get(jh->valueint);
+    if (!s) return send_err(st->fd, id, 7, "invalid surface");
+    SDL_Rect rect, *rp = NULL;
+    if (!cJSON_IsNull(jr) && (cJSON_IsObject(jr) || cJSON_IsArray(jr))) {
+        if (parse_rect_any(jr, &rect) != 0)
+            return send_err(st->fd, id, 4, "bad rect");
+        rp = &rect;
+    }
+    return send_ok_rc(st->fd, id,
+                      SDL_FillRect(s, rp, (Uint32)jc->valuedouble));
+}
+
+/* SDL_FillRects(surface, rect_array, color)  →  int rc
+ * The natural batching primitive for animation: one bridge round-trip
+ * fills hundreds of rects. */
+static int wrap_SDL_FillRects(BridgeState *st, int id, cJSON *args) {
+    if (cJSON_GetArraySize(args) < 3)
+        return send_err(st->fd, id, 4, "SDL_FillRects: 3 args");
+    cJSON *jh = cJSON_GetArrayItem(args, 0);
+    cJSON *jr = cJSON_GetArrayItem(args, 1);
+    cJSON *jc = cJSON_GetArrayItem(args, 2);
+    SDL_Surface *s = handle_get(jh->valueint);
+    if (!s) return send_err(st->fd, id, 7, "invalid surface");
+    if (!cJSON_IsArray(jr))
+        return send_err(st->fd, id, 4, "rects must be array");
+    int n = cJSON_GetArraySize(jr);
+    if (n <= 0) return send_ok_rc(st->fd, id, 0);
+    SDL_Rect *rects = (SDL_Rect *)calloc((size_t)n, sizeof(SDL_Rect));
+    if (!rects) return send_err(st->fd, id, 12, "OOM");
+    for (int i = 0; i < n; i++) {
+        if (parse_rect_any(cJSON_GetArrayItem(jr, i), &rects[i]) != 0) {
+            free(rects);
+            return send_err(st->fd, id, 4, "bad rect in array");
+        }
+    }
+    int rc = SDL_FillRects(s, rects, n, (Uint32)jc->valuedouble);
+    free(rects);
+    return send_ok_rc(st->fd, id, rc);
+}
+
+/* SDL_BlitSurface(src, src_rect_or_null, dst, dst_rect_or_null)  →  int rc */
+static int wrap_SDL_BlitSurface(BridgeState *st, int id, cJSON *args) {
+    if (cJSON_GetArraySize(args) < 4)
+        return send_err(st->fd, id, 4, "SDL_BlitSurface: 4 args");
+    cJSON *jsh = cJSON_GetArrayItem(args, 0);
+    cJSON *jsr = cJSON_GetArrayItem(args, 1);
+    cJSON *jdh = cJSON_GetArrayItem(args, 2);
+    cJSON *jdr = cJSON_GetArrayItem(args, 3);
+    SDL_Surface *src = handle_get(jsh->valueint);
+    SDL_Surface *dst = handle_get(jdh->valueint);
+    if (!src || !dst) return send_err(st->fd, id, 7, "invalid handle");
+    SDL_Rect sr, dr, *sp = NULL, *dp = NULL;
+    if (!cJSON_IsNull(jsr) && (cJSON_IsObject(jsr) || cJSON_IsArray(jsr))) {
+        if (parse_rect_any(jsr, &sr) != 0)
+            return send_err(st->fd, id, 4, "bad src_rect");
+        sp = &sr;
+    }
+    if (!cJSON_IsNull(jdr) && (cJSON_IsObject(jdr) || cJSON_IsArray(jdr))) {
+        if (parse_rect_any(jdr, &dr) != 0)
+            return send_err(st->fd, id, 4, "bad dst_rect");
+        dp = &dr;
+    }
+    return send_ok_rc(st->fd, id, SDL_BlitSurface(src, sp, dst, dp));
+}
+
+/* SDL_GetTicks()  →  uint32 ticks (returned in {"rc": ticks}). */
+static int wrap_SDL_GetTicks(BridgeState *st, int id, cJSON *args) {
+    (void)args;
+    return send_ok_rc(st->fd, id, (int)SDL_GetTicks());
+}
+
+static const struct {
+    const char *name;
+    sdl_wrapper fn;
+} SDL_FN_TABLE[] = {
+    { "SDL_FillRect",     wrap_SDL_FillRect     },
+    { "SDL_FillRects",    wrap_SDL_FillRects    },
+    { "SDL_BlitSurface",  wrap_SDL_BlitSurface  },
+    { "SDL_GetTicks",     wrap_SDL_GetTicks     },
+};
+#define SDL_FN_TABLE_LEN ((int)(sizeof(SDL_FN_TABLE) / sizeof(SDL_FN_TABLE[0])))
+
+static sdl_wrapper lookup_sdl_fn(const char *name) {
+    for (int i = 0; i < SDL_FN_TABLE_LEN; i++) {
+        if (strcmp(SDL_FN_TABLE[i].name, name) == 0) return SDL_FN_TABLE[i].fn;
+    }
+    return NULL;
+}
+
+/* op_sdl_call: dispatch to a registered SDL wrapper.
+ * params: { "name": "<SDL_FuncName>", "args": [<positional args>] }
+ */
+static int op_sdl_call(BridgeState *st, int id, cJSON *params) {
+    cJSON *jname = cJSON_GetObjectItemCaseSensitive(params, "name");
+    cJSON *jargs = cJSON_GetObjectItemCaseSensitive(params, "args");
+    if (!cJSON_IsString(jname))
+        return send_err(st->fd, id, 4, "sdl.call: name required");
+    sdl_wrapper fn = lookup_sdl_fn(jname->valuestring);
+    if (!fn) return send_err(st->fd, id, 5, "sdl.call: unknown SDL fn");
+    /* Tolerate omitted args: treat as empty array. */
+    cJSON *empty = NULL;
+    if (!cJSON_IsArray(jargs)) {
+        empty = cJSON_CreateArray();
+        jargs = empty;
+    }
+    int rc = fn(st, id, jargs);
+    if (empty) cJSON_Delete(empty);
+    return rc;
+}
+
 /* Run a list of fire-and-forget ops in a single round-trip.
  *
  * params: { "ops": [ { "op": <str>, "params": {...} }, ... ] }
@@ -675,6 +832,7 @@ static const struct {
     { "ping",               op_ping               },
     { "shutdown",           op_shutdown           },
     { "batch",              op_batch              },
+    { "sdl.call",           op_sdl_call           },
     { "display.open",       op_display_open       },
     { "display.close",      op_display_close      },
     { "display.present",    op_display_present    },
