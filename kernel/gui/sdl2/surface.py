@@ -167,7 +167,7 @@ class SDL_Surface:
         if self.host_backed:
             from kernel.bridge import bridge as _br
             word = (color & 0xFFFFFF) | 0xFF000000
-            _br.call("surface.fill_rect", {
+            _br.cast("surface.fill_rect", {
                 "handle": self.handle,
                 "rect": {"x": x, "y": y, "w": w, "h": h},
                 "rgb": word,
@@ -197,7 +197,7 @@ class SDL_Surface:
             if src_rect is not None:
                 params["src_rect"] = {"x": src_rect.x, "y": src_rect.y,
                                        "w": src_rect.w, "h": src_rect.h}
-            _br.call("surface.blit", params)
+            _br.cast("surface.blit", params)
             return
         # guest-backed dst.
         if src.host_backed:
@@ -246,7 +246,7 @@ class SDL_Surface:
             }
             if bg is not None:
                 params["bg"] = (bg & 0xFFFFFF) | 0xFF000000
-            _br.call("text.draw", params)
+            _br.cast("text.draw", params)
             # Best-effort cursor advance — assumes single-line text.
             return (x + len(text) * GLYPH_W, y)
         cx, cy = x, y

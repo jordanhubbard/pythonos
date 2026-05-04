@@ -43,6 +43,10 @@
 /* ─── Logging ───────────────────────────────────────────────────────────── */
 
 static int g_verbose = 0;
+/* When set (by op_batch), send_ok/send_err become no-ops so individual
+ * ops inside a batch don't write per-op responses. The batch handler
+ * sends ONE response after running all child ops. */
+static int g_silent_response = 0;
 
 static void bridge_log(const char *level, const char *fmt, ...) {
     fprintf(stderr, "[pythonos_bridge:%s] ", level);
@@ -133,6 +137,10 @@ static cJSON *make_response_envelope(int id) {
 }
 
 static int send_ok(int fd, int id, cJSON *result_or_null) {
+    if (g_silent_response) {
+        if (result_or_null) cJSON_Delete(result_or_null);
+        return 0;
+    }
     cJSON *env = make_response_envelope(id);
     cJSON_AddBoolToObject(env, "ok", 1);
     if (result_or_null) {
@@ -149,6 +157,9 @@ static int send_ok(int fd, int id, cJSON *result_or_null) {
 }
 
 static int send_err(int fd, int id, int code, const char *msg) {
+    if (g_silent_response) {
+        return 0;
+    }
     cJSON *env = make_response_envelope(id);
     cJSON_AddBoolToObject(env, "ok", 0);
     cJSON *err = cJSON_CreateObject();
@@ -618,6 +629,43 @@ static int op_surface_upload(BridgeState *st, int id, cJSON *params) {
     return send_ok(st->fd, id, NULL);
 }
 
+static op_handler lookup_op(const char *name);
+
+/* Run a list of fire-and-forget ops in a single round-trip.
+ *
+ * params: { "ops": [ { "op": <str>, "params": {...} }, ... ] }
+ *
+ * Each child op's per-call response is suppressed (g_silent_response).
+ * The batch sends ONE response with {"count": N, "errors": M}. Designed
+ * for ops where the guest doesn't care about per-op return data — fill
+ * rects, blits, text.draw — i.e. animation frames. Stateful ops that
+ * return handles (surface.create, hello) MUST NOT be batched.
+ */
+static int op_batch(BridgeState *st, int id, cJSON *params) {
+    cJSON *ops = cJSON_GetObjectItemCaseSensitive(params, "ops");
+    if (!cJSON_IsArray(ops)) {
+        return send_err(st->fd, id, 4, "batch: ops must be array");
+    }
+    int n = cJSON_GetArraySize(ops);
+    int errors = 0;
+    g_silent_response = 1;
+    for (int i = 0; i < n; i++) {
+        cJSON *entry = cJSON_GetArrayItem(ops, i);
+        if (!cJSON_IsObject(entry)) { errors++; continue; }
+        cJSON *op = cJSON_GetObjectItemCaseSensitive(entry, "op");
+        cJSON *p  = cJSON_GetObjectItemCaseSensitive(entry, "params");
+        if (!cJSON_IsString(op)) { errors++; continue; }
+        op_handler fn = lookup_op(op->valuestring);
+        if (!fn) { errors++; continue; }
+        (void)fn(st, id, p);
+    }
+    g_silent_response = 0;
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "count",  n);
+    cJSON_AddNumberToObject(r, "errors", errors);
+    return send_ok(st->fd, id, r);
+}
+
 /* Dispatch table — keep small and stable; input/audio ops land in later slices. */
 static const struct {
     const char *name;
@@ -626,6 +674,7 @@ static const struct {
     { "hello",              op_hello              },
     { "ping",               op_ping               },
     { "shutdown",           op_shutdown           },
+    { "batch",              op_batch              },
     { "display.open",       op_display_open       },
     { "display.close",      op_display_close      },
     { "display.present",    op_display_present    },

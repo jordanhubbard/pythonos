@@ -192,14 +192,14 @@ class Compositor:
         fb_handle = self._bridge_fb_handle
         try:
             # Desktop background — fill whole window surface.
-            _br.call("surface.fill_rect", {
+            _br.cast("surface.fill_rect", {
                 "handle": fb_handle, "rect": None,
                 "rgb": (self._desktop_bg & 0xFFFFFF) | 0xFF000000,
             })
             for win in self._windows:
                 if win.chrome:
                     chrome_color = CHROME_FOCUS_BG if win.focused else CHROME_UNFOCUS_BG
-                    _br.call("surface.fill_rect", {
+                    _br.cast("surface.fill_rect", {
                         "handle": fb_handle,
                         "rect": {"x": win.x, "y": win.y,
                                   "w": win.w, "h": TITLE_BAR_H},
@@ -208,7 +208,7 @@ class Compositor:
                     # Title text
                     title_max = max(1, (win.w - 8 - CLOSE_BOX_W - 4) // GLYPH_W)
                     title = (win.title or "")[:title_max]
-                    _br.call("text.draw", {
+                    _br.cast("text.draw", {
                         "handle": fb_handle,
                         "x": win.x + 4,
                         "y": win.y + (TITLE_BAR_H - GLYPH_H) // 2,
@@ -218,14 +218,14 @@ class Compositor:
                     # Close box (top-right of chrome).
                     cx, cy, cw, ch = self._close_box_rect(win)
                     is_hot = (self._close_hot_win is win)
-                    _br.call("surface.fill_rect", {
+                    _br.cast("surface.fill_rect", {
                         "handle": fb_handle,
                         "rect": {"x": cx, "y": cy, "w": cw, "h": ch},
                         "rgb": ((CLOSE_BG_HOT if is_hot else CLOSE_BG)
                                 & 0xFFFFFF) | 0xFF000000,
                     })
                     # ASCII × — use the lowercase x glyph for now.
-                    _br.call("text.draw", {
+                    _br.cast("text.draw", {
                         "handle": fb_handle,
                         "x": cx + (cw - GLYPH_W) // 2,
                         "y": cy + (ch - GLYPH_H) // 2,
@@ -239,7 +239,7 @@ class Compositor:
                 src_handle = s._sync_to_host()
                 if src_handle != 0:
                     body_y = win.y + (TITLE_BAR_H if win.chrome else 0)
-                    _br.call("surface.blit", {
+                    _br.cast("surface.blit", {
                         "src": src_handle,
                         "dst": fb_handle,
                         "dst_rect": {"x": win.x, "y": body_y,
@@ -271,7 +271,7 @@ class Compositor:
         from kernel.bridge import bridge as _br
         dock_y = self._bridge_h - DOCK_H
         # Dock backdrop.
-        _br.call("surface.fill_rect", {
+        _br.cast("surface.fill_rect", {
             "handle": fb_handle,
             "rect": {"x": 0, "y": dock_y,
                       "w": self._bridge_w, "h": DOCK_H},
@@ -283,7 +283,7 @@ class Compositor:
             name = entry_tuple[0]
             slot_x = first_x + i * (DOCK_ICON_SIZE + DOCK_ICON_GAP)
             if i == self._dock_hot:
-                _br.call("surface.fill_rect", {
+                _br.cast("surface.fill_rect", {
                     "handle": fb_handle,
                     "rect": {"x": slot_x - 4, "y": slot_y - 4,
                               "w": DOCK_ICON_SIZE + 8,
@@ -294,7 +294,7 @@ class Compositor:
             if icon is not None:
                 src_handle = icon._sync_to_host()
                 if src_handle != 0:
-                    _br.call("surface.blit", {
+                    _br.cast("surface.blit", {
                         "src": src_handle,
                         "dst": fb_handle,
                         "dst_rect": {"x": slot_x, "y": slot_y,
@@ -308,13 +308,13 @@ class Compositor:
                         + (DOCK_ICON_SIZE - label_w) // 2)
             label_y = dock_y - GLYPH_H - 8
             label_x = max(4, min(self._bridge_w - 4 - label_w, label_x))
-            _br.call("surface.fill_rect", {
+            _br.cast("surface.fill_rect", {
                 "handle": fb_handle,
                 "rect": {"x": label_x, "y": label_y,
                           "w": label_w, "h": GLYPH_H + 4},
                 "rgb": (DOCK_LABEL_BG & 0xFFFFFF) | 0xFF000000,
             })
-            _br.call("text.draw", {
+            _br.cast("text.draw", {
                 "handle": fb_handle,
                 "x": label_x + 4, "y": label_y + 2,
                 "text": label,

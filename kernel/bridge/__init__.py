@@ -42,11 +42,24 @@ class BridgeError(Exception):
 
 class Bridge:
     """Singleton client. Calls are synchronous; the kernel scheduler is
-    blocked for the duration of each call (typically tens of µs)."""
+    blocked for the duration of each call (typically tens of µs).
+
+    Two send modes:
+      ``call(op, ...)``    — synchronous round-trip; returns result dict.
+      ``cast(op, params)`` — fire-and-forget; the op is queued. Sent in
+                              one batch on the next ``flush()`` or before
+                              the next ``call()``. Use for ops whose
+                              return value the caller doesn't need
+                              (FillRect, Blit, text.draw): turns N
+                              round-trips per frame into 1.
+    """
 
     def __init__(self) -> None:
         self._next_id = 1
         self._opened  = False
+        # Queue of fire-and-forget ops accumulated by cast(). A subsequent
+        # call() or explicit flush() drains it as one batch.
+        self._pending: list = []
 
     def hello(self) -> dict:
         """Handshake. Returns the host's hello result."""
@@ -58,11 +71,35 @@ class Bridge:
     def opened(self) -> bool:
         return self._opened
 
+    def cast(self, op: str, params: dict | None = None) -> None:
+        """Queue a fire-and-forget op. Sent in one batch on the next
+        flush() or before the next sync call(). Must NOT be used for
+        ops that return data the caller needs (surface.create, hello,
+        event.poll, surface.upload)."""
+        self._pending.append({"op": op, "params": dict(params or {})})
+
+    def flush(self) -> None:
+        """Send any queued cast() ops as a single batch round-trip."""
+        if not self._pending:
+            return
+        ops = self._pending
+        self._pending = []
+        self._send("batch", {"ops": ops}, b"")
+
     def call(self, op: str, params: dict | None = None,
               payload: bytes = b"") -> dict:
         """Send `op` with `params` (and optional binary `payload`),
         block on the response, return the result dict on success or
-        raise BridgeError on failure."""
+        raise BridgeError on failure. Auto-flushes any pending casts
+        first to preserve order between cast and call sequences."""
+        if self._pending:
+            ops = self._pending
+            self._pending = []
+            self._send("batch", {"ops": ops}, b"")
+        return self._send(op, params, payload)
+
+    def _send(self, op: str, params: dict | None,
+               payload: bytes) -> dict:
         frame_id = self._next_id
         self._next_id += 1
         env_params = dict(params or {})
