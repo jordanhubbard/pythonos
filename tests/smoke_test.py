@@ -95,6 +95,11 @@ TEST_CASES = [
     # from device config space, so this proves enumeration → bind → init all
     # succeeded end-to-end.
     ("virtio_blk.blk.num_sectors\n", "131072"),
+    # ef6.4: /home is wired up at boot (ext2 mount on arm64; tmpfs fallback
+    # on x86 until the PCI virtio-blk read_sector hang is fixed).
+    # /examples/check_home.py writes to /home/smoke.txt, reads it back, prints
+    # a marker iff the round-trip matches. Proves the boot wiring end-to-end.
+    ("run('/examples/check_home.py')\n", "EF64_HOME_OK"),
 ]
 
 if SMP_CPUS.isdigit():

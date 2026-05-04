@@ -280,16 +280,27 @@ class Shell:
         src = self._fixup_source(src)
 
         try:
-            # Try as expression first (so we can print the value)
+            # Try as expression first (so we can print the value).
+            # PyCF_ALLOW_TOP_LEVEL_AWAIT makes `await foo()` work directly at
+            # the prompt; the result is a coroutine which we await below.
             try:
-                result = eval(compile(src.strip(), "<shell>", "eval"), self._ns)
+                result = eval(
+                    compile(src.strip(), "<shell>", "eval",
+                            flags=_PYCF_ALLOW_TOP_LEVEL_AWAIT),
+                    self._ns,
+                )
                 if asyncio.iscoroutine(result):
                     result = await result
                 if result is not None:
                     self._write(repr(result) + "\n")
             except SyntaxError:
-                # Not an expression — exec as statement(s)
-                exec(compile(src, "<shell>", "exec"), self._ns)
+                # Not an expression — exec as statement(s). Same flag so
+                # multi-line input with `fd = await vfs.open(...)` works.
+                code = compile(src, "<shell>", "exec",
+                               flags=_PYCF_ALLOW_TOP_LEVEL_AWAIT)
+                result = eval(code, self._ns)
+                if asyncio.iscoroutine(result):
+                    await result
         except SystemExit:
             self._write("Use kernel halt to stop the system.\n")
         except Exception:

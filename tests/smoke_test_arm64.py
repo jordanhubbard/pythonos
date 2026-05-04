@@ -197,6 +197,11 @@ def run() -> int:
             ("1 + 1\n", "2"),
             (f"__import__('_hal').SMP_ONLINE\n", SMP_CPUS),
             ("__import__('_hal').ARCH\n", "'arm64'"),
+            # ef6.3: virtio-blk-mmio bound + ext2 disk visible.
+            ("virtio_blk.blk.num_sectors\n", "131072"),
+            # ef6.4: /home is mounted from ext2 (arm64) — round-trip a small
+            # file via /examples/check_home.py.
+            ("run('/examples/check_home.py')\n", "EF64_HOME_OK"),
         ]:
             response = _send_and_wait(expr)
             if not response:

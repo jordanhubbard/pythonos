@@ -161,12 +161,13 @@ class VirtioMmioBlk:
 
     def _write_desc(self, idx: int, addr: int, length: int,
                     flags: int, nxt: int) -> None:
+        # Direct DMA-buffer writes — `_w32(base, off, v)` is for register I/O.
         base = self._desc_phys + idx * 16
-        _w32(base + 0, addr   & 0xFFFFFFFF)
-        _w32(base + 4, (addr >> 32) & 0xFFFFFFFF)
-        _w32(base + 8, length)
+        _hal.mmio_write32(base + 0,  addr & 0xFFFFFFFF)
+        _hal.mmio_write32(base + 4,  (addr >> 32) & 0xFFFFFFFF)
+        _hal.mmio_write32(base + 8,  length)
         # flags (LE16) at byte 12, next (LE16) at byte 14 → one LE32 word
-        _w32(base + 12, (flags & 0xFFFF) | ((nxt & 0xFFFF) << 16))
+        _hal.mmio_write32(base + 12, (flags & 0xFFFF) | ((nxt & 0xFFFF) << 16))
 
     def _avail_push(self, head: int) -> None:
         slot = self._avail_idx % QUEUE_SIZE
@@ -179,12 +180,14 @@ class VirtioMmioBlk:
         _w8(idx_addr + 1, (self._avail_idx >> 8) & 0xFF)
 
     def _used_idx(self) -> int:
-        return _r32(self._used_phys + 2) & 0xFFFF
+        # used ring header: u16 flags @ +0, u16 idx @ +2. Read the aligned
+        # u32 at +0 and extract the high half (matches the PCI driver).
+        return (_hal.mmio_read32(self._used_phys) >> 16) & 0xFFFF
 
     def _used_pop(self) -> tuple[int, int]:
         ring = self._used_phys + 4 + (self._last_used % QUEUE_SIZE) * 8
-        desc_id = _r32(ring)
-        length  = _r32(ring + 4)
+        desc_id = _hal.mmio_read32(ring)
+        length  = _hal.mmio_read32(ring + 4)
         self._last_used += 1
         return desc_id, length
 
@@ -192,12 +195,14 @@ class VirtioMmioBlk:
 
     async def read_sector(self, lba: int) -> bytes:
         """Read 512 bytes at logical block address lba."""
-        # Header: type(u32) + reserved(u32) + sector(u64)
+        # Header: type(u32) + reserved(u32) + sector(u64). Use direct MMIO
+        # writes — the 3-arg `_w32(base, off, v)` helper is for register
+        # I/O, not DMA-buffer fills.
         hdr = _hal.dma_alloc(16)
-        _w32(hdr + 0, VIRTIO_BLK_T_IN)
-        _w32(hdr + 4, 0)
-        _w32(hdr + 8,  lba & 0xFFFFFFFF)
-        _w32(hdr + 12, (lba >> 32) & 0xFFFFFFFF)
+        _hal.mmio_write32(hdr + 0,  VIRTIO_BLK_T_IN)
+        _hal.mmio_write32(hdr + 4,  0)
+        _hal.mmio_write32(hdr + 8,  lba & 0xFFFFFFFF)
+        _hal.mmio_write32(hdr + 12, (lba >> 32) & 0xFFFFFFFF)
 
         data_phys = _hal.dma_alloc(512)
         stat_phys = _hal.dma_alloc(4)
@@ -222,7 +227,7 @@ class VirtioMmioBlk:
         # Copy 512 bytes from DMA buffer
         result = bytearray(512)
         for i in range(0, 512, 4):
-            w = _r32(data_phys + i)
+            w = _hal.mmio_read32(data_phys + i)
             result[i]   =  w        & 0xFF
             result[i+1] = (w >>  8) & 0xFF
             result[i+2] = (w >> 16) & 0xFF
@@ -235,10 +240,10 @@ class VirtioMmioBlk:
             raise ValueError(f"write_sector: data must be 512 bytes, got {len(data)}")
 
         hdr = _hal.dma_alloc(16)
-        _w32(hdr + 0, VIRTIO_BLK_T_OUT)
-        _w32(hdr + 4, 0)
-        _w32(hdr + 8,  lba & 0xFFFFFFFF)
-        _w32(hdr + 12, (lba >> 32) & 0xFFFFFFFF)
+        _hal.mmio_write32(hdr + 0,  VIRTIO_BLK_T_OUT)
+        _hal.mmio_write32(hdr + 4,  0)
+        _hal.mmio_write32(hdr + 8,  lba & 0xFFFFFFFF)
+        _hal.mmio_write32(hdr + 12, (lba >> 32) & 0xFFFFFFFF)
 
         data_phys = _hal.dma_alloc(512)
         for i in range(0, 512, 4):
@@ -246,7 +251,7 @@ class VirtioMmioBlk:
                  | (data[i+1] << 8)
                  | (data[i+2] << 16)
                  | (data[i+3] << 24))
-            _w32(data_phys + i, w)
+            _hal.mmio_write32(data_phys + i, w)
 
         stat_phys = _hal.dma_alloc(4)
 

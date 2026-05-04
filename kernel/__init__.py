@@ -235,6 +235,45 @@ async def _kernel_main(
     else:
         log.info("kernel: no virtio-blk device found")
 
+    # ── /home and /apps: persistent ext2 mounts (fall back to tmpfs) ──────
+    # Disk layout: a single ext2 FS with /home and /apps as top-level dirs.
+    # We pre-resolve each subdirectory and wrap it in NodeFS so the VFS sees
+    # them as separate mount points. The whole block is wrapped in a single
+    # try/except — a failure here must NEVER prevent kshell from spawning.
+    try:
+        from kernel.fs.vfs import NodeFS
+        _ext2 = None
+        # x86 PCI virtio-blk read_sector is currently broken (descriptor
+        # ring / poll loop hang — tracked separately). Until that's fixed
+        # we only attempt the ext2 mount on arm64 (MMIO transport, known
+        # working). x86 takes the tmpfs fallback below — no persistence,
+        # but boot completes cleanly.
+        if virtio_blk.blk is not None and _ARCH == 'arm64':
+            try:
+                from kernel.fs.ext2 import Ext2FS
+                log.info("kernel: mounting ext2 from virtio-blk...")
+                _ext2 = await Ext2FS.mount(virtio_blk.blk)
+                _root = _ext2.root()
+                _home = await _root.lookup('home')
+                _apps = await _root.lookup('apps')
+                vfs.mount('/home', NodeFS(_home))
+                vfs.mount('/apps', NodeFS(_apps))
+                log.info("kernel: /home and /apps mounted from virtio-blk (ext2)")
+            except Exception as _e:
+                log.info(f"kernel: ext2 mount failed ({_e!r}) — falling back to tmpfs")
+                _ext2 = None
+        if _ext2 is None:
+            # Tmpfs fallback: ensure /home and /apps exist as ordinary dirs
+            # in the root tmpfs so consumers can write to them (non-durably).
+            for _path in ('/home', '/apps'):
+                try:
+                    await vfs.stat(_path)
+                except FileNotFoundError:
+                    await vfs.mkdir(_path)
+            log.info("kernel: /home and /apps available as tmpfs (non-persistent)")
+    except Exception as _e:
+        log.info(f"kernel: /home /apps wiring crashed: {_e!r} — continuing without")
+
     # ── Shell ──────────────────────────────────────────────────────────────
     from kernel.shell import Shell
 

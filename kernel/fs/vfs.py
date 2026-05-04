@@ -76,6 +76,28 @@ class Filesystem(Protocol):
     # def flush(self) -> Awaitable[None] | None: ...
 
 
+class NodeFS:
+    """Adapter that exposes a single FSNode as the root of a Filesystem.
+
+    Used to graft a sub-directory of one filesystem in as a mount point.
+    For example, an ext2 disk laid out with ``/home`` and ``/apps`` at its
+    root can be mounted into the VFS at those same paths by pre-resolving
+    each sub-node with ``await ext2.root().lookup('home')`` and wrapping the
+    result in ``NodeFS`` before calling ``vfs.mount('/home', NodeFS(node))``.
+
+    A single underlying filesystem can back multiple NodeFS mounts; the
+    wrappers do not own the underlying device.
+    """
+
+    __slots__ = ("_node",)
+
+    def __init__(self, node: FSNode) -> None:
+        self._node = node
+
+    def root(self) -> FSNode:
+        return self._node
+
+
 # ── File descriptor table ─────────────────────────────────────────────────────
 
 @dataclass(slots=True)
