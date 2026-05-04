@@ -1,6 +1,6 @@
 # PythonOS GUI subsystem
 
-The GUI is an opt-in layer over the bare-metal kernel — the default boot path is unchanged (`make run` / `make test` still go to a serial-only `>>>` prompt with no SDL window). When you opt in via `make run-gui` or `make run-desktop`, the kernel comes up with a framebuffer, a stacking compositor, mouse + keyboard input, and audio output, and you can launch any of five built-in apps from the REPL.
+The GUI is an opt-in layer over the bare-metal kernel — the default boot path is unchanged (`make run` / `make test` still go to a serial-only `>>>` prompt with no SDL window). When you opt in via `make run-gui`, the kernel comes up with a framebuffer, a stacking compositor, mouse + keyboard input, and audio output, and the desktop auto-launches with a full app dock.
 
 Everything below is implemented in Python on top of the same `_hal` extension and asyncio scheduler the rest of the kernel uses; there is no libSDL2 inside the guest. The `sdl2` Python package mimics PySDL2's surface so unmodified PySDL2 sample code can be copied in unchanged.
 
@@ -8,10 +8,9 @@ Everything below is implemented in Python on top of the same `_hal` extension an
 
 | Command | What it does |
 |---|---|
-| `make run-gui` | Boot to a framebuffer-rendered Python REPL inside an SDL window. Type `pythonos_gui` at `>>>` to start the desktop. |
-| `make run-desktop` | Boot **and** auto-launch `pythonos_gui bouncing_ball`. Host-side `tools/run_desktop.py` sends the command over the TCP REPL once the kernel is up. |
-| `make run-desktop PYTHONOS_DESKTOP_APP=<name>` | Same, but launch a specific app (`bouncing_ball` / `terminal` / `editor` / `files` / `image_viewer` / `audio_tone`). |
-| `make run-gui-x86_64` / `make run-gui-arm64` | Explicit per-arch forms. arm64 desktop auto-launch comes via `run-gui-arm64` (it has full keyboard + mouse + audio parity). |
+| `make run-gui` | Boot **and** auto-launch the desktop with the full app dock. Host-side `tools/run_gui.py` spawns `pythonos_bridge`, brings up an SDL window, and sends the kickoff command over the TCP REPL once the kernel is up. |
+| `make run-gui PYTHONOS_GUI_APP=<name>` | Same, but pre-launch a specific app (`bouncing_ball` / `terminal` / `editor` / `files` / `image_viewer` / `audio_tone` / `starfield` / `rainfall` / `plasma`). |
+| `make run-gui-x86_64` / `make run-gui-arm64` | Explicit per-arch forms. |
 
 Inside the compositor:
 

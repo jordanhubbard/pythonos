@@ -130,9 +130,9 @@ QEMU_GUI_FLAGS := -machine q35 $(QEMU_X86_CPU) $(QEMU_X86_ACCEL) -m 2G -smp $(SM
         docker-build help disk-image \
         bridge bridge-clean test-bridge \
         _freeze _iso _libpython \
-        x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 test-gui-x86_64 run-desktop-x86_64 run-fb-x86_64 \
-        arm64 run-arm64 stop-arm64 test-arm64 run-gui-arm64 run-desktop-arm64 run-fb-arm64 _iso_arm64 \
-        run-fb test-gui run-desktop
+        x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 test-gui-x86_64 run-fb-x86_64 \
+        arm64 run-arm64 stop-arm64 test-arm64 run-gui-arm64 run-fb-arm64 _iso_arm64 \
+        run-fb test-gui
 
 
 # ── Help ─────────────────────────────────────────────────────────────────────
@@ -170,7 +170,6 @@ help:
 	@echo "Legacy GUI (QEMU framebuffer console window — pre-bridge path):"
 	@echo "  make run-fb               Open QEMU's own SDL/cocoa window;"
 	@echo "                            kernel pushes pixels to ramfb directly"
-	@echo "  make run-desktop          Alias for run-gui (back-compat)"
 	@echo ""
 	@echo "Test:"
 	@echo "  make test                 Boot in QEMU, run TCP-REPL smoke tests"
@@ -188,7 +187,7 @@ help:
 	@echo "  SMP_CPUS=<n>                   number of x86_64 vCPUs (default: 2)"
 	@echo "  ARM64_SMP_CPUS=<n>             number of arm64 vCPUs (default: 2)"
 	@echo "  PYTHONOS_FREE_THREADING={0,1}  build CPython with --disable-gil (x86 default 1)"
-	@echo "  PYTHONOS_DESKTOP_APP=<name>    which app run-desktop auto-launches"
+	@echo "  PYTHONOS_GUI_APP=<name>        which app run-gui auto-launches"
 	@echo "                                 (bouncing_ball | terminal | editor | files |"
 	@echo "                                  image_viewer | audio_tone)"
 	@echo "  PYTHONOS_GOLDEN_REFRESH=1      regenerate test screendump goldens"
@@ -208,26 +207,24 @@ help:
 #   build / run        — minimal text-REPL kernel.
 #   build-gui / run-gui — kernel + pythonos_bridge + host SDL desktop.
 #   run-fb              — legacy: QEMU's own framebuffer window (no bridge).
-#   run-desktop         — alias for run-gui.
 ifeq ($(TARGET_ARCH),arm64)
 all:         arm64
 run:         run-arm64
 stop:        stop-arm64
 test:        test-arm64
 run-fb:      run-fb-arm64
-run-desktop: run-desktop-arm64
+run-gui:     run-gui-arm64
 else
 all:         x86_64
 run:         run-x86_64
 stop:        stop-x86_64
 test:        test-x86_64
 run-fb:      run-fb-x86_64
-run-desktop: run-desktop-x86_64
+run-gui:     run-gui-x86_64
 endif
 
 build:     all
 build-gui: all bridge
-run-gui:   run-desktop
 start:     run
 restart:   stop start
 
@@ -274,13 +271,10 @@ run-fb-x86_64: $(ISO_OUT) $(DISK_IMG)
 # process, wires QEMU's COM2 to its unix socket, and lets py_desktop()
 # in the kernel REPL bring up the host SDL window. This is what
 # `make run-gui` resolves to.
-run-desktop-x86_64: $(ISO_OUT) $(DISK_IMG) bridge
+run-gui-x86_64: $(ISO_OUT) $(DISK_IMG) bridge
 	QEMU_DISPLAY=$(QEMU_DISPLAY) QEMU_AUDIODEV=$(QEMU_AUDIODEV) \
 	    PYTHONOS_DISK=$(DISK_IMG) \
-	    python3 tools/run_desktop.py $(ISO_OUT)
-
-# Per-arch alias so make run-gui-x86_64 keeps working post-rename.
-run-gui-x86_64: run-desktop-x86_64
+	    python3 tools/run_gui.py $(ISO_OUT)
 
 stop-x86_64:
 	@pkill -f "qemu-system-x86_64.*$(ISO_OUT)" || echo "No x86_64 QEMU running."
@@ -564,14 +558,11 @@ run-fb-arm64: $(ARM64_ELF) $(ARM64_DISK)
 # wires QEMU's PL011 #1 to its unix socket. py_desktop() in the kernel
 # REPL brings up the host SDL window. This is what `make run-gui`
 # resolves to.
-run-desktop-arm64: $(ARM64_ELF) $(ARM64_DISK) bridge
-	PYTHONOS_DESKTOP_ARCH=arm64 PYTHONOS_ARM64_DISK=$(ARM64_DISK) \
+run-gui-arm64: $(ARM64_ELF) $(ARM64_DISK) bridge
+	PYTHONOS_GUI_ARCH=arm64 PYTHONOS_ARM64_DISK=$(ARM64_DISK) \
 	    PYTHONOS_DISK=$(ARM64_DISK) \
 	    QEMU_DISPLAY=$(QEMU_DISPLAY) QEMU_AUDIODEV=$(QEMU_AUDIODEV) \
-	    python3 tools/run_desktop.py $(ARM64_ELF)
-
-# Per-arch alias so make run-gui-arm64 keeps working post-rename.
-run-gui-arm64: run-desktop-arm64
+	    python3 tools/run_gui.py $(ARM64_ELF)
 
 stop-arm64:
 	@pkill -f "qemu-system-aarch64.*$(ARM64_ELF)" || echo "No arm64 QEMU running."

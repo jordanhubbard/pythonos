@@ -62,12 +62,12 @@ make run-gui
 # Boot AND auto-launch the desktop in one step (host runs a small
 # launcher that sends `pythonos_gui <app>` over the TCP REPL once
 # the kernel comes up).
-make run-desktop
-PYTHONOS_DESKTOP_APP=terminal     make run-desktop
-PYTHONOS_DESKTOP_APP=editor       make run-desktop
-PYTHONOS_DESKTOP_APP=files        make run-desktop
-PYTHONOS_DESKTOP_APP=image_viewer make run-desktop
-PYTHONOS_DESKTOP_APP=audio_tone   make run-desktop
+make run-gui
+PYTHONOS_GUI_APP=terminal     make run-gui
+PYTHONOS_GUI_APP=editor       make run-gui
+PYTHONOS_GUI_APP=files        make run-gui
+PYTHONOS_GUI_APP=image_viewer make run-gui
+PYTHONOS_GUI_APP=audio_tone   make run-gui
 ```
 
 Inside the compositor:
@@ -436,7 +436,7 @@ kernel/
   sound/
     hda.py           Intel HDA driver (BDL DMA, codec configuration)
     mixer.py         arch-neutral PCM playback API (Mixer)
-  gui/                 GUI subsystem — opt-in, only active under run-gui / run-desktop
+  gui/                 GUI subsystem — opt-in, only active under run-gui
     input.py         canonical Event + EventQueue; PS/2 + virtio-input bridges
     compositor.py    stacking window manager (Tab focus, drag, click-to-focus)
     sdl2/            PySDL2-compatible Python API (Init, Window, Surface, Renderer,
@@ -488,7 +488,7 @@ tests/
 
 tools/
   freeze_kernel.py   compiles kernel + apps + examples → frozen C bytecode in the ELF
-  run_desktop.py     boots QEMU then auto-sends `pythonos_gui` to the TCP REPL
+  run_gui.py     boots QEMU then auto-sends `pythonos_gui` to the TCP REPL
   stdlib_stubs/      bare-metal replacements for stdlib modules that assume
                      a POSIX host (dataclasses, functools, os, ctypes, sdl2, …)
   Dockerfile         Ubuntu 24.04 cross-compilation environment

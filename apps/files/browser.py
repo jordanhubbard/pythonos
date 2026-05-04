@@ -51,11 +51,14 @@ class _Browser:
             full = self.cwd.rstrip("/") + "/" + name if self.cwd != "/" else "/" + name
             kind = "?"
             try:
-                node = await vfs.stat(full)
-                if getattr(node, "type", None) == InodeType.DIRECTORY:
+                st = await vfs.stat(full)
+                t = getattr(st, "inode_type", None)
+                if t == InodeType.DIR:
                     kind = "dir"
-                elif getattr(node, "type", None) == InodeType.FILE:
+                elif t == InodeType.FILE:
                     kind = "file"
+                elif t == InodeType.SYMLINK:
+                    kind = "link"
             except Exception:
                 pass
             rows.append((name, kind))

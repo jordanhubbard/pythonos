@@ -8,7 +8,7 @@ compositor-rendered desktop is visible with three signature pixels:
     title-bar chrome    (34, 68, 136)  = 0x224488 (focused)
     bouncing_ball body  (16, 24, 32)   = 0x101820
 
-This is the pythonos_gui happy path — the same flow `make run-desktop`
+This is the pythonos_gui happy path — the same flow `make run-gui`
 exercises for users, just with `-display none` and a monitor socket so
 we can screendump for assertions.
 """
@@ -27,11 +27,11 @@ from qmp_helper import (
 
 
 ISO = sys.argv[1] if len(sys.argv) > 1 else "pythonos.iso"
-PORT = int(os.environ.get("PYTHONOS_DESKTOP_HOST_PORT", "5560"))
+PORT = int(os.environ.get("PYTHONOS_GUI_HOST_PORT", "5560"))
 MON  = "/tmp/pythonos-desktop.mon.sock"
 PPM  = "/tmp/pythonos-desktop.ppm"
 LOG  = "/tmp/pythonos-desktop.log"
-BOOT_TIMEOUT = float(os.environ.get("PYTHONOS_DESKTOP_BOOT_TIMEOUT", "30"))
+BOOT_TIMEOUT = float(os.environ.get("PYTHONOS_GUI_BOOT_TIMEOUT", "30"))
 
 
 def _qemu_cmd():

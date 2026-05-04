@@ -17,10 +17,9 @@ TOP_GOALS := all build build-gui run run-gui run-fb start stop restart \
              docker-build help disk-image \
              bridge bridge-clean test-bridge \
              x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 \
-                 test-gui-x86_64 run-desktop-x86_64 \
+                 test-gui-x86_64 \
              arm64 run-arm64 stop-arm64 test-arm64 run-gui-arm64 \
-                 test-gui-arm64 run-desktop-arm64 \
-             run-gui run-desktop
+                 test-gui-arm64
 
 .PHONY: $(TOP_GOALS)
 $(TOP_GOALS):

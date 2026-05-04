@@ -246,6 +246,7 @@ class _Editor:
 
 
 # ── Async file I/O — same shape as kernel.commands._read_all/_write_all ──
+# vfs.close() is sync (returns None); awaiting it raises TypeError. Don't.
 
 async def _read_all(path: str) -> bytes:
     fd = await vfs.open(path, OpenFlags.RDONLY)
@@ -258,7 +259,7 @@ async def _read_all(path: str) -> bytes:
             chunks.append(chunk)
         return b"".join(chunks)
     finally:
-        await vfs.close(fd)
+        vfs.close(fd)
 
 
 async def _write_all(path: str, data: bytes) -> None:
@@ -272,7 +273,7 @@ async def _write_all(path: str, data: bytes) -> None:
                 break
             off += n
     finally:
-        await vfs.close(fd)
+        vfs.close(fd)
 
 
 async def main(argv=None, *args, **kwargs) -> None:

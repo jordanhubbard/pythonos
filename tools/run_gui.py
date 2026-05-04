@@ -4,8 +4,8 @@ Boot PythonOS in GUI mode and auto-launch pythonos_gui so a desktop
 window is visible immediately rather than after the user types the
 command at the REPL.
 
-Used by `make run-desktop-x86_64` / `make run-desktop-arm64` /
-`make run-desktop`. Foregrounds QEMU; Ctrl-C terminates both QEMU and
+Used by `make run-gui-x86_64` / `make run-gui-arm64` /
+`make run-gui`. Foregrounds QEMU; Ctrl-C terminates both QEMU and
 this launcher.
 
 x86_64: command is sent over the TCP REPL forwarded by the user-mode
@@ -125,7 +125,7 @@ def _spawn_bridge(socket_path: str) -> subprocess.Popen:
     if os.path.exists(socket_path):
         try: os.unlink(socket_path)
         except OSError: pass
-    print(f"[run-desktop] spawning {bridge_bin} on {socket_path}",
+    print(f"[run-gui] spawning {bridge_bin} on {socket_path}",
           file=sys.stderr)
     proc = subprocess.Popen([bridge_bin, "--listen", socket_path])
     deadline = time.time() + 5.0
@@ -151,7 +151,7 @@ def _launch_via_tcp(cmd: list, port: int, boot_cmd: str) -> int:
         except OSError:
             time.sleep(0.5)
     if s is None:
-        print("run-desktop: kernel REPL never came up", file=sys.stderr)
+        print("run-gui: kernel REPL never came up", file=sys.stderr)
         proc.terminate()
         return 2
 
@@ -171,7 +171,7 @@ def _launch_via_tcp(cmd: list, port: int, boot_cmd: str) -> int:
 
     try:
         s.sendall((boot_cmd + "\n").encode())
-        print(f"[run-desktop] sent: {boot_cmd}", file=sys.stderr)
+        print(f"[run-gui] sent: {boot_cmd}", file=sys.stderr)
     finally:
         s.close()
 
@@ -210,14 +210,14 @@ def _launch_via_serial(cmd: list, boot_cmd: str) -> int:
                             in_pipe.write((boot_cmd + "\n").encode())
                             in_pipe.flush()
                             sent.set()
-                            print(f"\n[run-desktop] sent: {boot_cmd}",
+                            print(f"\n[run-gui] sent: {boot_cmd}",
                                   file=sys.stderr)
                         except OSError as e:
-                            print(f"[run-desktop] write failed: {e}", file=sys.stderr)
+                            print(f"[run-gui] write failed: {e}", file=sys.stderr)
                             return
                         buf.clear()
             elif not sent.is_set() and time.time() > deadline:
-                print("[run-desktop] timed out waiting for kernel prompt",
+                print("[run-gui] timed out waiting for kernel prompt",
                       file=sys.stderr)
                 return
 
@@ -241,34 +241,34 @@ def _wait_proc(proc: subprocess.Popen) -> int:
 
 def main() -> int:
     image = sys.argv[1] if len(sys.argv) > 1 else "pythonos.iso"
-    arch = os.environ.get("PYTHONOS_DESKTOP_ARCH")
+    arch = os.environ.get("PYTHONOS_GUI_ARCH")
     if arch is None:
         arch = "arm64" if image.endswith(".elf") else "x86_64"
 
     default_port = "5560" if arch == "x86_64" else "5561"
-    port = int(os.environ.get("PYTHONOS_DESKTOP_PORT", default_port))
-    boot_app = os.environ.get("PYTHONOS_DESKTOP_APP", "")
-    # PYTHONOS_DESKTOP_BOOT_CMD overrides the line we inject at the
+    port = int(os.environ.get("PYTHONOS_GUI_PORT", default_port))
+    boot_app = os.environ.get("PYTHONOS_GUI_APP", "")
+    # PYTHONOS_GUI_BOOT_CMD overrides the line we inject at the
     # kernel prompt. Default boots straight into the desktop with the
-    # full app dock (py_desktop()). Set PYTHONOS_DESKTOP_APP=<name> to
+    # full app dock (py_desktop()). Set PYTHONOS_GUI_APP=<name> to
     # also auto-launch a specific app, or override the whole command
-    # with PYTHONOS_DESKTOP_BOOT_CMD for one-offs like bridge_ping.
+    # with PYTHONOS_GUI_BOOT_CMD for one-offs like bridge_ping.
     if boot_app:
         # Legacy single-app launch (pre-dock).
         default_cmd = f"pythonos_gui {boot_app}"
     else:
         default_cmd = "py_desktop()"
-    boot_cmd = os.environ.get("PYTHONOS_DESKTOP_BOOT_CMD", default_cmd)
+    boot_cmd = os.environ.get("PYTHONOS_GUI_BOOT_CMD", default_cmd)
 
     display  = os.environ.get("QEMU_DISPLAY",  "cocoa" if _macos() else "sdl")
     audiodev = os.environ.get("QEMU_AUDIODEV", "coreaudio" if _macos() else "sdl")
 
     if not os.path.exists(image):
-        print(f"run-desktop: {image} not found; run `make` first", file=sys.stderr)
+        print(f"run-gui: {image} not found; run `make` first", file=sys.stderr)
         return 1
 
     # PYTHONOS_BRIDGE_SOCKET=<path> enables the host-side companion. Empty
-    # / unset = run-desktop legacy in-kernel framebuffer path. Default ON
+    # / unset = run-gui legacy in-kernel framebuffer path. Default ON
     # if the bridge binary exists, so the bridge gets exercised by default.
     bridge_socket_env = os.environ.get("PYTHONOS_BRIDGE_SOCKET")
     if bridge_socket_env is None:
@@ -288,12 +288,12 @@ def main() -> int:
         try:
             bridge_proc = _spawn_bridge(bridge_socket)
         except RuntimeError as e:
-            print(f"[run-desktop] bridge unavailable: {e}", file=sys.stderr)
-            print("[run-desktop] continuing without bridge "
+            print(f"[run-gui] bridge unavailable: {e}", file=sys.stderr)
+            print("[run-gui] continuing without bridge "
                   "(set PYTHONOS_BRIDGE_SOCKET= to silence)", file=sys.stderr)
             bridge_socket = None
 
-    print(f"[run-desktop] booting {image} (arch={arch}) with -display {display}"
+    print(f"[run-gui] booting {image} (arch={arch}) with -display {display}"
           + (f", bridge=on ({bridge_socket})" if bridge_socket else ", bridge=off")
           + f"; will inject {boot_cmd!r} once the shell prompt is ready",
           file=sys.stderr)
