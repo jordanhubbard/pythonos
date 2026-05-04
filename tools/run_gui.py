@@ -142,7 +142,13 @@ def _spawn_bridge(socket_path: str) -> subprocess.Popen:
 
 def _launch_via_tcp(cmd: list, port: int, boot_cmd: str) -> int:
     """x86_64 path: connect to the forwarded TCP REPL and send the command."""
-    proc = subprocess.Popen(cmd)
+    # Detach QEMU's stdin from the host TTY. With `-serial stdio` the
+    # kernel's COM1 (kshell) is otherwise wired to whatever terminal
+    # launched `make run-gui`, which means host keystrokes race the
+    # bridge SDL window — every key goes to BOTH the GUI Terminal app
+    # and to kshell. The bridge SDL window is the canonical input
+    # surface; for kshell access during run-gui, use `nc localhost 5555`.
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
     deadline = time.time() + 30.0
     s = None
     while time.time() < deadline and s is None:
