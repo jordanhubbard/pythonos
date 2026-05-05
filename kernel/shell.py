@@ -175,12 +175,14 @@ class Shell:
             _hal.linenoise_history_add(line)
         except Exception:
             pass
-        # Best-effort persistent append. /home is ext2 on arm64 and
-        # tmpfs on x86 — either way the file write itself is cheap and
-        # we're already inside an async context (Shell.run).
-        asyncio.ensure_future(self._history_persist(line))
+        # Persistent append happens inline in run() right after this
+        # method via _history_persist — keeping it awaited rather than
+        # ensure_future'd avoids racing the ext2 driver, which isn't
+        # safe under overlapping in-flight operations.
 
     async def _history_persist(self, line: str) -> None:
+        if not self._linenoise_ready or not line.strip():
+            return
         try:
             from kernel.fs.vfs import vfs, OpenFlags
             fd = await vfs.open(self.HISTORY_FILE,
@@ -305,6 +307,7 @@ class Shell:
                 # EOF / closed: exit the REPL loop cleanly.
                 return
             self._history_add(line)
+            await self._history_persist(line)
             await self._process_line(line)
 
     async def _process_line(self, line: str) -> None:

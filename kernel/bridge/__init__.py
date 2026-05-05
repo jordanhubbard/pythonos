@@ -171,7 +171,12 @@ def _seed_system_menus(compositor, registry) -> None:
     from kernel.gui.menubar import Menu, MenuItem
 
     def _about() -> None:
-        log.info("PythonOS — Python is the kernel.")
+        # Launch the About window via the standard launch path so the
+        # window is z-stacked + tracked like any other app.
+        if registry.get("about") is not None:
+            compositor.launch_app("about")
+        else:
+            log.info("PythonOS — Python is the kernel.")
 
     def _launcher(app_name):
         # Bind app_name into a closure so each menu item dispatches
@@ -226,6 +231,7 @@ def py_desktop():
         import apps.image_viewer      # noqa: F401
         import apps.files             # noqa: F401
         import apps.sysmon            # noqa: F401
+        import apps.about             # noqa: F401
         from apps import registry
         # Dock holds full apps; demos live only in the menu bar so the
         # dock stays a launcher for everyday tools.
