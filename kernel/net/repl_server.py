@@ -67,9 +67,18 @@ async def _session(conn) -> None:
             buf = buf.encode('utf-8', errors='replace')
         asyncio.ensure_future(conn.send(bytes(buf)))
 
+    # Hook this session into the in-kernel chat bus so any connected
+    # nc client can broadcast to the others. The chat object is the
+    # session-specific adapter — it knows its own handle so the
+    # user doesn't have to.
+    from kernel.net.chatbus import bus as _chat_bus, _SessionChat
+    chat_handle = _chat_bus.register(write_raw, nick=f"port{conn.remote_port}")
+    chat_obj = _SessionChat(chat_handle)
+
     try:
         shell = Shell(read_char=read_char, write=write,
                       read_byte=read_byte, write_raw=write_raw)
+        shell._ns["chat"] = chat_obj
         await shell.run()
     except EOFError:
         pass
@@ -77,6 +86,7 @@ async def _session(conn) -> None:
         import traceback
         log.error(f"repl session: {traceback.format_exc()}")
     finally:
+        _chat_bus.unregister(chat_handle)
         conn.close()
         from kernel.net.tcp import tcp
         tcp.remove_connection(conn)
