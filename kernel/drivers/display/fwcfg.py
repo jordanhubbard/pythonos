@@ -1,14 +1,19 @@
 """
-kernel.drivers.display.fwcfg — QEMU fw_cfg device (arm64 virt machine).
+kernel.drivers.display.fwcfg — QEMU fw_cfg device.
 
 fw_cfg is QEMU's mechanism for passing configuration blobs from the host
-into the guest. On the arm64 ``virt`` machine the device is mapped at:
+into the guest. On x86_64 the device is exposed through I/O ports:
+
+    0x510       selector     (2-byte little-endian)
+    0x511       data         (8-bit data port)
+
+On the arm64 ``virt`` machine the device is mapped at:
 
     0x09020000  data         (8-byte data port)
     0x09020008  selector     (2-byte BE; only 16-bit writes accepted by QEMU)
     0x09020010  DMA control  (8-byte BE DMA control register)
 
-This module talks exclusively over DMA: every operation builds a
+The arm64 path talks over DMA: every operation builds a
 FWCfgDmaAccess header in guest RAM and posts its address to the DMA
 register. Each DMA op carries its own selector (via the SELECT bit and
 the high 16 bits of the control word), so we never touch the 16-bit
@@ -19,10 +24,15 @@ Spec: docs/specs/fw_cfg.txt in the QEMU source tree.
 """
 
 import _hal
-from kernel.hal.io import mmio_read8, mmio_write8, mmio_write32
+from kernel.hal.io import inb, outw, mmio_read8, mmio_write8, mmio_write32
+
+_ARCH = getattr(_hal, "ARCH", "x86_64")
 
 FW_CFG_DATA = 0x09020000
 FW_CFG_DMA  = 0x09020010
+
+FW_CFG_IO_SELECTOR = 0x510
+FW_CFG_IO_DATA     = 0x511
 
 FW_CFG_SIGNATURE = 0x0000
 FW_CFG_ID        = 0x0001
@@ -94,11 +104,24 @@ def _dma_write(selector: int, data: bytes) -> bool:
     return _dma_op(selector, n, buf_phys, FW_CFG_DMA_WRITE)
 
 
+def _pio_read(selector: int, length: int) -> bytes | None:
+    if length == 0:
+        return b""
+    outw(FW_CFG_IO_SELECTOR, selector & 0xFFFF)
+    return bytes(inb(FW_CFG_IO_DATA) for _ in range(length))
+
+
+def _read(selector: int, length: int) -> bytes | None:
+    if _ARCH == "arm64":
+        return _dma_read(selector, length)
+    return _pio_read(selector, length)
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def signature() -> bytes:
     """Reads the 4-byte signature item; returns b'QEMU' if fw_cfg is present."""
-    sig = _dma_read(FW_CFG_SIGNATURE, 4)
+    sig = _read(FW_CFG_SIGNATURE, 4)
     return sig if sig != None else b""
 
 
@@ -109,7 +132,7 @@ def list_files() -> dict[str, tuple[int, int]]:
     two reads: first to get the entry count, second to slurp every
     entry from the start.
     """
-    head = _dma_read(FW_CFG_FILE_DIR, 4)
+    head = _read(FW_CFG_FILE_DIR, 4)
     if not head:
         return {}
     cnt = int.from_bytes(head, "big")
@@ -117,7 +140,7 @@ def list_files() -> dict[str, tuple[int, int]]:
         return {}
 
     total = 4 + DIR_ENTRY_SIZE * cnt
-    body = _dma_read(FW_CFG_FILE_DIR, total)
+    body = _read(FW_CFG_FILE_DIR, total)
     if not body or len(body) < total:
         return {}
 
@@ -131,6 +154,22 @@ def list_files() -> dict[str, tuple[int, int]]:
     return files
 
 
+def read_item(selector: int, length: int) -> bytes | None:
+    """Read ``length`` bytes from a fw_cfg selector."""
+    return _read(selector, length)
+
+
+def read_file(name: str) -> bytes | None:
+    """Read a named ``-fw_cfg name=...`` item, or ``None`` if absent."""
+    entry = list_files().get(name)
+    if entry == None:
+        return None
+    size, selector = entry
+    return read_item(selector, size)
+
+
 def write_item(selector: int, data: bytes) -> bool:
     """DMA-WRITE ``data`` into the fw_cfg item at ``selector``."""
+    if _ARCH != "arm64":
+        return False
     return _dma_write(selector, data)

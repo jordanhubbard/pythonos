@@ -2,7 +2,7 @@
 """
 Smoke test for the pythonos_bridge JSON-RPC loop.
 
-Spawns `pythonos_bridge --listen <socket>`, connects, walks the
+Spawns `pythonos_bridge --listen-tcp 127.0.0.1:<port>`, connects, walks the
 length-prefixed JSON protocol through hello / ping / shutdown,
 and asserts on the responses.
 
@@ -16,7 +16,6 @@ import socket
 import struct
 import subprocess
 import sys
-import tempfile
 import time
 
 
@@ -44,6 +43,15 @@ def _recv(sock):
     return json.loads(payload.decode("utf-8"))
 
 
+def _free_port() -> int:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
+    finally:
+        s.close()
+
+
 def main():
     repo_root = os.path.dirname(os.path.abspath(__file__))
     binary = os.path.join(repo_root, "pythonos_bridge")
@@ -51,23 +59,25 @@ def main():
         print(f"missing binary: {binary}", file=sys.stderr)
         return 1
 
-    sock_path = os.path.join(tempfile.gettempdir(), "pythonos-bridge-test.sock")
-    if os.path.exists(sock_path):
-        os.unlink(sock_path)
+    port = _free_port()
+    endpoint = f"127.0.0.1:{port}"
 
-    proc = subprocess.Popen([binary, "--listen", sock_path])
+    proc = subprocess.Popen([binary, "--listen-tcp", endpoint])
     try:
         # Wait for the server to bind.
         deadline = time.time() + 3.0
+        s = None
         while time.time() < deadline:
-            if os.path.exists(sock_path):
+            try:
+                s = socket.create_connection(("127.0.0.1", port), timeout=0.2)
                 break
+            except OSError:
+                if proc.poll() is not None:
+                    raise RuntimeError(
+                        f"bridge exited early with rc={proc.returncode}")
             time.sleep(0.05)
-        if not os.path.exists(sock_path):
-            raise RuntimeError("bridge never created its listen socket")
-
-        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.connect(sock_path)
+        if s is None:
+            raise RuntimeError("bridge never opened its TCP listener")
         s.settimeout(3.0)
 
         passes, fails = 0, 0
@@ -198,9 +208,6 @@ def main():
             proc.terminate()
             try: proc.wait(timeout=2.0)
             except subprocess.TimeoutExpired: proc.kill()
-        if os.path.exists(sock_path):
-            try: os.unlink(sock_path)
-            except OSError: pass
 
 
 if __name__ == "__main__":

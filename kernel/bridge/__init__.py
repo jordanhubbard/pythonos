@@ -70,9 +70,10 @@ class Bridge:
         # call() or explicit flush() drains it as one batch.
         self._pending: list = []
 
-    def hello(self) -> dict:
+    def hello(self, timeout_ms: int | None = 2000) -> dict:
         """Handshake. Returns the host's hello result."""
-        r = self.call("hello", {"protocol": PROTOCOL_VERSION})
+        r = self.call("hello", {"protocol": PROTOCOL_VERSION},
+                      timeout_ms=timeout_ms)
         self._opened = True
         return r
 
@@ -96,7 +97,8 @@ class Bridge:
         self._send("batch", {"ops": ops}, b"")
 
     def call(self, op: str, params: dict | None = None,
-              payload: bytes = b"") -> dict:
+              payload: bytes = b"",
+              timeout_ms: int | None = None) -> dict:
         """Send `op` with `params` (and optional binary `payload`),
         block on the response, return the result dict on success or
         raise BridgeError on failure. Auto-flushes any pending casts
@@ -104,11 +106,12 @@ class Bridge:
         if self._pending:
             ops = self._pending
             self._pending = []
-            self._send("batch", {"ops": ops}, b"")
-        return self._send(op, params, payload)
+            self._send("batch", {"ops": ops}, b"", timeout_ms=timeout_ms)
+        return self._send(op, params, payload, timeout_ms=timeout_ms)
 
     def _send(self, op: str, params: dict | None,
-               payload: bytes) -> dict:
+               payload: bytes,
+               timeout_ms: int | None = None) -> dict:
         json = _json()
         frame_id = self._next_id
         self._next_id += 1
@@ -124,11 +127,21 @@ class Bridge:
         if payload:
             _uart.write_bytes(payload)
 
-        hdr = _uart.read_bytes(4)
+        if timeout_ms is None:
+            hdr = _uart.read_bytes(4)
+        else:
+            hdr = _uart.read_bytes_timeout(4, timeout_ms)
+            if hdr is None:
+                raise BridgeError(-4, "timeout waiting for bridge response")
         (length,) = struct.unpack(">I", hdr)
         if length == 0 or length > 16 * 1024 * 1024:
             raise BridgeError(-1, f"absurd response length {length}")
-        body = _uart.read_bytes(length)
+        if timeout_ms is None:
+            body = _uart.read_bytes(length)
+        else:
+            body = _uart.read_bytes_timeout(length, timeout_ms)
+            if body is None:
+                raise BridgeError(-4, "timeout waiting for bridge response body")
         env = json.loads(body.decode("utf-8"))
 
         if env.get("id") != frame_id:
@@ -148,7 +161,7 @@ def open_bridge() -> bool:
     Logs a clear diagnostic and returns False on failure."""
     try:
         r = bridge.hello()
-    except BridgeError as e:
+    except Exception as e:
         log.warn(f"bridge: hello failed ({e})")
         return False
     log.info(f"bridge: ready, agent={r.get('agent')} sdl={r.get('sdl_ver')}")
@@ -209,7 +222,7 @@ def _seed_system_menus(compositor, registry) -> None:
     compositor._menubar.set_system_menus(system_menus)
 
 
-def py_desktop():
+def py_desktop(app_name: str | None = None):
     """Open the PythonOS desktop on the host pythonos_bridge. Returns
     the compositor instance on success or ``None`` if no bridge is
     reachable.
@@ -219,7 +232,8 @@ def py_desktop():
     calls just return the live compositor without re-launching."""
     try:
         bridge.hello()
-    except BridgeError:
+    except Exception as e:
+        log.warn(f"py_desktop: bridge unavailable ({e})")
         return None
     from kernel.gui.compositor import compositor
     # Pull in all apps so their registry.register() calls fire.
@@ -245,4 +259,9 @@ def py_desktop():
     except Exception as e:
         log.warn(f"py_desktop: app registration: {e}")
     compositor.start()
+    if app_name:
+        try:
+            compositor.launch_app(str(app_name))
+        except Exception as e:
+            log.warn(f"py_desktop: launch {app_name!r} failed: {e}")
     return compositor

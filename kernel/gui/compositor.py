@@ -712,7 +712,7 @@ class Compositor:
         from kernel.bridge import bridge as _br, BridgeError
         try:
             _br.hello()
-        except BridgeError as e:
+        except Exception as e:
             log.info(f"compositor: bridge unavailable ({e}); using local fb")
             return
         fb = _fb_mod.fb

@@ -3,7 +3,7 @@
 # Links real SDL2 (later: SDL_ttf, SDL_mixer) and exposes draw/audio/input
 # to the guest as JSON-RPC over a length-prefixed byte stream. The byte
 # stream itself is plumbing — see pythonos-xaz; the bridge doesn't care
-# whether it's a unix socket, a UART chardev, or stdio.
+# whether QEMU reaches it through TCP, a UART chardev, or stdio.
 
 CC      ?= cc
 PREFIX  ?= /usr/local

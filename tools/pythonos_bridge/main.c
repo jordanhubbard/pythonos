@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <netinet/in.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -1166,6 +1167,35 @@ static int serve_fd(int fd) {
     return st.should_exit ? 0 : 1;
 }
 
+static void cleanup_sdl(void) {
+    if (g_window.open) {
+        SDL_DestroyWindow(g_window.win);
+        g_window.win = NULL;
+        g_window.open = 0;
+    }
+    if (SDL_WasInit(SDL_INIT_VIDEO)) SDL_Quit();
+}
+
+static int accept_loop(int srv) {
+    int final_rc = 1;
+    for (;;) {
+        int conn = accept(srv, NULL, NULL);
+        if (conn < 0) {
+            LOG_ERROR("accept: %s", strerror(errno));
+            break;
+        }
+        int rc = serve_fd(conn);
+        close(conn);
+        if (rc == 0) {
+            final_rc = 0;
+            break;
+        }
+        LOG_INFO("client disconnected; waiting for next client");
+    }
+    cleanup_sdl();
+    return final_rc;
+}
+
 static int serve_unix_socket(const char *path) {
     /* Stale-socket cleanup. */
     struct stat sb;
@@ -1193,20 +1223,79 @@ static int serve_unix_socket(const char *path) {
     }
     LOG_INFO("listening on %s", path);
 
-    int conn = accept(srv, NULL, NULL);
-    if (conn < 0) {
-        LOG_ERROR("accept: %s", strerror(errno)); close(srv); return 1;
-    }
-    int rc = serve_fd(conn);
-    close(conn);
+    int rc = accept_loop(srv);
     close(srv);
     unlink(path);
-    if (g_window.open) {
-        SDL_DestroyWindow(g_window.win);
-        g_window.win = NULL;
-        g_window.open = 0;
+    return rc;
+}
+
+static int parse_tcp_endpoint(const char *spec,
+                              char *host, size_t host_len,
+                              int *port_out) {
+    const char *port_s = spec;
+    const char *colon = strrchr(spec, ':');
+    if (colon) {
+        size_t n = (size_t)(colon - spec);
+        if (n == 0 || n >= host_len) return -1;
+        memcpy(host, spec, n);
+        host[n] = '\0';
+        port_s = colon + 1;
+    } else {
+        snprintf(host, host_len, "127.0.0.1");
     }
-    if (SDL_WasInit(SDL_INIT_VIDEO)) SDL_Quit();
+
+    char *end = NULL;
+    long port = strtol(port_s, &end, 10);
+    if (!port_s[0] || *end != '\0' || port <= 0 || port > 65535)
+        return -1;
+    *port_out = (int)port;
+    return 0;
+}
+
+static int serve_tcp_socket(const char *endpoint) {
+    char host[64];
+    int port = 0;
+    if (parse_tcp_endpoint(endpoint, host, sizeof(host), &port) != 0) {
+        LOG_ERROR("invalid TCP endpoint '%s' (expected HOST:PORT or PORT)",
+                  endpoint);
+        return 2;
+    }
+
+    int srv = socket(AF_INET, SOCK_STREAM, 0);
+    if (srv < 0) { LOG_ERROR("socket: %s", strerror(errno)); return 1; }
+
+    int one = 1;
+    setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+    if (strcmp(host, "*") == 0 || strcmp(host, "0.0.0.0") == 0) {
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    } else if (strcmp(host, "localhost") == 0) {
+        if (inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr) != 1) {
+            close(srv);
+            return 1;
+        }
+    } else if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
+        LOG_ERROR("invalid IPv4 listen host '%s'", host);
+        close(srv);
+        return 2;
+    }
+
+    if (bind(srv, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        LOG_ERROR("bind tcp %s:%d: %s", host, port, strerror(errno));
+        close(srv);
+        return 1;
+    }
+    if (listen(srv, 4) != 0) {
+        LOG_ERROR("listen: %s", strerror(errno)); close(srv); return 1;
+    }
+    LOG_INFO("listening on tcp %s:%d", host, port);
+
+    int rc = accept_loop(srv);
+    close(srv);
     return rc;
 }
 
@@ -1256,29 +1345,33 @@ static int run_selftest(void) {
 static void usage(FILE *out, const char *argv0) {
     fprintf(out,
         "usage: %s [options]\n"
-        "  --listen PATH    serve JSON-RPC frames on unix socket PATH\n"
-        "  --selftest       open an SDL2 window directly (no socket, no JSON)\n"
-        "  -v, --verbose    enable debug logging\n"
-        "  -h, --help       show this help\n",
+        "  --listen-tcp HOST:PORT  serve JSON-RPC frames on TCP\n"
+        "  --listen PATH           serve JSON-RPC frames on unix socket PATH\n"
+        "  --selftest              open an SDL2 window directly (no socket, no JSON)\n"
+        "  -v, --verbose           enable debug logging\n"
+        "  -h, --help              show this help\n",
         argv0);
 }
 
 int main(int argc, char **argv) {
     const char *listen_path = NULL;
+    const char *listen_tcp = NULL;
     int selftest = 0;
 
     static const struct option longopts[] = {
-        { "listen",   required_argument, NULL, 'l' },
-        { "selftest", no_argument,       NULL, 's' },
-        { "verbose",  no_argument,       NULL, 'v' },
-        { "help",     no_argument,       NULL, 'h' },
-        { 0,          0,                 0,    0   },
+        { "listen",     required_argument, NULL, 'l' },
+        { "listen-tcp", required_argument, NULL, 't' },
+        { "selftest",   no_argument,       NULL, 's' },
+        { "verbose",    no_argument,       NULL, 'v' },
+        { "help",       no_argument,       NULL, 'h' },
+        { 0,            0,                 0,    0   },
     };
 
     int c;
-    while ((c = getopt_long(argc, argv, "l:svh", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "l:t:svh", longopts, NULL)) != -1) {
         switch (c) {
             case 'l': listen_path = optarg; break;
+            case 't': listen_tcp = optarg; break;
             case 's': selftest = 1; break;
             case 'v': g_verbose = 1; break;
             case 'h': usage(stdout, argv[0]); return 0;
@@ -1286,15 +1379,14 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (selftest && listen_path) {
-        LOG_ERROR("--selftest and --listen are mutually exclusive");
-        return 2;
-    }
-    if (!selftest && !listen_path) {
+    int listen_count = (listen_path ? 1 : 0) + (listen_tcp ? 1 : 0);
+    if ((selftest ? 1 : 0) + listen_count != 1) {
+        LOG_ERROR("choose exactly one of --listen-tcp, --listen, or --selftest");
         usage(stderr, argv[0]);
         return 2;
     }
 
-    if (selftest)    return run_selftest();
+    if (selftest)   return run_selftest();
+    if (listen_tcp) return serve_tcp_socket(listen_tcp);
     return serve_unix_socket(listen_path);
 }

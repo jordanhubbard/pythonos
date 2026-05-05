@@ -23,6 +23,34 @@ from kernel.fs.tmpfs import TmpFS
 _ARCH = getattr(_hal, 'ARCH', 'x86_64')
 
 
+def _fwcfg_text(name: str) -> str:
+    """Read a small text value passed with QEMU ``-fw_cfg name=...``."""
+    try:
+        from kernel.drivers.display import fwcfg
+        if fwcfg.signature() != b"QEMU":
+            return ""
+        data = fwcfg.read_file(name)
+    except Exception:
+        return ""
+    if not data:
+        return ""
+    return data.decode("utf-8", errors="replace").strip("\x00 \t\r\n")
+
+
+async def _auto_start_bridge_desktop(app_name: str | None = None) -> None:
+    await asyncio.sleep(0.1)
+    try:
+        from kernel.bridge import py_desktop
+        desktop = py_desktop(app_name or None)
+    except Exception as e:
+        log.warn(f"kernel: bridge desktop auto-start failed ({e})")
+        return
+    if desktop is None:
+        log.warn("kernel: bridge desktop auto-start requested but bridge is unavailable")
+    else:
+        log.info("kernel: bridge desktop auto-started")
+
+
 def boot(mmap: list[tuple[int, int]],
          fb_info: dict | None = None) -> None:
     """
@@ -292,6 +320,15 @@ async def _kernel_main(
                   write_raw=_write_raw)
     scheduler.spawn(shell.run(), name="kshell")
     log.info("kernel: shell spawned — system ready")
+
+    gui_mode = _fwcfg_text("opt/pythonos/gui")
+    if gui_mode == "bridge":
+        app_name = _fwcfg_text("opt/pythonos/gui-app")
+        scheduler.spawn(_auto_start_bridge_desktop(app_name or None),
+                        name="bridge-desktop")
+        log.info("kernel: bridge desktop auto-start requested")
+    elif gui_mode:
+        log.warn(f"kernel: unknown GUI boot mode {gui_mode!r}")
 
     # Main loop: keep the event loop alive; subsystems run as tasks
     while True:
