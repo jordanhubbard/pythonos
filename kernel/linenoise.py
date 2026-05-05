@@ -28,12 +28,19 @@ async def linenoise_edit(prompt, read_char, write, complete=None):
     oriented bridge so linenoise's VT100 escapes flow through.
     """
     def _write_bytes(buf):
-        # _hal hands us bytes; the shell's `write` callback accepts str.
+        # _hal hands us bytes. Raw sinks accept bytes; older sinks may
+        # still expect str. Do not let callback exceptions escape into
+        # the C hook, because that hook deliberately falls back to serial
+        # when Python reports an unconsumed write.
         try:
-            text = buf.decode("utf-8", errors="replace")
+            write(buf)
+            return
         except Exception:
-            text = ""
-        write(text)
+            pass
+        try:
+            write(buf.decode("utf-8", errors="replace"))
+        except Exception:
+            pass
 
     slot = _hal.linenoise_edit_start(prompt, _write_bytes, complete)
     try:

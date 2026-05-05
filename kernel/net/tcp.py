@@ -226,23 +226,25 @@ class TCPListener:
         self._stack.unlisten(self.port, self)
 
     async def _on_syn(self, conn: TCPConnection) -> None:
-        log.info(f"tcp: sending SYN-ACK to :{conn.remote_port}")
+        if TRACE_SEGMENTS:
+            log.info(f"tcp: sending SYN-ACK to :{conn.remote_port}")
         try:
             await conn.send_segment(F_SYN | F_ACK)
         except Exception as e:
             import traceback as _tb
-            log.info(f"tcp: send_segment raised: {e}\n{_tb.format_exc()}")
+            log.warn(f"tcp: send_segment raised: {e}\n{_tb.format_exc()}")
             self._stack.remove_connection(conn)
             return
         try:
             await asyncio.wait_for(conn._accept_event.wait(), timeout=10.0)
         except asyncio.TimeoutError:
             conn.state = TCPState.CLOSED
-            log.info(f"tcp: SYN-ACK timeout for :{conn.remote_port}")
+            log.warn(f"tcp: SYN-ACK timeout for :{conn.remote_port}")
             self._stack.remove_connection(conn)
             return
         if conn.state in (TCPState.ESTABLISHED, TCPState.CLOSE_WAIT):
-            log.info(f"tcp: connection established with :{conn.remote_port}")
+            if TRACE_SEGMENTS:
+                log.info(f"tcp: connection established with :{conn.remote_port}")
             await self._queue.put(conn)
 
 
@@ -314,7 +316,8 @@ class TCPStack:
         if seg.flags & F_SYN and not (seg.flags & F_ACK):
             listener = self._listeners.get(seg.dst_port)
             if listener:
-                log.info(f"tcp: SYN on port {seg.dst_port} from :{seg.src_port}")
+                if TRACE_SEGMENTS:
+                    log.info(f"tcp: SYN on port {seg.dst_port} from :{seg.src_port}")
                 conn = TCPConnection(
                     local_ip=pkt.dst,
                     remote_ip=pkt.src,

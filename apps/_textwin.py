@@ -188,8 +188,12 @@ class TextWin:
         if self._cursor_visible:
             self._draw_cursor()
 
-    def write_raw(self, data: bytes) -> None:
-        self.write(data.decode("utf-8", errors="replace"))
+    def write_raw(self, data) -> None:
+        if isinstance(data, (bytes, bytearray)):
+            text = data.decode("utf-8", errors="replace")
+        else:
+            text = str(data)
+        self.write(text)
 
     async def read_char(self) -> str:
         return await self._char_q.get()

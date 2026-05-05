@@ -71,18 +71,21 @@ def poll_once() -> bool:
 
 async def _dispatch(frame: EtherFrame) -> None:
     if frame.ethertype == ETHERTYPE_ARP:
-        log.info(f"net: rx ARP len={len(frame.payload)}")
+        if TRACE_PACKETS:
+            log.info(f"net: rx ARP len={len(frame.payload)}")
         arp_table.handle_frame(frame.payload)
         await _maybe_send_arp_reply(frame.payload)
     elif frame.ethertype == ETHERTYPE_IPv4:
         pkt = IPv4Packet.decode(frame.payload)
-        log.info(f"net: rx IPv4 proto={pkt.proto} src={ip_str(pkt.src)}")
+        if TRACE_PACKETS:
+            log.info(f"net: rx IPv4 proto={pkt.proto} src={ip_str(pkt.src)}")
         # Learn src IP→MAC opportunistically so outbound SYN-ACK doesn't need ARP
         arp_table.learn(pkt.src, frame.src)
         from kernel.net.tcp import tcp
         tcp.handle_ip_packet(pkt)
     elif frame.ethertype != 0x86DD:   # ignore IPv6 silently
-        log.info(f"net: ignoring frame ethertype={frame.ethertype:#06x}")
+        if TRACE_PACKETS:
+            log.info(f"net: ignoring frame ethertype={frame.ethertype:#06x}")
 
 def _dispatch_sync(frame: EtherFrame) -> None:
     if frame.ethertype == ETHERTYPE_ARP:
@@ -112,7 +115,8 @@ async def _maybe_send_arp_reply(payload: bytes) -> None:
     target_ip  = payload[24:28]
     if op != 1 or target_ip != local_ip or _nic is None:  # op=1 is ARP_REQUEST
         return
-    log.info(f"net: sending ARP reply for {ip_str(target_ip)}")
+    if TRACE_PACKETS:
+        log.info(f"net: sending ARP reply for {ip_str(target_ip)}")
     reply_arp = _s.pack(">HHBBH6s4s6s4s",
         1, 0x0800, 6, 4, 2,   # Ethernet/IPv4, op=REPLY
         local_mac, local_ip,
@@ -133,7 +137,8 @@ def _maybe_send_arp_reply_sync(payload: bytes) -> None:
     target_ip  = payload[24:28]
     if op != 1 or target_ip != local_ip:
         return
-    log.info(f"net: sync sending ARP reply for {ip_str(target_ip)}")
+    if TRACE_PACKETS:
+        log.info(f"net: sync sending ARP reply for {ip_str(target_ip)}")
     reply_arp = _s.pack(">HHBBH6s4s6s4s",
         1, 0x0800, 6, 4, 2,
         local_mac, local_ip,
@@ -157,7 +162,8 @@ async def send_tcp_segment(seg, src_ip: bytes, dst_ip: bytes) -> None:
         next_hop = gateway
 
     mac = arp_table.lookup(next_hop)
-    log.info(f"net: send_tcp_segment dst={ip_str(dst_ip)} mac={mac and mac.hex()}")
+    if TRACE_PACKETS:
+        log.info(f"net: send_tcp_segment dst={ip_str(dst_ip)} mac={mac and mac.hex()}")
     if mac is None:
         arp_req = arp_table.build_request(local_mac, local_ip, next_hop)
         await _nic.send(arp_req)   # full Ethernet frame; NIC prepends only VirtIO header
@@ -172,8 +178,10 @@ async def send_tcp_segment(seg, src_ip: bytes, dst_ip: bytes) -> None:
     eth_frame = EtherFrame(dst=mac, src=local_mac,
                            ethertype=ETHERTYPE_IPv4,
                            payload=ip_pkt.encode())
-    log.info(f"net: calling _nic.send len={len(eth_frame.encode())}")
-    await _nic.send(eth_frame.encode())
+    frame = eth_frame.encode()
+    if TRACE_PACKETS:
+        log.info(f"net: calling _nic.send len={len(frame)}")
+    await _nic.send(frame)
 
 def _send_frame_nowait(frame: bytes) -> bool:
     if _nic is None:
