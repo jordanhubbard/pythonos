@@ -110,6 +110,25 @@ class SDL_Surface:
             self.handle = 0   # lazy: allocated when first synced to host
             self.pixels = bytearray(w * h * 4)
 
+    @classmethod
+    def from_handle(cls, handle: int, w: int, h: int) -> "SDL_Surface":
+        """Wrap an already-allocated host bridge handle (e.g. the window's
+        main framebuffer surface from ``display.open``) as an SDL_Surface.
+        Drawing methods dispatch to the host like any other host-backed
+        surface, but ``free()`` is a no-op since the bridge owns the
+        underlying object."""
+        s = cls.__new__(cls)
+        s.w           = w
+        s.h           = h
+        s.pitch       = w * 4
+        s.format      = SDL_PixelFormat(32)
+        s.host_backed = True
+        s.handle      = int(handle)
+        s.pixels      = None
+        s.dirty       = False
+        s._borrowed   = True
+        return s
+
     @property
     def contents(self):
         return self
@@ -139,6 +158,10 @@ class SDL_Surface:
         self._sync_to_host()
 
     def free(self) -> None:
+        if getattr(self, "_borrowed", False):
+            # Wrapped, not owned — leave the host handle alone.
+            self.handle = 0
+            return
         if self.handle:
             try:
                 from kernel.bridge import bridge as _br

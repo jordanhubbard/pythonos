@@ -134,4 +134,5 @@ registry.register(
     description="Palette-cycled plasma effect (graphics demo)",
     entry=main,
     icon_factory=plasma_icon,
+    category="demo",
 )

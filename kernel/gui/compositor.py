@@ -46,14 +46,9 @@ DOCK_FG           = 0xFFFFFF
 DOCK_LABEL_BG     = 0x000000
 DOCK_LABEL_FG     = 0xFFFFFF
 
-# Top menu bar — semi-translucent strip with the wordmark on the left
-# and uptime/time on the right. Painted before windows so it's behind
-# them in z-order, but we offset the new-window placement below it so
-# it stays visible.
-MENU_BAR_H        = 24
-MENU_BAR_BG       = 0x101830
-MENU_BAR_FG       = 0xE6E0C0
-MENU_BAR_PAD_X    = 12
+# The dropdown menu bar lives in kernel.gui.menubar and owns its own
+# geometry constants (MENU_BAR_H, palette, padding). The compositor
+# only invokes menubar.render() — no constants needed at this layer.
 
 
 # ── CompositorWindow ────────────────────────────────────────────────────────
@@ -75,6 +70,12 @@ class CompositorWindow:
         self.focused = False
         self._on_event = None  # callback fn(Event) — set by app
         self._closed   = False
+        # Menubar binding: which registered app this window belongs to.
+        # Filled in by Compositor.add_window() when the dock launcher
+        # has set _launching_app — lets focus changes pull the app's
+        # declared menus from the registry without each app having to
+        # call set_window_menus() itself.
+        self.app_name: str = ""
 
     def set_event_handler(self, fn) -> None:
         self._on_event = fn
@@ -128,15 +129,26 @@ class Compositor:
         # Pre-uploaded desktop background; lazy-loaded the first time
         # bridge mode opens. Decoded from kernel.gui.assets.DESKTOP_BG_PNG.
         self._bg_surface: 'SDL_Surface | None' = None
-        self._boot_tick0 = 0   # snapshot at start() — used for the menu-bar uptime
+        self._boot_tick0 = 0   # snapshot at start() — used for menu-bar uptime
+        # macOS-style menu bar at the top. The system menus are seeded
+        # once by py_desktop(); per-app menus follow focus changes. The
+        # bar's render() owns drawing the wordmark + clock area too.
+        from kernel.gui.menubar import MenuBar
+        self._menubar = MenuBar()
+        # Set by _launch_dock_app for the duration of an app's startup
+        # so add_window() can stamp the new window with the app's name.
+        self._launching_app: str = ""
 
     # ── Window registry ─────────────────────────────────────────────────────
 
     def add_window(self, win: CompositorWindow) -> None:
+        if not win.app_name and self._launching_app:
+            win.app_name = self._launching_app
         self._windows.append(win)
         if self._focus_idx < 0:
             self._focus_idx = 0
             win.focused = True
+            self._refresh_app_menus(win)
         win.dirty = True
 
     def remove_window(self, win: CompositorWindow) -> None:
@@ -147,8 +159,10 @@ class Compositor:
         if idx == self._focus_idx and self._windows:
             self._focus_idx = min(self._focus_idx, len(self._windows) - 1)
             self._windows[self._focus_idx].focused = True
+            self._refresh_app_menus(self._windows[self._focus_idx])
         elif not self._windows:
             self._focus_idx = -1
+            self._refresh_app_menus(None)
 
     def cycle_focus(self, direction: int = 1) -> None:
         if not self._windows:
@@ -157,8 +171,23 @@ class Compositor:
             self._windows[self._focus_idx].focused = False
         self._focus_idx = (self._focus_idx + direction) % len(self._windows)
         self._windows[self._focus_idx].focused = True
+        self._refresh_app_menus(self._windows[self._focus_idx])
         for w in self._windows:
             w.dirty = True
+
+    def _refresh_app_menus(self, win) -> None:
+        """Replace the menubar's app-menu list with the focused window's
+        registered menus (or [] for none / no window)."""
+        menus = []
+        if win is not None and win.app_name:
+            try:
+                from apps import registry as _reg
+                info = _reg.get(win.app_name)
+                if info is not None:
+                    menus = list(info.menus or [])
+            except Exception:
+                menus = []
+        self._menubar.set_app_menus(menus)
 
     @property
     def focused_window(self) -> CompositorWindow | None:
@@ -225,7 +254,6 @@ class Compositor:
                     "handle": fb_handle, "rect": None,
                     "rgb": (self._desktop_bg & 0xFFFFFF) | 0xFF000000,
                 })
-            self._draw_menu_bar_bridge(fb_handle)
             for win in self._windows:
                 if win.chrome:
                     chrome_color = CHROME_FOCUS_BG if win.focused else CHROME_UNFOCUS_BG
@@ -276,6 +304,14 @@ class Compositor:
                                       "w": s.w, "h": s.h},
                     })
             self._draw_dock_bridge(fb_handle)
+            # Menu bar last so any open dropdown sits on top of the
+            # rest of the desktop. Refresh the right-side uptime text
+            # each frame so the clock ticks visibly.
+            self._menubar.set_right_text(self._uptime_str())
+            from kernel.gui.sdl2.surface import SDL_Surface
+            fb_surf = SDL_Surface.from_handle(fb_handle,
+                                                self._bridge_w, self._bridge_h)
+            self._menubar.render(fb_surf, self._bridge_w)
             _br.call("display.present", {})
         except BridgeError as e:
             log.warn(f"compositor: bridge frame failed ({e}); "
@@ -298,37 +334,6 @@ class Compositor:
         m = (elapsed // 60) % 60
         s = elapsed % 60
         return f"{h:02d}:{m:02d}:{s:02d}"
-
-    def _draw_menu_bar_bridge(self, fb_handle: int) -> None:
-        """Top menu bar: PythonOS wordmark on the left, uptime on the
-        right. ~24 px tall, semi-opaque strip painted right after the
-        background so windows can sit on top of it (we choose to leave
-        it always-visible by clipping app windows below MENU_BAR_H —
-        see _focus / window.x,y placement in apps)."""
-        from kernel.bridge import bridge as _br
-        _br.cast("surface.fill_rect", {
-            "handle": fb_handle,
-            "rect": {"x": 0, "y": 0,
-                      "w": self._bridge_w, "h": MENU_BAR_H},
-            "rgb": (MENU_BAR_BG & 0xFFFFFF) | 0xFF000000,
-        })
-        wordmark = "PythonOS"
-        _br.cast("text.draw", {
-            "handle": fb_handle,
-            "x": MENU_BAR_PAD_X,
-            "y": (MENU_BAR_H - GLYPH_H) // 2,
-            "text": wordmark,
-            "fg": (MENU_BAR_FG & 0xFFFFFF) | 0xFF000000,
-        })
-        clock = self._uptime_str()
-        clock_w = len(clock) * GLYPH_W
-        _br.cast("text.draw", {
-            "handle": fb_handle,
-            "x": self._bridge_w - clock_w - MENU_BAR_PAD_X,
-            "y": (MENU_BAR_H - GLYPH_H) // 2,
-            "text": clock,
-            "fg": (MENU_BAR_FG & 0xFFFFFF) | 0xFF000000,
-        })
 
     def _dock_total_w(self) -> int:
         n = len(self._dock_apps)
@@ -458,10 +463,16 @@ class Compositor:
         self._dock_apps.append((name, entry, icon_factory))
 
     async def _launch_dock_app(self, name: str, entry) -> None:
+        # Stamp newly-created windows with the app name so the menu bar
+        # can pick up registered per-app menus on focus.
+        prev = self._launching_app
+        self._launching_app = name
         try:
             await entry()
         except Exception as e:
             log.warn(f"dock: {name} crashed: {e}")
+        finally:
+            self._launching_app = prev
 
     def launch_app(self, name: str, *args) -> None:
         """Spawn an app by registry name. Apps inside the desktop call
@@ -530,6 +541,7 @@ class Compositor:
         self._focus_idx = self._windows.index(win)
         win.focused = True
         win.dirty = True
+        self._refresh_app_menus(win)
         # Raise to top of stack so it paints last (and registers as topmost
         # in subsequent hit-tests).
         self._windows.remove(win)
@@ -544,6 +556,19 @@ class Compositor:
             direction = -1 if (ev.mods & _gui_input.MOD_SHIFT) else 1
             self.cycle_focus(direction)
             return
+
+        # Menu bar gets first crack at clicks (and at moves while a
+        # dropdown is open, so the hover highlight tracks the cursor).
+        if ev.kind == _gui_input.MOUSE_MOVE and self._menubar.is_open:
+            if self._menubar.on_mouse_move(ev.x, ev.y):
+                if self._windows:
+                    self._windows[-1].dirty = True
+                return
+        if ev.kind == _gui_input.MOUSE_DOWN and ev.code == 1:
+            if self._menubar.on_mouse_down(ev.x, ev.y):
+                if self._windows:
+                    self._windows[-1].dirty = True
+                return
 
         # Mouse-button-down: dock click → focus → maybe-start-drag / close
         if ev.kind == _gui_input.MOUSE_DOWN and ev.code == 1:  # left button

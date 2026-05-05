@@ -73,4 +73,5 @@ registry.register(
     description="440 Hz tone through the mixer (audio demo)",
     entry=main,
     icon_factory=audio_tone_icon,
+    category="demo",
 )

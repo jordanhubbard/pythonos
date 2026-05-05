@@ -18,15 +18,27 @@ class AppInfo:
     # dock calls it lazily once the bridge is up. None falls back to
     # a generated colored square with the app name.
     icon_factory:  Callable[[], object] | None = None
+    # "app"  — full apps. Surfaced in the dock and the System > Apps menu.
+    # "demo" — graphics/audio demos. Surfaced only in the System > Demos
+    #          menu (not the dock), matching the macOS dock convention
+    #          where demos / sample apps live in a separate launcher.
+    category:      str = "app"
+    # Per-app menubar declarations — each entry is a kernel.gui.menubar.Menu.
+    # The compositor appends these to the system menubar when this app
+    # has focus. Empty list = no app-specific menus.
+    menus:         list = None  # type: ignore[assignment]
 
 
 _apps: dict[str, AppInfo] = {}
 
 
 def register(name: str, description: str, entry,
-              icon_factory=None) -> None:
+              icon_factory=None, *, category: str = "app",
+              menus=None) -> None:
     _apps[name] = AppInfo(name=name, description=description, entry=entry,
-                           icon_factory=icon_factory)
+                           icon_factory=icon_factory,
+                           category=category,
+                           menus=list(menus) if menus else [])
 
 
 def list_apps() -> list[AppInfo]:

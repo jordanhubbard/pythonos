@@ -108,4 +108,5 @@ registry.register(
     description="Falling rain streaks (graphics demo)",
     entry=main,
     icon_factory=rainfall_icon,
+    category="demo",
 )

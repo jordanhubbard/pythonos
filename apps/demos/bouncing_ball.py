@@ -64,4 +64,5 @@ registry.register(
     description="A bouncing rectangle (graphics demo)",
     entry=main,
     icon_factory=bouncing_ball_icon,
+    category="demo",
 )

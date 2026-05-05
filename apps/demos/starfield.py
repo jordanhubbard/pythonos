@@ -116,4 +116,5 @@ registry.register(
     description="Hyperspace starfield (3D perspective demo)",
     entry=main,
     icon_factory=starfield_icon,
+    category="demo",
 )

@@ -155,6 +155,55 @@ def open_bridge() -> bool:
     return True
 
 
+def _seed_system_menus(compositor, registry) -> None:
+    """Build the desktop's system menu bar from the app registry.
+
+    Three top-level menus are always present:
+        PythonOS — about / version info.
+        Apps     — clickable launcher for every category="app" entry.
+        Demos    — clickable launcher for every category="demo" entry.
+
+    Each menu item's action launches the corresponding app via the same
+    code path the dock uses (``compositor.launch_app(name)``), so menu
+    launches and dock launches behave identically (window creation,
+    app_name stamping, app-menu pickup on focus).
+    """
+    from kernel.gui.menubar import Menu, MenuItem
+
+    def _about() -> None:
+        log.info("PythonOS — Python is the kernel.")
+
+    def _launcher(app_name):
+        # Bind app_name into a closure so each menu item dispatches
+        # to its own app rather than capturing the loop variable.
+        return lambda: compositor.launch_app(app_name)
+
+    apps_menu_items = [
+        MenuItem(info.description or info.name, action=_launcher(info.name))
+        for info in sorted(
+            (a for a in registry.list_apps() if a.category == "app"),
+            key=lambda a: a.name,
+        )
+    ]
+    demos_menu_items = [
+        MenuItem(info.description or info.name, action=_launcher(info.name))
+        for info in sorted(
+            (a for a in registry.list_apps() if a.category == "demo"),
+            key=lambda a: a.name,
+        )
+    ]
+    system_menus = [
+        Menu("PythonOS", [
+            MenuItem("About PythonOS", action=_about),
+            MenuItem.sep(),
+            MenuItem("Version: 3.14.0a0", enabled=False),
+        ]),
+        Menu("Apps",  apps_menu_items  or [MenuItem("(none)", enabled=False)]),
+        Menu("Demos", demos_menu_items or [MenuItem("(none)", enabled=False)]),
+    ]
+    compositor._menubar.set_system_menus(system_menus)
+
+
 def py_desktop():
     """Open the PythonOS desktop on the host pythonos_bridge. Returns
     the compositor instance on success or ``None`` if no bridge is
@@ -177,9 +226,14 @@ def py_desktop():
         import apps.image_viewer      # noqa: F401
         import apps.files             # noqa: F401
         from apps import registry
+        # Dock holds full apps; demos live only in the menu bar so the
+        # dock stays a launcher for everyday tools.
         for info in registry.list_apps():
+            if info.category != "app":
+                continue
             compositor.register_dock_app(info.name, info.entry,
                                           info.icon_factory)
+        _seed_system_menus(compositor, registry)
     except Exception as e:
         log.warn(f"py_desktop: app registration: {e}")
     compositor.start()
