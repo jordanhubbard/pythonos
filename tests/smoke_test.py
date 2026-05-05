@@ -100,6 +100,14 @@ TEST_CASES = [
     # /examples/check_home.py writes to /home/smoke.txt, reads it back, prints
     # a marker iff the round-trip matches. Proves the boot wiring end-to-end.
     ("run('/examples/check_home.py')\n", "EF64_HOME_OK"),
+    # Dynamic compile() of compound statements + VFS-backed import.
+    # Regression guard for pythonos-0ta (libc strncmp returned wrong value
+    # when prefix matched but n was exhausted — broke all keyword lookups
+    # in the PEG parser, manifesting as 'cannot delete function call' for
+    # def/class/for/if/import). Together these prove the parser, the VFS
+    # importer, and tmpfs sync-read are all wired up.
+    ('compile("def f(): return 7", "<t>", "exec") is not None\n', "True"),
+    ("__import__('_vfs_test').square(9)\n", "81"),
 ]
 
 if SMP_CPUS.isdigit():
