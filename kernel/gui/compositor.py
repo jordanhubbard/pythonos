@@ -76,6 +76,12 @@ class CompositorWindow:
         # declared menus from the registry without each app having to
         # call set_window_menus() itself.
         self.app_name: str = ""
+        # Per-window menus. When non-empty, the menubar shows these on
+        # focus instead of the registry's static menus — apps that want
+        # actions bound to *this specific window's* state (e.g. editor's
+        # File > Save acting on this open file) populate this in their
+        # main() function. Empty falls back to registry.get(app_name).menus.
+        self.menus: list = []
 
     def set_event_handler(self, fn) -> None:
         self._on_event = fn
@@ -177,16 +183,27 @@ class Compositor:
 
     def _refresh_app_menus(self, win) -> None:
         """Replace the menubar's app-menu list with the focused window's
-        registered menus (or [] for none / no window)."""
-        menus = []
-        if win is not None and win.app_name:
-            try:
-                from apps import registry as _reg
-                info = _reg.get(win.app_name)
-                if info is not None:
-                    menus = list(info.menus or [])
-            except Exception:
-                menus = []
+        menus.
+
+        Resolution order:
+          1. ``win.menus`` if non-empty (per-window dynamic menus, e.g.
+             editor's File menu bound to this open file).
+          2. ``registry.get(win.app_name).menus`` (static per-app menus
+             declared at registration time).
+          3. ``[]`` (no app menus — the system menu still shows).
+        """
+        menus: list = []
+        if win is not None:
+            if win.menus:
+                menus = list(win.menus)
+            elif win.app_name:
+                try:
+                    from apps import registry as _reg
+                    info = _reg.get(win.app_name)
+                    if info is not None:
+                        menus = list(info.menus or [])
+                except Exception:
+                    menus = []
         self._menubar.set_app_menus(menus)
 
     @property

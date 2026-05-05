@@ -10,6 +10,10 @@ Implements just enough emacs-flavored editing to be useful:
     Ctrl-Q  /  Ctrl-X Ctrl-C            quit (close window)
     Ctrl-G                              cancel pending Ctrl-X prefix
 
+A File menu in the menu bar provides clickable Open / Save / Save As /
+Close — Save / Save As prompt for the path in a footer minibuffer when
+none is set on the current buffer. ESC cancels a prompt; Enter accepts.
+
 The buffer is a list of strings (one per line) — fine for the small
 files this kernel is realistically going to edit.
 """
@@ -46,6 +50,10 @@ class _Editor:
         self.cols = max(1, win.w // GLYPH_W)
         self.rows = max(1, (win.h - _HEADER_H - _FOOTER_H) // GLYPH_H)
         self.ctrl_x_pending = False
+        # Footer minibuffer state. None = normal editing; "open" / "save_as"
+        # = the user is typing a path; Enter accepts, ESC cancels.
+        self.prompt_mode: str | None = None
+        self.prompt_buf: str = ""
 
     # ── Persistence ──────────────────────────────────────────────────────
 
@@ -67,15 +75,59 @@ class _Editor:
 
     async def save(self) -> None:
         if not self.path:
-            self.message = "no filename"
+            # No filename yet — prompt for one instead of failing silently.
+            self.prompt_save_as()
             return
         try:
             text = "\n".join(self.lines).encode("utf-8")
             await _write_all(self.path, text)
             self.dirty = False
             self.message = f"saved {self.path} ({len(text)} bytes)"
+            self._refresh_title()
         except Exception as e:
             self.message = f"save failed: {e}"
+
+    # ── Menu / prompt actions ───────────────────────────────────────────
+
+    def prompt_open(self) -> None:
+        """Open the footer minibuffer in 'load a file' mode. Wired from
+        the File > Open… menu item."""
+        self.prompt_mode = "open"
+        self.prompt_buf  = self.path or "/home/"
+        self.message = ""
+
+    def prompt_save_as(self) -> None:
+        """Footer minibuffer for 'save under a new name'. Same UX as
+        prompt_open but the Enter handler routes to save() afterwards."""
+        self.prompt_mode = "save_as"
+        self.prompt_buf  = self.path or "/home/untitled.txt"
+        self.message = ""
+
+    def start_save(self) -> None:
+        """Schedule a save on the running event loop. If no path is set,
+        save() detects that and switches to prompt_save_as()."""
+        asyncio.get_event_loop().create_task(self.save())
+
+    def _refresh_title(self) -> None:
+        """Update the window's title bar with the current path."""
+        self.win.title = "Editor: " + (self.path or "(no file)")
+
+    async def _commit_prompt(self) -> None:
+        """Apply whatever the user typed in the minibuffer."""
+        mode = self.prompt_mode
+        path = self.prompt_buf.strip()
+        self.prompt_mode = None
+        self.prompt_buf  = ""
+        if not path:
+            return
+        if mode == "open":
+            self.path = path
+            self._refresh_title()
+            await self.load()
+        elif mode == "save_as":
+            self.path = path
+            self._refresh_title()
+            await self.save()
 
     # ── Drawing ──────────────────────────────────────────────────────────
 
@@ -110,13 +162,18 @@ class _Editor:
             if self.cy < len(self.lines) and cx < len(self.lines[self.cy]):
                 ch = self.lines[self.cy][cx]
                 s.draw_char(cx * GLYPH_W, cy_pix, ch, fg=_BG, bg=_CURSOR)
-        # Footer — message bar.
+        # Footer — minibuffer prompt or status line.
         fy = self.win.h - _FOOTER_H
         s._fill_rect(0, fy, self.win.w, _FOOTER_H, _STATUS_BG)
-        line = f" L{self.cy + 1} C{self.cx + 1}  "
-        if self.ctrl_x_pending:
-            line += "C-x  "
-        line += self.message
+        if self.prompt_mode is not None:
+            label = ("Open: " if self.prompt_mode == "open"
+                     else "Save as: ")
+            line = label + self.prompt_buf + "_"   # crude cursor
+        else:
+            line = f" L{self.cy + 1} C{self.cx + 1}  "
+            if self.ctrl_x_pending:
+                line += "C-x  "
+            line += self.message
         s.draw_text(4, fy + 2, line[: self.cols], fg=_STATUS_FG, bg=_STATUS_BG)
         self.win.dirty = True
 
@@ -171,6 +228,28 @@ class _Editor:
         """Returns True if the editor should keep running."""
         if ev.kind != _gui_input.KEY_DOWN:
             return True
+
+        # Footer minibuffer: keystrokes go to the prompt, not the buffer.
+        if self.prompt_mode is not None:
+            if ev.code == _gui_input.KEY_ESC:
+                self.prompt_mode = None
+                self.prompt_buf  = ""
+                self.message = "Cancel"
+                return True
+            if ev.code == _gui_input.KEY_ENTER:
+                asyncio.get_event_loop().create_task(self._commit_prompt())
+                return True
+            if ev.code == _gui_input.KEY_BACKSPACE:
+                self.prompt_buf = self.prompt_buf[:-1]
+                return True
+            if ev.text:
+                # Filter to printable ASCII to avoid accidentally
+                # stuffing control bytes into a filename.
+                for ch in ev.text:
+                    if ch >= " " and ord(ch) < 0x7F:
+                        self.prompt_buf += ch
+            return True
+
         self.message = ""
         c = ev.code
         ctrl = bool(ev.mods & _gui_input.MOD_CTRL)
@@ -281,8 +360,23 @@ async def main(argv=None, *args, **kwargs) -> None:
     path = argv[0] if argv else None
     title = "Editor: " + (path or "(no file)")
     win = CompositorWindow(title, x=120, y=120, w=720, h=480)
-    compositor.add_window(win)
     ed = _Editor(win, path)
+
+    # File menu actions are closures over this editor instance, so each
+    # editor window gets its own bound File menu (Save acts on this open
+    # file; Open replaces this buffer; Close closes this window).
+    from kernel.gui.menubar import Menu, MenuItem
+    win.menus = [
+        Menu("File", [
+            MenuItem("Open…",     action=ed.prompt_open),
+            MenuItem("Save",      action=ed.start_save),
+            MenuItem("Save As…",  action=ed.prompt_save_as),
+            MenuItem.sep(),
+            MenuItem("Close",     action=win.close),
+        ]),
+    ]
+
+    compositor.add_window(win)
     await ed.load()
     ed.redraw()
 
