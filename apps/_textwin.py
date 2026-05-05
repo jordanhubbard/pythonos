@@ -57,6 +57,10 @@ class TextWin:
         self._cursor_drawn_at: tuple[int, int] | None = None
         self._byte_q: asyncio.Queue = asyncio.Queue()
         self._char_q: asyncio.Queue = asyncio.Queue()
+        # ANSI escape state — consumes CSI sequences silently so output
+        # like the linenoise prompt's color codes doesn't render as
+        # garbage glyphs. We don't actually colorize, just swallow.
+        self._esc_state = 0   # 0=normal, 1=saw ESC, 2=in CSI
         SDL_FillRect(window.surface, None, self.bg)
         window.dirty = True
         try:
@@ -96,8 +100,32 @@ class TextWin:
     # ── Drawing ─────────────────────────────────────────────────────────
 
     def _scroll_up(self) -> None:
-        # No backing buffer; clear and move cursor up to last row.
-        SDL_FillRect(self.win.surface, None, self.bg)
+        """Scroll the window contents up by one row.
+
+        Host-backed (bridge) surface: send a single ``surface.scroll``
+        op so the host SDL surface gets a memmove-based shift; then
+        clear the freed bottom row. Guest-backed fallback shifts the
+        pixel buffer directly via slice assignment, then fills the
+        bottom row. In both cases existing content stays visible —
+        only the topmost row is dropped.
+        """
+        surface = self.win.surface
+        bottom_y = (self.rows - 1) * GLYPH_H
+        if surface.host_backed:
+            from kernel.bridge import bridge as _br
+            _br.cast("surface.scroll", {
+                "handle": surface.handle,
+                "dy": -GLYPH_H,
+            })
+            surface._fill_rect(0, bottom_y, surface.w, GLYPH_H, self.bg)
+        else:
+            pitch = surface.w * 4
+            shift = GLYPH_H * pitch
+            kept = (surface.h - GLYPH_H) * pitch
+            if kept > 0:
+                surface.pixels[0:kept] = surface.pixels[shift:shift + kept]
+            surface._fill_rect(0, bottom_y, surface.w, GLYPH_H, self.bg)
+            surface.dirty = True
         self.cur_y = self.rows - 1
         self.cur_x = 0
         self._cursor_drawn_at = None
@@ -123,6 +151,17 @@ class TextWin:
     def write(self, text: str) -> None:
         self._erase_cursor()
         for ch in text:
+            # ANSI CSI consumer: ESC '[' <params> <final 0x40-0x7E>
+            if self._esc_state == 1:
+                self._esc_state = 2 if ch == "[" else 0
+                continue
+            if self._esc_state == 2:
+                if 0x40 <= ord(ch) <= 0x7E:
+                    self._esc_state = 0
+                continue
+            if ch == "\x1b":
+                self._esc_state = 1
+                continue
             if ch == "\n":
                 self.cur_x = 0
                 self.cur_y += 1

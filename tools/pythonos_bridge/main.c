@@ -584,6 +584,38 @@ static int op_surface_blit(BridgeState *st, int id, cJSON *params) {
     return send_ok(st->fd, id, NULL);
 }
 
+/* Vertical in-place scroll. dy < 0 shifts content up by |dy| pixels;
+ * dy > 0 shifts down. Pixels at the newly exposed edge are unchanged —
+ * the caller is expected to paint them. memmove handles overlap.
+ * params: {handle, dy} */
+static int op_surface_scroll(BridgeState *st, int id, cJSON *params) {
+    cJSON *jh  = cJSON_GetObjectItemCaseSensitive(params, "handle");
+    cJSON *jdy = cJSON_GetObjectItemCaseSensitive(params, "dy");
+    if (!cJSON_IsNumber(jh) || !cJSON_IsNumber(jdy)) {
+        return send_err(st->fd, id, 4, "handle/dy required");
+    }
+    SDL_Surface *s = handle_get(jh->valueint);
+    if (!s) return send_err(st->fd, id, 7, "invalid handle");
+    int dy = jdy->valueint;
+    int abs_dy = dy < 0 ? -dy : dy;
+    if (dy == 0 || abs_dy >= s->h) {
+        return send_ok(st->fd, id, NULL);
+    }
+    if (SDL_LockSurface(s) != 0) {
+        return send_err(st->fd, id, 8, SDL_GetError());
+    }
+    int pitch = s->pitch;
+    int rows = s->h - abs_dy;
+    Uint8 *base = (Uint8 *)s->pixels;
+    if (dy < 0) {
+        memmove(base, base + abs_dy * pitch, (size_t)rows * (size_t)pitch);
+    } else {
+        memmove(base + dy * pitch, base, (size_t)rows * (size_t)pitch);
+    }
+    SDL_UnlockSurface(s);
+    return send_ok(st->fd, id, NULL);
+}
+
 /* Draw an ASCII string into the surface using the embedded 8x8 bitmap
  * font. Pixels are written via SDL_FillRect for the foreground cells —
  * one fill per "on" pixel. Cheap because rect=1x1 fills are tiny.
@@ -1030,6 +1062,7 @@ static const struct {
     { "surface.destroy",    op_surface_destroy    },
     { "surface.fill_rect",  op_surface_fill_rect  },
     { "surface.blit",       op_surface_blit       },
+    { "surface.scroll",     op_surface_scroll     },
     { "surface.upload",     op_surface_upload     },
     { "text.draw",          op_text_draw          },
     { "event.poll",         op_event_poll         },
