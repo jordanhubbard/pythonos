@@ -9,7 +9,7 @@ Everything below is implemented in Python on top of the same `_hal` extension an
 | Command | What it does |
 |---|---|
 | `make run-gui` | Boot **and** auto-launch the desktop with the full app dock. Host-side `tools/run_gui.py` spawns `pythonos_bridge`, brings up an SDL window, and sends the kickoff command over the TCP REPL once the kernel is up. |
-| `make run-gui PYTHONOS_GUI_APP=<name>` | Same, but pre-launch a specific app (`bouncing_ball` / `terminal` / `editor` / `files` / `image_viewer` / `audio_tone` / `starfield` / `rainfall` / `plasma`). |
+| `make run-gui PYTHONOS_GUI_APP=<name>` | Same, but pre-launch a specific app: `terminal` / `editor` / `files` / `image_viewer` / `sysmon` / `about` / `clock` for full apps; `bouncing_ball` / `audio_tone` / `starfield` / `rainfall` / `plasma` / `paint` / `life` for demos. |
 | `make run-gui-x86_64` / `make run-gui-arm64` | Explicit per-arch forms. |
 
 Inside the compositor:
@@ -121,21 +121,40 @@ Apps live under `apps/` and self-register at import time via `apps.registry`. Th
 
 | App | Source | Description |
 |---|---|---|
+| `terminal` | `apps/terminal/term.py` | Embeds `kernel.shell.Shell` in a 640×400 windowed text grid. Cursor blink + ANSI escape consumer + true scrollback (no content loss on overflow). |
+| `editor` | `apps/editor/edwin.py` | Drives `kernel.ed.run` line editor in a 720×480 text grid. |
+| `files` | `apps/files/browser.py` | Arrow-key file browser with TCP send/recv. |
+| `image_viewer` | `apps/image_viewer/viewer.py` | `pythonos_gui image_viewer <path>`; loads BMP / PPM / PNG / JPEG. |
+| `sysmon` | `apps/sysmon/sysmon.py` | Live kernel state — uptime, free RAM (with mini history graph), scheduler process list. Refreshes at 2 Hz. |
+| `about` | `apps/about/about.py` | "About PythonOS" — version, arch, SMP CPUs, free RAM, project goals. |
+| `clock` | `apps/clock/clock.py` | Big-digit uptime clock with bespoke 5×7 pixel font scaled 5×. Reference for "render text without using the bitmap font path". |
 | `bouncing_ball` | `apps/demos/bouncing_ball.py` | A 24×24 rect bouncing in a 320×200 window. ESC closes. |
 | `audio_tone` | `apps/demos/audio_tone.py` | Plays 0.5 s of 440 Hz square wave through `Mixer.play_pcm`. |
-| `terminal` | `apps/terminal/term.py` | Embeds `kernel.shell.Shell` in a 640×400 windowed text grid. |
-| `editor` | `apps/editor/edwin.py` | Drives the existing `kernel.ed.run` line editor in a 720×480 text grid. |
-| `files` | `apps/files/browser.py` | Arrow-key file browser with header path bar, Enter to descend, Backspace to ascend. |
-| `image_viewer` | `apps/image_viewer/viewer.py` | `pythonos_gui image_viewer <path>`; loads BMP / PPM / PNG / JPEG and centres the surface. |
+| `starfield` / `rainfall` / `plasma` | `apps/demos/*.py` | Classic graphics demos — point-cloud animations using fill_rect. |
+| `paint` | `apps/demos/paint.py` | Mouse-driven painter (1-7 colors, c clears). Doubles as the simplest reference for "input + drawing through the bridge". |
+| `life` | `apps/demos/life.py` | Conway's Game of Life on a fixed grid. Click toggles cells, space pauses, r reseeds, c clears. |
 
 Both `terminal` and `editor` reuse the shared `apps._textwin.TextWin` — a text grid + cursor + scroll wrapping a `CompositorWindow`, exposing `write(text)` and `read_char()` callables that match the Shell / Editor constructor contract.
+
+### Adding a new demo
+
+The simplest demo is around 60 lines and exercises every half of the bridge. Use `apps/demos/paint.py` as a template:
+
+1. Open a window: `win = CompositorWindow("Title", x=, y=, w=, h=); compositor.add_window(win)`.
+2. Paint to `win.surface` using `SDL_FillRect`, `SDL_BlitSurface`, `surface.draw_text`, or your own bitmap glyph code (see `clock.py`). Set `win.dirty = True` after any change.
+3. Receive events by setting an event handler: `win.set_event_handler(callable)`. The handler runs synchronously inside the compositor's input-routing task — keep it cheap, and use the `state` dict pattern to communicate with the main coroutine.
+4. The main coroutine awaits `asyncio.sleep(1.0 / fps)` between frames. Bail out when `state["closed"]` or `win._closed`.
+5. Register: `registry.register(name=, description=, entry=main, icon_factory=, category=)`. `category="demo"` puts it in the System → Demos menu only; the default `"app"` adds it to the dock.
+6. Add a line `from apps.demos import yourdemo` to `apps/demos/__init__.py` so the import-time `register()` fires.
+
+`apps/_icons.py` has `_new_icon`, `_border`, and per-app icon factories — copy and modify one for your dock icon.
 
 ## Tests
 
 | Suite | Covers | At HEAD |
 |---|---|---|
-| `tests/smoke_test.py` | x86 default boot + TCP REPL | 41 PASS |
-| `tests/smoke_test_arm64.py` | arm64 default boot + PL011 | 28 PASS |
+| `tests/smoke_test.py` | x86 default boot + TCP REPL (incl. dynamic compile, vfs_import, multi-line def) | 46 PASS |
+| `tests/smoke_test_arm64.py` | arm64 default boot + PL011 | 30 PASS |
 | `tests/gui_smoke_test.py` | x86 GUI: sdl2 corpus, compositor render, mouse pipeline, pointer round-trip, serial markers | 23 PASS |
 | `tests/desktop_smoke_test.py` | x86 end-to-end: `pythonos_gui bouncing_ball` auto-launch + pixel-perfect checks + tile-hash golden | 5 PASS |
 | `tests/audio_smoke_test.py` | x86 audio pipeline: `-audiodev wav,id=a`, runs `examples/tone.py`, parses captured WAV | 6 PASS |

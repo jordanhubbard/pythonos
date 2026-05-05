@@ -2,7 +2,7 @@
 
 A bare-metal operating system where CPython 3.14 **is** the kernel — not a program running on an OS, but the OS itself. Python owns the machine from interrupt handlers to the interactive shell. Runs on x86_64 and arm64 (QEMU `virt`).
 
-Boots directly to a `>>>` prompt on the serial console. An opt-in **GUI desktop** with a stacking compositor, PySDL2-compatible Python API, PNG/JPEG decoders, audio mixer, and five built-in apps (terminal, editor, file browser, image viewer, audio/graphics demos) is one make target away — see **GUI Mode** below.
+Boots directly to a `>>>` prompt on the serial console. The interactive prompt is a real Python REPL — define functions and classes, `import` files written to `/examples` or `/home`, recall history with up-arrow (persisted across reboots on the ext2 mount). An opt-in **GUI desktop** with a stacking compositor, PySDL2-compatible Python API, PNG/JPEG decoders, audio mixer, a macOS-style menu bar, a polished desktop background, and a dock with seven built-in apps (terminal, editor, file browser, image viewer, system monitor, about, clock) plus seven demos (bouncing_ball, audio_tone, starfield, rainfall, plasma, paint, life) is one make target away — see **GUI Mode** below.
 
 Run `make help` at any time for the top-level target listing.
 
@@ -52,7 +52,7 @@ Use `Ctrl-A X` to exit QEMU.
 
 ### GUI Mode
 
-Opt-in graphical desktop with a stacking compositor, mouse + keyboard input, audio output, and five built-in apps. The default `make run` and `make test` paths are unchanged — they still boot serial-only with `-nographic`.
+Opt-in graphical desktop with a stacking compositor, macOS-style menu bar (PythonOS / Apps / Demos), a custom desktop background image, mouse + keyboard input, audio output, and seven built-in apps + seven demos. The default `make run` and `make test` paths are unchanged — they still boot serial-only with `-nographic`.
 
 ```bash
 # Boot to framebuffer REPL inside an SDL window;
@@ -457,10 +457,16 @@ kernel/
 apps/                  built-in GUI applications (frozen, registered via apps.registry)
   terminal/          Python REPL inside a CompositorWindow
   editor/            ed line editor in a window
-  files/             arrow-key file browser
+  files/             arrow-key file browser with TCP send/recv
   image_viewer/      BMP / PPM / PNG / JPEG viewer
-  demos/             bouncing_ball (graphics), audio_tone (440 Hz)
+  sysmon/            live kernel state — uptime, free RAM, processes
+  about/             "About PythonOS" version + system info window
+  clock/             big-digit uptime clock with bespoke 5x7 font
+  demos/             bouncing_ball, audio_tone, starfield, rainfall,
+                     plasma, paint (mouse-driven), life (Conway's CA)
   _textwin.py        shared text-grid view used by terminal + editor
+  _icons.py          dock icon factories (48x48 SDL_Surface generators)
+  registry.py        AppInfo / register / list_apps used by dock + menus
 
 bin/  (seeded in tmpfs at boot — add .py files here to create new shell commands)
   ls.py, ps.py, pwd.py, cd.py, cat.py, cp.py, mv.py, ftp.py, ed.py — filesystem / transfer utilities
