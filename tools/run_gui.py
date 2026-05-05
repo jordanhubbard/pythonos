@@ -38,8 +38,7 @@ def _bridge_chardev_args(socket_path: str | None) -> list:
     if not socket_path:
         return []
     return [
-        # QEMU 9+ uses reconnect-ms; older releases used reconnect=N (seconds).
-        "-chardev", f"socket,id=br,path={socket_path},reconnect-ms=2000",
+        "-chardev", f"socket,id=br,path={socket_path},reconnect=2",
         "-serial", "chardev:br",
     ]
 

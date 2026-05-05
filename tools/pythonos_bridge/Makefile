@@ -9,6 +9,7 @@ CC      ?= cc
 PREFIX  ?= /usr/local
 
 CFLAGS  ?= -O2 -g -Wall -Wextra -Wno-unused-parameter -std=c11
+CFLAGS  += -D_DEFAULT_SOURCE
 CFLAGS  += $(shell pkg-config --cflags sdl2)
 CFLAGS  += $(shell pkg-config --cflags SDL2_ttf)
 CFLAGS  += -Ivendor
