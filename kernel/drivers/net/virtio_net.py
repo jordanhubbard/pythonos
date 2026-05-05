@@ -269,8 +269,13 @@ class VirtIONetDriver:
         if self._regs:
             self._regs.set_queue_notify(0)
 
-    async def send(self, frame: bytes) -> None:
-        """Transmit an Ethernet frame."""
+    def send_nowait(self, frame: bytes) -> None:
+        """Transmit an Ethernet frame without yielding.
+
+        The async wrapper below exists for the network stack's normal
+        cooperative path. The native GUI bridge also needs to pump TCP while
+        synchronous bridge.call() users are blocked waiting for a response.
+        """
         if not self._txq or not self._regs:
             log.info("tx: no txq/regs — drop")
             return
@@ -295,13 +300,24 @@ class VirtIONetDriver:
         self._txq.avail_push(idx)
         self._regs.set_queue_notify(1)   # kick TX queue
 
+    async def send(self, frame: bytes) -> None:
+        """Transmit an Ethernet frame."""
+        self.send_nowait(frame)
+
+    def recv_nowait(self) -> bytes | None:
+        """Return one Ethernet frame if RX has completed, else ``None``."""
+        if self._rxq and self._rxq.used_has_entries():
+            frame = self._rx_dequeue()
+            if frame is not None and len(frame) > VIRTIO_NET_HDR_SIZE:
+                return frame[VIRTIO_NET_HDR_SIZE:]
+        return None
+
     async def recv(self) -> bytes:
         """Poll the VirtIO RX used ring for completed frames (no IRQ required)."""
         while True:
-            if self._rxq and self._rxq.used_has_entries():
-                frame = self._rx_dequeue()
-                if frame is not None and len(frame) > VIRTIO_NET_HDR_SIZE:
-                    return frame[VIRTIO_NET_HDR_SIZE:]
+            frame = self.recv_nowait()
+            if frame is not None:
+                return frame
             await asyncio.sleep(0)
 
     def _rx_dequeue(self) -> bytes | None:

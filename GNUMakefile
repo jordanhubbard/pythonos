@@ -210,6 +210,8 @@ help:
 	@echo "                                  image_viewer | audio_tone)"
 	@echo "  PYTHONOS_BRIDGE_HOST=<addr>    bridge listen address (default: 127.0.0.1)"
 	@echo "  PYTHONOS_BRIDGE_PORT=<port>    bridge TCP port (default: 17010)"
+	@echo "  PYTHONOS_BRIDGE_GUEST_PORT=<p> native guest bridge port (default: 5001)"
+	@echo "  PYTHONOS_BRIDGE_TRANSPORT=<m>  native-tcp (default) or chardev"
 	@echo "  PYTHONOS_BRIDGE_EXTERNAL=1     use an already-running remote bridge"
 	@echo "  PYTHONOS_GOLDEN_REFRESH=1      regenerate test screendump goldens"
 	@echo ""
@@ -289,8 +291,8 @@ run-fb-x86_64: $(ISO_OUT) $(DISK_IMG)
 	qemu-system-x86_64 $(QEMU_GUI_FLAGS)
 
 	# Bridge desktop mode for x86_64: supervises pythonos_bridge as a sibling
-	# TCP service, wires QEMU's COM2 to it, and passes an fw_cfg marker so the
-	# guest starts the desktop itself. This is what `make run-gui` resolves to.
+	# process. Default transport is native guest TCP; set
+	# PYTHONOS_BRIDGE_TRANSPORT=chardev to use the older COM2 path.
 run-gui-x86_64: $(ISO_OUT) $(DISK_IMG) bridge
 	QEMU_DISPLAY=$(QEMU_DISPLAY) QEMU_AUDIODEV=$(QEMU_AUDIODEV) \
 	    PYTHONOS_DISK=$(DISK_IMG) \
@@ -580,8 +582,8 @@ run-fb-arm64: $(ARM64_ELF) $(ARM64_DISK)
 	    -kernel $(ARM64_ELF)
 
 	# Bridge desktop mode for arm64: supervises pythonos_bridge as a sibling
-	# TCP service, wires QEMU's virtconsole to it, and passes an fw_cfg marker
-	# so the guest starts the desktop itself. This is what `make run-gui` resolves to.
+	# process. Default transport is native guest TCP; set
+	# PYTHONOS_BRIDGE_TRANSPORT=chardev to use the older virtconsole path.
 run-gui-arm64: $(ARM64_ELF) $(ARM64_DISK) bridge
 	PYTHONOS_GUI_ARCH=arm64 PYTHONOS_ARM64_DISK=$(ARM64_DISK) \
 	    PYTHONOS_DISK=$(ARM64_DISK) \

@@ -6,11 +6,10 @@ Used by `make run-gui-x86_64` / `make run-gui-arm64` /
 `make run-gui`. Foregrounds QEMU; Ctrl-C terminates both QEMU and
 the host-side pythonos_bridge companion.
 
-The bridge transport is TCP even when QEMU and pythonos_bridge run on
-the same host. QEMU connects the guest bridge byte stream to that TCP
-endpoint (COM2 on x86_64, virtconsole on arm64); the guest starts the
-desktop itself when it sees the `opt/pythonos/gui` fw_cfg marker. The
-launcher no longer types `py_desktop()` into the kernel REPL.
+The default bridge transport is native guest TCP: PythonOS listens on a
+guest TCP port, and the host pythonos_bridge process connects to it. For
+debugging the older QEMU chardev path remains available with
+PYTHONOS_BRIDGE_TRANSPORT=chardev.
 """
 
 import os
@@ -51,6 +50,33 @@ def _bridge_endpoint() -> tuple[str, int]:
     return host or "127.0.0.1", port
 
 
+def _bridge_guest_port() -> int:
+    port = int(os.environ.get("PYTHONOS_BRIDGE_GUEST_PORT", "5001"))
+    if not (0 < port < 65536):
+        raise ValueError(f"invalid PYTHONOS_BRIDGE_GUEST_PORT={port!r}")
+    return port
+
+
+def _bridge_transport() -> str:
+    mode = (os.environ.get("PYTHONOS_BRIDGE_TRANSPORT")
+            or os.environ.get("PYTHONOS_BRIDGE_MODE")
+            or "native-tcp").strip().lower()
+    aliases = {
+        "tcp": "native-tcp",
+        "native": "native-tcp",
+        "guest-tcp": "native-tcp",
+        "tcp-listener": "native-tcp",
+        "serial": "chardev",
+        "virtconsole": "chardev",
+        "tcp-chardev": "chardev",
+    }
+    mode = aliases.get(mode, mode)
+    if mode not in ("native-tcp", "chardev"):
+        raise ValueError(
+            "PYTHONOS_BRIDGE_TRANSPORT must be native-tcp or chardev")
+    return mode
+
+
 def _qemu_connect_host(listen_host: str) -> str:
     return os.environ.get(
         "PYTHONOS_BRIDGE_CONNECT_HOST",
@@ -84,10 +110,20 @@ def _bridge_virtconsole_args(endpoint: tuple[str, int] | None) -> list:
     ]
 
 
-def _bridge_fw_cfg_args(app_name: str | None = None) -> list:
-    args = ["-fw_cfg", "name=opt/pythonos/gui,string=bridge"]
+def _hostfwd(host: str, host_port: int, guest_port: int) -> str:
+    hostaddr = "" if host in ("", "*", "0.0.0.0") else host
+    return f"hostfwd=tcp:{hostaddr}:{host_port}-:{guest_port}"
+
+
+def _bridge_fw_cfg_args(mode: str, app_name: str | None = None,
+                        guest_port: int | None = None) -> list:
+    gui_mode = "bridge-tcp" if mode == "native-tcp" else "bridge"
+    args = ["-fw_cfg", f"name=opt/pythonos/gui,string={gui_mode}"]
     if app_name:
         args += ["-fw_cfg", f"name=opt/pythonos/gui-app,string={app_name}"]
+    if guest_port:
+        args += ["-fw_cfg",
+                 f"name=opt/pythonos/gui-bridge-port,string={guest_port}"]
     return args
 
 
@@ -99,18 +135,26 @@ def _disk_path() -> str:
 
 def _qemu_cmd_x86_64(iso: str, repl_port: int, display: str, audiodev: str,
                       bridge_endpoint: tuple[str, int] | None = None,
-                      gui_app: str | None = None) -> list:
+                      gui_app: str | None = None,
+                      bridge_transport: str = "native-tcp",
+                      bridge_listen_host: str = "127.0.0.1",
+                      bridge_guest_port: int = 5001) -> list:
     # When the bridge is on, the host SDL window IS the desktop —
     # QEMU's own framebuffer console window is redundant noise.
     qdisp = "none" if bridge_endpoint else display
     disk = _disk_path()
+    netdev = f"user,id=net0,hostfwd=tcp::{repl_port}-:5000"
+    if bridge_endpoint and bridge_transport == "native-tcp":
+        netdev += "," + _hostfwd(bridge_listen_host,
+                                 bridge_endpoint[1],
+                                 bridge_guest_port)
     cmd = [
         "qemu-system-x86_64",
         "-machine", "q35",
         "-cpu", "qemu64",
         "-m", "2G",
         "-smp", "2",
-        "-netdev", f"user,id=net0,hostfwd=tcp::{repl_port}-:5000",
+        "-netdev", netdev,
         "-device", "virtio-net-pci,netdev=net0",
         "-device", "intel-hda",
         "-device", "hda-duplex",
@@ -125,15 +169,26 @@ def _qemu_cmd_x86_64(iso: str, repl_port: int, display: str, audiodev: str,
     if not bridge_endpoint:
         cmd += ["-vga", "std"]    # only needed for the QEMU-native fb path
     else:
-        cmd += _bridge_fw_cfg_args(gui_app)
-    return cmd + _bridge_uart_args(bridge_endpoint)
+        cmd += _bridge_fw_cfg_args(bridge_transport, gui_app,
+                                   bridge_guest_port)
+    if bridge_endpoint and bridge_transport == "chardev":
+        cmd += _bridge_uart_args(bridge_endpoint)
+    return cmd
 
 
 def _qemu_cmd_arm64(elf: str, repl_port: int, display: str, audiodev: str,
                      bridge_endpoint: tuple[str, int] | None = None,
-                     gui_app: str | None = None) -> list:
+                     gui_app: str | None = None,
+                     bridge_transport: str = "native-tcp",
+                     bridge_listen_host: str = "127.0.0.1",
+                     bridge_guest_port: int = 5001) -> list:
     disk = _disk_path()
     qdisp = "none" if bridge_endpoint else display
+    netdev = "user,id=net1"
+    if bridge_endpoint and bridge_transport == "native-tcp":
+        netdev += "," + _hostfwd(bridge_listen_host,
+                                 bridge_endpoint[1],
+                                 bridge_guest_port)
     cmd = [
         "qemu-system-aarch64",
         "-machine", "virt",
@@ -145,10 +200,7 @@ def _qemu_cmd_arm64(elf: str, repl_port: int, display: str, audiodev: str,
         "-serial", "stdio",
         "-audiodev", f"{audiodev},id=a",
         "-device", "virtio-sound-device,audiodev=a",
-        # arm64 has no virtio-net MMIO driver yet, so forwarding a guest
-        # REPL port only creates host-side bind failures. Keep the device
-        # present for future driver work, but do not reserve a host port.
-        "-netdev", "user,id=net1",
+        "-netdev", netdev,
         "-device", "virtio-net-device,netdev=net1",
         "-drive", f"if=none,file={disk},format=raw,id=hd0",
         "-device", "virtio-blk-device,drive=hd0",
@@ -163,8 +215,11 @@ def _qemu_cmd_arm64(elf: str, repl_port: int, display: str, audiodev: str,
             "-device", "virtio-tablet-device",
         ]
     else:
-        cmd += _bridge_fw_cfg_args(gui_app)
-    return cmd + _bridge_virtconsole_args(bridge_endpoint)
+        cmd += _bridge_fw_cfg_args(bridge_transport, gui_app,
+                                   bridge_guest_port)
+    if bridge_endpoint and bridge_transport == "chardev":
+        cmd += _bridge_virtconsole_args(bridge_endpoint)
+    return cmd
 
 
 def _wait_tcp_listener(host: str, port: int, proc: subprocess.Popen,
@@ -183,7 +238,7 @@ def _wait_tcp_listener(host: str, port: int, proc: subprocess.Popen,
     raise RuntimeError(f"pythonos_bridge did not listen on {host}:{port}")
 
 
-def _spawn_bridge(listen_host: str, port: int) -> subprocess.Popen:
+def _spawn_bridge_listen(listen_host: str, port: int) -> subprocess.Popen:
     """Spawn pythonos_bridge --listen-tcp and wait for the listener."""
     bridge_bin = _bridge_bin()
     if not os.path.isfile(bridge_bin):
@@ -203,6 +258,22 @@ def _spawn_bridge(listen_host: str, port: int) -> subprocess.Popen:
             proc.kill()
         raise
     return proc
+
+
+def _spawn_bridge_connect(host: str, port: int) -> subprocess.Popen:
+    bridge_bin = _bridge_bin()
+    if not os.path.isfile(bridge_bin):
+        raise RuntimeError(f"pythonos_bridge binary not found at {bridge_bin} "
+                           "(run `make bridge`)")
+    endpoint = f"{host}:{port}"
+    timeout_ms = os.environ.get("PYTHONOS_BRIDGE_CONNECT_TIMEOUT_MS", "120000")
+    print(f"[run-gui] spawning {bridge_bin} connecting to tcp {endpoint}",
+          file=sys.stderr)
+    return subprocess.Popen([
+        bridge_bin,
+        "--connect-tcp", endpoint,
+        "--connect-timeout-ms", timeout_ms,
+    ])
 
 
 def _launch_qemu(cmd: list) -> int:
@@ -251,22 +322,32 @@ def main() -> int:
         bridge_endpoint = None
         listen_host = ""
         listen_port = 0
+        bridge_transport = "off"
+        guest_bridge_port = 0
     else:
+        bridge_transport = _bridge_transport()
+        guest_bridge_port = _bridge_guest_port()
         listen_host, listen_port = _bridge_endpoint()
         bridge_endpoint = (_qemu_connect_host(listen_host), listen_port)
 
     bridge_proc = None
     if bridge_endpoint and not _truthy(os.environ.get("PYTHONOS_BRIDGE_EXTERNAL")):
         try:
-            bridge_proc = _spawn_bridge(listen_host, listen_port)
+            if bridge_transport == "native-tcp":
+                bridge_proc = _spawn_bridge_connect(bridge_endpoint[0],
+                                                    bridge_endpoint[1])
+            else:
+                bridge_proc = _spawn_bridge_listen(listen_host, listen_port)
         except RuntimeError as e:
             print(f"[run-gui] bridge unavailable: {e}", file=sys.stderr)
             return 2
 
     print(f"[run-gui] booting {image} (arch={arch}) with -display {display}"
-          + (f", bridge=tcp://{bridge_endpoint[0]}:{bridge_endpoint[1]}"
+          + (f", bridge={bridge_transport}://{bridge_endpoint[0]}:{bridge_endpoint[1]}"
              if bridge_endpoint else ", bridge=off")
           + (f", app={gui_app}" if gui_app else "")
+          + (f"; guest listens on :{guest_bridge_port}"
+             if bridge_endpoint and bridge_transport == "native-tcp" else "")
           + ("; guest auto-starts desktop via fw_cfg"
              if bridge_endpoint else "; legacy framebuffer path"),
           file=sys.stderr)
@@ -274,10 +355,14 @@ def main() -> int:
     try:
         if arch == "arm64":
             cmd = _qemu_cmd_arm64(image, port, display, audiodev,
-                                  bridge_endpoint, gui_app)
+                                  bridge_endpoint, gui_app,
+                                  bridge_transport, listen_host,
+                                  guest_bridge_port)
             return _launch_qemu(cmd)
         cmd = _qemu_cmd_x86_64(image, port, display, audiodev,
-                               bridge_endpoint, gui_app)
+                               bridge_endpoint, gui_app,
+                               bridge_transport, listen_host,
+                               guest_bridge_port)
         return _launch_qemu(cmd)
     finally:
         if bridge_proc is not None and bridge_proc.poll() is None:

@@ -41,25 +41,49 @@ def _com2_try_read_byte() -> int:
 
 # ── Generic façade ─────────────────────────────────────────────────────────
 
+def _tcp_transport():
+    try:
+        from kernel.bridge import tcp_transport
+        if tcp_transport.is_active():
+            return tcp_transport
+    except Exception:
+        pass
+    return None
+
 
 if _ARCH == "arm64":
     def write_bytes(buf) -> None:
+        tcp = _tcp_transport()
+        if tcp is not None:
+            return tcp.write_bytes(buf)
         from kernel.bridge import virtio_console
         virtio_console.console().write_bytes(buf)
 
     def read_bytes(n: int) -> bytes:
+        tcp = _tcp_transport()
+        if tcp is not None:
+            return tcp.read_bytes(n)
         from kernel.bridge import virtio_console
         return virtio_console.console().read_bytes(n)
 
     def read_bytes_timeout(n: int, timeout_ms: int = 2000) -> bytes | None:
+        tcp = _tcp_transport()
+        if tcp is not None:
+            return tcp.read_bytes(n, timeout_ms=timeout_ms)
         from kernel.bridge import virtio_console
         return virtio_console.console().read_bytes(n, timeout_ms=timeout_ms)
 else:
     def write_bytes(buf) -> None:
         """Bulk write through COM2 in C."""
+        tcp = _tcp_transport()
+        if tcp is not None:
+            return tcp.write_bytes(buf)
         _hal.uart16550_write_buf(_COM2_BASE, buf)
 
     def read_bytes(n: int) -> bytes:
+        tcp = _tcp_transport()
+        if tcp is not None:
+            return tcp.read_bytes(n)
         return _hal.uart16550_read_buf(_COM2_BASE, n)
 
     def read_bytes_timeout(n: int, timeout_ms: int = 2000) -> bytes | None:
@@ -69,6 +93,9 @@ else:
         used for the initial bridge probe, where an absent host peer should
         report unavailable instead of wedging the kernel.
         """
+        tcp = _tcp_transport()
+        if tcp is not None:
+            return tcp.read_bytes(n, timeout_ms=timeout_ms)
         from kernel.scheduler import scheduler
         deadline = scheduler.uptime_ms + max(0, int(timeout_ms))
         out = bytearray()

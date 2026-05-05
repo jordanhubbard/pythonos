@@ -34,6 +34,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/un.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "vendor/cJSON.h"
@@ -1299,6 +1300,69 @@ static int serve_tcp_socket(const char *endpoint) {
     return rc;
 }
 
+static long long monotonic_ms(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (long long)ts.tv_sec * 1000LL + (long long)(ts.tv_nsec / 1000000LL);
+}
+
+static int connect_tcp_socket(const char *endpoint, int timeout_ms) {
+    char host[64];
+    int port = 0;
+    if (parse_tcp_endpoint(endpoint, host, sizeof(host), &port) != 0) {
+        LOG_ERROR("invalid TCP endpoint '%s' (expected HOST:PORT or PORT)",
+                  endpoint);
+        return 2;
+    }
+    if (strcmp(host, "*") == 0 || strcmp(host, "0.0.0.0") == 0) {
+        LOG_ERROR("connect host must be a concrete IPv4 address");
+        return 2;
+    }
+
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+    if (strcmp(host, "localhost") == 0) {
+        if (inet_pton(AF_INET, "127.0.0.1", &addr.sin_addr) != 1)
+            return 1;
+    } else if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
+        LOG_ERROR("invalid IPv4 connect host '%s'", host);
+        return 2;
+    }
+
+    long long start = monotonic_ms();
+    long long deadline = timeout_ms < 0 ? -1 : start + timeout_ms;
+    long long next_log = start;
+    for (;;) {
+        int fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0) {
+            LOG_ERROR("socket: %s", strerror(errno));
+            return 1;
+        }
+        if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+            LOG_INFO("connected to tcp %s:%d", host, port);
+            int rc = serve_fd(fd);
+            close(fd);
+            cleanup_sdl();
+            return rc;
+        }
+        int saved = errno;
+        close(fd);
+        long long now = monotonic_ms();
+        if (deadline >= 0 && now >= deadline) {
+            LOG_ERROR("connect tcp %s:%d timed out: %s",
+                      host, port, strerror(saved));
+            return 1;
+        }
+        if (now >= next_log) {
+            LOG_INFO("waiting for tcp %s:%d (%s)", host, port, strerror(saved));
+            next_log = now + 1000;
+        }
+        usleep(100000);
+    }
+}
+
 /* ─── Self-test ─────────────────────────────────────────────────────────── */
 
 static int run_selftest(void) {
@@ -1346,6 +1410,8 @@ static void usage(FILE *out, const char *argv0) {
     fprintf(out,
         "usage: %s [options]\n"
         "  --listen-tcp HOST:PORT  serve JSON-RPC frames on TCP\n"
+        "  --connect-tcp HOST:PORT connect to a PythonOS TCP bridge listener\n"
+        "  --connect-timeout-ms N  connect retry timeout (default: 30000; -1 forever)\n"
         "  --listen PATH           serve JSON-RPC frames on unix socket PATH\n"
         "  --selftest              open an SDL2 window directly (no socket, no JSON)\n"
         "  -v, --verbose           enable debug logging\n"
@@ -1356,22 +1422,34 @@ static void usage(FILE *out, const char *argv0) {
 int main(int argc, char **argv) {
     const char *listen_path = NULL;
     const char *listen_tcp = NULL;
+    const char *connect_tcp = NULL;
+    int connect_timeout_ms = 30000;
     int selftest = 0;
 
     static const struct option longopts[] = {
-        { "listen",     required_argument, NULL, 'l' },
-        { "listen-tcp", required_argument, NULL, 't' },
-        { "selftest",   no_argument,       NULL, 's' },
-        { "verbose",    no_argument,       NULL, 'v' },
-        { "help",       no_argument,       NULL, 'h' },
-        { 0,            0,                 0,    0   },
+        { "listen",             required_argument, NULL, 'l' },
+        { "listen-tcp",         required_argument, NULL, 't' },
+        { "connect-tcp",        required_argument, NULL, 'c' },
+        { "connect-timeout-ms", required_argument, NULL, 'T' },
+        { "selftest",           no_argument,       NULL, 's' },
+        { "verbose",            no_argument,       NULL, 'v' },
+        { "help",               no_argument,       NULL, 'h' },
+        { 0,                    0,                 0,    0   },
     };
 
     int c;
-    while ((c = getopt_long(argc, argv, "l:t:svh", longopts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "l:t:c:T:svh", longopts, NULL)) != -1) {
         switch (c) {
             case 'l': listen_path = optarg; break;
             case 't': listen_tcp = optarg; break;
+            case 'c': connect_tcp = optarg; break;
+            case 'T':
+                connect_timeout_ms = atoi(optarg);
+                if (connect_timeout_ms < -1) {
+                    LOG_ERROR("--connect-timeout-ms must be -1 or >= 0");
+                    return 2;
+                }
+                break;
             case 's': selftest = 1; break;
             case 'v': g_verbose = 1; break;
             case 'h': usage(stdout, argv[0]); return 0;
@@ -1379,14 +1457,16 @@ int main(int argc, char **argv) {
         }
     }
 
-    int listen_count = (listen_path ? 1 : 0) + (listen_tcp ? 1 : 0);
-    if ((selftest ? 1 : 0) + listen_count != 1) {
-        LOG_ERROR("choose exactly one of --listen-tcp, --listen, or --selftest");
+    int mode_count = (listen_path ? 1 : 0) + (listen_tcp ? 1 : 0)
+                   + (connect_tcp ? 1 : 0) + (selftest ? 1 : 0);
+    if (mode_count != 1) {
+        LOG_ERROR("choose exactly one of --listen-tcp, --connect-tcp, --listen, or --selftest");
         usage(stderr, argv[0]);
         return 2;
     }
 
-    if (selftest)   return run_selftest();
-    if (listen_tcp) return serve_tcp_socket(listen_tcp);
+    if (selftest)    return run_selftest();
+    if (listen_tcp)  return serve_tcp_socket(listen_tcp);
+    if (connect_tcp) return connect_tcp_socket(connect_tcp, connect_timeout_ms);
     return serve_unix_socket(listen_path);
 }

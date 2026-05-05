@@ -3,11 +3,11 @@
 Smoke test for the pythonos_bridge JSON-RPC loop.
 
 Spawns `pythonos_bridge --listen-tcp 127.0.0.1:<port>`, connects, walks the
-length-prefixed JSON protocol through hello / ping / shutdown,
-and asserts on the responses.
+length-prefixed JSON protocol, then verifies `--connect-tcp` by having the
+bridge connect back to a Python-owned listener.
 
-This is the host-only proof of life. It does NOT involve QEMU; the
-guest-side transport (pythonos-xaz) lands in a later slice.
+This is the host-only proof of life. It does NOT involve QEMU; QEMU/guest
+coverage lives in the run-gui and GUI smoke targets.
 """
 
 import json
@@ -200,6 +200,52 @@ def main():
         proc.wait(timeout=3.0)
         check("server exit code 0", proc.returncode == 0,
               detail=f"rc={proc.returncode}")
+
+        # Native guest TCP mode uses the opposite connection direction:
+        # PythonOS listens, and the host bridge connects to it. Emulate the
+        # guest listener here and run a compact protocol pass over the
+        # accepted socket.
+        cport = _free_port()
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", cport))
+        srv.listen(1)
+        srv.settimeout(3.0)
+        proc2 = subprocess.Popen([
+            binary, "--connect-tcp", f"127.0.0.1:{cport}",
+            "--connect-timeout-ms", "3000",
+        ])
+        s2 = None
+        try:
+            s2, _ = srv.accept()
+            s2.settimeout(3.0)
+            _send(s2, 200, "hello", {"protocol": 1})
+            r = _recv(s2)
+            check("connect-tcp hello.ok", r.get("ok") is True)
+            check("connect-tcp hello agent",
+                  r.get("result", {}).get("agent") == "pythonos_bridge")
+
+            _send(s2, 201, "ping", {"tag": "connect"})
+            r = _recv(s2)
+            check("connect-tcp ping tag",
+                  r.get("result", {}).get("tag") == "connect")
+
+            _send(s2, 202, "shutdown", {})
+            r = _recv(s2)
+            check("connect-tcp shutdown.ok", r.get("ok") is True)
+            s2.close()
+            proc2.wait(timeout=3.0)
+            check("connect-tcp exit code 0", proc2.returncode == 0,
+                  detail=f"rc={proc2.returncode}")
+        finally:
+            if s2 is not None:
+                try: s2.close()
+                except OSError: pass
+            srv.close()
+            if proc2.poll() is None:
+                proc2.terminate()
+                try: proc2.wait(timeout=2.0)
+                except subprocess.TimeoutExpired: proc2.kill()
 
         print(f"\n[bridge-smoke] {passes} passed, {fails} failed")
         return 0 if fails == 0 else 1

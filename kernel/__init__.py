@@ -228,8 +228,17 @@ async def _kernel_main(
     pci_bus.bind_drivers()
 
     # ── Network ────────────────────────────────────────────────────────────
-    nic = next((dev.driver for dev in pci_bus
-                if isinstance(dev.driver, VirtIONetDriver)), None)
+    if _ARCH == 'arm64':
+        try:
+            from kernel.drivers.net.virtio_net_mmio import find_virtio_net_mmio
+            nic = find_virtio_net_mmio()
+        except Exception as e:
+            log.info(f"kernel: virtio-net-mmio setup failed: {e}")
+            nic = None
+    else:
+        nic = next((dev.driver for dev in pci_bus
+                    if isinstance(dev.driver, VirtIONetDriver)), None)
+    gui_mode = _fwcfg_text("opt/pythonos/gui")
     if nic:
         from kernel.net.stack import net_init
         scheduler.spawn(net_init(nic, "10.0.2.15", "10.0.2.2"), name="net-init")
@@ -238,6 +247,19 @@ async def _kernel_main(
         scheduler.spawn(repl_server.start(), name="repl-server")
         log.info("kernel: TCP REPL server starting (nc localhost 5555)")
         _write("TCP REPL ready — connect: nc localhost 5555\n")
+        if gui_mode == "bridge-tcp":
+            try:
+                bridge_port = int(_fwcfg_text("opt/pythonos/gui-bridge-port") or "5001")
+            except Exception:
+                bridge_port = 5001
+            app_name = _fwcfg_text("opt/pythonos/gui-app")
+            from kernel.bridge import tcp_transport
+            scheduler.spawn(tcp_transport.start_listener(bridge_port,
+                                                          app_name or None),
+                            name="bridge-tcp")
+            log.info(f"kernel: bridge TCP listener starting on port {bridge_port}")
+    elif gui_mode == "bridge-tcp":
+        log.warn("kernel: bridge TCP mode requested but no network device is ready")
 
     # ── Sound ─────────────────────────────────────────────────────────────
     # x86: Intel HDA via PCI (requires PCI scan to have run already).
@@ -321,12 +343,13 @@ async def _kernel_main(
     scheduler.spawn(shell.run(), name="kshell")
     log.info("kernel: shell spawned — system ready")
 
-    gui_mode = _fwcfg_text("opt/pythonos/gui")
     if gui_mode == "bridge":
         app_name = _fwcfg_text("opt/pythonos/gui-app")
         scheduler.spawn(_auto_start_bridge_desktop(app_name or None),
                         name="bridge-desktop")
         log.info("kernel: bridge desktop auto-start requested")
+    elif gui_mode == "bridge-tcp":
+        log.info("kernel: bridge TCP desktop waits for host connection")
     elif gui_mode:
         log.warn(f"kernel: unknown GUI boot mode {gui_mode!r}")
 

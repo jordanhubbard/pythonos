@@ -45,6 +45,11 @@ F_PSH = 0x08
 F_ACK = 0x10
 F_URG = 0x20
 
+# No PMTU/MSS negotiation yet. Keep payloads comfortably below Ethernet MTU
+# so bridge pixel uploads do not create impossible IPv4 packets.
+TCP_MAX_PAYLOAD = 1200
+TRACE_SEGMENTS = False
+
 
 @dataclass
 class TCPSegment:
@@ -113,6 +118,22 @@ class TCPConnection:
         if payload or (flags & (F_SYN | F_FIN)):
             self.snd_seq = (self.snd_seq + max(len(payload), 1)) & 0xFFFFFFFF
 
+    def send_segment_nowait(self, flags: int, payload: bytes = b"") -> bool:
+        seg = TCPSegment(
+            src_port=self.local_port,
+            dst_port=self.remote_port,
+            seq=self.snd_seq,
+            ack=self.snd_ack,
+            flags=flags,
+            window=self.snd_wnd,
+            payload=payload,
+        )
+        from kernel.net import stack
+        ok = stack.send_tcp_segment_nowait(seg, self.local_ip, self.remote_ip)
+        if ok and (payload or (flags & (F_SYN | F_FIN))):
+            self.snd_seq = (self.snd_seq + max(len(payload), 1)) & 0xFFFFFFFF
+        return ok
+
     async def recv(self, n: int = 4096) -> bytes:
         while True:
             if self.rcv_buf:
@@ -130,7 +151,20 @@ class TCPConnection:
         return data
 
     async def send(self, data: bytes) -> None:
-        await self.send_segment(F_ACK | F_PSH, data)
+        data = bytes(data)
+        for off in range(0, len(data), TCP_MAX_PAYLOAD):
+            await self.send_segment(F_ACK | F_PSH,
+                                    data[off:off + TCP_MAX_PAYLOAD])
+
+    def send_nowait(self, data: bytes) -> bool:
+        data = bytes(data)
+        from kernel.net import stack
+        for off in range(0, len(data), TCP_MAX_PAYLOAD):
+            if not self.send_segment_nowait(
+                    F_ACK | F_PSH, data[off:off + TCP_MAX_PAYLOAD]):
+                return False
+            stack.poll_once()
+        return True
 
     def close(self) -> None:
         if self.state == TCPState.ESTABLISHED:
@@ -140,7 +174,7 @@ class TCPConnection:
             asyncio.ensure_future(self.send_segment(F_FIN | F_ACK))
             self.state = TCPState.LAST_ACK
 
-    def handle_segment(self, seg: TCPSegment) -> None:
+    def handle_segment(self, seg: TCPSegment, sync: bool = False) -> None:
         if self.state == TCPState.SYN_RCVD:
             if seg.flags & F_ACK:
                 self.state = TCPState.ESTABLISHED
@@ -162,10 +196,16 @@ class TCPConnection:
                 self.snd_ack = (seg.seq + len(seg.payload)) & 0xFFFFFFFF
                 self.rcv_buf.extend(seg.payload)
                 self._rx_event.set()
-                asyncio.ensure_future(self.send_segment(F_ACK))
+                if sync:
+                    self.send_segment_nowait(F_ACK)
+                else:
+                    asyncio.ensure_future(self.send_segment(F_ACK))
             if seg.flags & F_FIN:
                 self.snd_ack = (seg.seq + 1) & 0xFFFFFFFF
-                asyncio.ensure_future(self.send_segment(F_ACK))
+                if sync:
+                    self.send_segment_nowait(F_ACK)
+                else:
+                    asyncio.ensure_future(self.send_segment(F_ACK))
                 self.state = TCPState.CLOSE_WAIT
                 self._rx_event.set()   # wake any blocked recv()
 
@@ -257,7 +297,7 @@ class TCPStack:
         key = (conn.local_ip, conn.local_port, conn.remote_ip, conn.remote_port)
         self._connections.pop(key, None)
 
-    def handle_ip_packet(self, pkt: IPv4Packet) -> None:
+    def handle_ip_packet(self, pkt: IPv4Packet, sync: bool = False) -> None:
         if pkt.proto != PROTO_TCP:
             return
         seg = TCPSegment.decode(pkt.payload, pkt.src, pkt.dst)
@@ -266,8 +306,9 @@ class TCPStack:
         key = (pkt.dst, seg.dst_port, pkt.src, seg.src_port)
         conn = self._connections.get(key)
         if conn:
-            log.info(f"tcp: seg to :{seg.src_port} state={conn.state.name} flags={seg.flags:#04x} seq={seg.seq} ack={seg.ack}")
-            conn.handle_segment(seg)
+            if TRACE_SEGMENTS:
+                log.info(f"tcp: seg to :{seg.src_port} state={conn.state.name} flags={seg.flags:#04x} seq={seg.seq} ack={seg.ack}")
+            conn.handle_segment(seg, sync=sync)
             return
         # Incoming SYN to a listening port — start three-way handshake
         if seg.flags & F_SYN and not (seg.flags & F_ACK):
