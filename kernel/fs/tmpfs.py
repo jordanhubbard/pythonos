@@ -80,6 +80,40 @@ class TmpFS:
         """Convenience: populate from a dict tree (nested dicts = dirs, bytes = files)."""
         self._seed_node(self._root, tree)
 
+    # ── Sync read path used by kernel.vfs_import ───────────────────────────
+    # Imports in CPython are synchronous, but the VFS protocol is async.
+    # tmpfs has no real I/O so we can answer synchronously by walking the
+    # in-memory tree directly. Other filesystems (ext2 over virtio-blk)
+    # don't expose this — their callers must await.
+
+    def read_sync(self, path: str) -> bytes | None:
+        s = "/" + path.strip("/")
+        parts = [p for p in s.split("/") if p]
+        node = self._root
+        for part in parts:
+            if node.inode_type != InodeType.DIR:
+                return None
+            kid = node._children.get(part)
+            if kid is None:
+                return None
+            node = kid
+        if node.inode_type != InodeType.FILE:
+            return None
+        return bytes(node._data)
+
+    def isdir_sync(self, path: str) -> bool:
+        s = "/" + path.strip("/")
+        parts = [p for p in s.split("/") if p]
+        node = self._root
+        for part in parts:
+            if node.inode_type != InodeType.DIR:
+                return False
+            kid = node._children.get(part)
+            if kid is None:
+                return False
+            node = kid
+        return node.inode_type == InodeType.DIR
+
     def _seed_node(self, node: TmpfsNode, tree: dict) -> None:
         for name, val in tree.items():
             if isinstance(val, dict):

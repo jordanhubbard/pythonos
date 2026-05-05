@@ -145,6 +145,46 @@ class VFS:
                 return
         raise KeyError(f"No filesystem mounted at {path!r}")
 
+    # ── Sync helpers (used by kernel.vfs_import) ───────────────────────────
+    # Synchronous read/exists checks for any mount whose backend exposes
+    # ``read_sync`` / ``isdir_sync``. tmpfs implements both; ext2/virtio
+    # backends don't (they're disk-bound) and read_sync returns None for
+    # them — callers must use the async API.
+
+    def read_sync(self, path: str) -> "bytes | None":
+        s = "/" + path.strip("/")
+        for mount_path, fs in self._mounts:
+            if mount_path == "/":
+                rel = s
+            elif s == mount_path:
+                rel = "/"
+            elif s.startswith(mount_path + "/"):
+                rel = "/" + s[len(mount_path) + 1:]
+            else:
+                continue
+            reader = getattr(fs, "read_sync", None)
+            if reader is None:
+                return None
+            return reader(rel)
+        return None
+
+    def isdir_sync(self, path: str) -> bool:
+        s = "/" + path.strip("/")
+        for mount_path, fs in self._mounts:
+            if mount_path == "/":
+                rel = s
+            elif s == mount_path:
+                rel = "/"
+            elif s.startswith(mount_path + "/"):
+                rel = "/" + s[len(mount_path) + 1:]
+            else:
+                continue
+            checker = getattr(fs, "isdir_sync", None)
+            if checker is None:
+                return False
+            return checker(rel)
+        return False
+
     # ── Path resolution ───────────────────────────────────────────────────────
 
     async def _resolve(self, path: str) -> FSNode:

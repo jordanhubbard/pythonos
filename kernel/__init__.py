@@ -85,6 +85,16 @@ def boot(mmap: list[tuple[int, int]],
     vfs.mount("/", root_fs)
     log.info("kernel.boot: tmpfs mounted at /")
 
+    # VFS-backed import path: lets the REPL `import` files written to
+    # /examples or /home (anything on a tmpfs mount). Disk-backed mounts
+    # need a future async-import bridge; for now the legacy
+    # `run('/path/to/file.py')` flow handles those.
+    try:
+        import kernel.vfs_import as _vfs_import
+        _vfs_import.install()
+    except Exception as e:
+        log.info(f"kernel.boot: vfs_import install failed: {e}")
+
     # ── Event loop ─────────────────────────────────────────────────────────
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
