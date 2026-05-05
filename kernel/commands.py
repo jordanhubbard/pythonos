@@ -364,6 +364,7 @@ async def pythonos_gui(argv: list[str], cwd: str, write) -> None:
     import apps.files                        # noqa: F401
     import apps.sysmon                       # noqa: F401
     import apps.about                        # noqa: F401
+    import apps.clock                        # noqa: F401
     from apps import registry
     from kernel.gui.compositor import compositor
 
