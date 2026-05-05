@@ -225,6 +225,7 @@ def py_desktop():
         import apps.editor            # noqa: F401
         import apps.image_viewer      # noqa: F401
         import apps.files             # noqa: F401
+        import apps.sysmon            # noqa: F401
         from apps import registry
         # Dock holds full apps; demos live only in the menu bar so the
         # dock stays a launcher for everyday tools.
