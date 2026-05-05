@@ -66,9 +66,14 @@ int strcmp(const char *a, const char *b) {
 }
 
 int strncmp(const char *a, const char *b, size_t n) {
-    while (n-- && *a && *a == *b) { a++; b++; }
-    if (!n) return 0;
-    return (unsigned char)*a - (unsigned char)*b;
+    while (n) {
+        unsigned char ca = (unsigned char)*a;
+        unsigned char cb = (unsigned char)*b;
+        if (ca != cb) return (int)ca - (int)cb;
+        if (ca == 0) return 0;
+        a++; b++; n--;
+    }
+    return 0;
 }
 
 char *strcpy(char *dst, const char *src) {

@@ -87,29 +87,11 @@ def main():
         print(f"banner: {banner!r}\n")
         probes = [
             "1+1\n",
-            # Confirmed working previously
-            'compile("def f(): pass", "<t>", "exec")\n',
-            # Multi-statement, no trailing newline
-            'compile("def f(): pass\\ndef g(): pass", "<t>", "exec")\n',
-            # Single statement, trailing newline → fails
-            'compile("def f(): pass\\n", "<t>", "exec")\n',
-            # Class single-line
-            'compile("class C: pass", "<t>", "exec")\n',
-            # Class with body on next line — the realistic case
-            'compile("class C:\\n    pass", "<t>", "exec")\n',
-            # Realistic def with body
-            'compile("def f():\\n    return 7", "<t>", "exec")\n',
-            # Realistic def, trailing newline
-            'compile("def f():\\n    return 7\\n", "<t>", "exec")\n',
-            # Just whitespace at end
-            'compile("def f(): pass ", "<t>", "exec")\n',
-            # Two simple stmts with trailing newline
-            'compile("x = 1\\n", "<t>", "exec")\n',
-            'compile("import os\\n", "<t>", "exec")\n',
-            'compile("import os", "<t>", "exec")\n',
-            # Try __import__
-            '__import__("examples._vfs_test")\n',
-            'import sys; sys.modules.get("examples._vfs_test")\n',
+            # The full-Python-interpreter goal — VFS-backed import
+            'import _vfs_test\n',
+            '_vfs_test.GREETING\n',
+            '_vfs_test.square(9)\n',
+            '_vfs_test.doc()\n',
         ]
         for p in probes:
             print(f"\n--- send: {p.rstrip()}")
