@@ -245,12 +245,64 @@ class Shell:
         return entries
 
     async def _completion_matches(self, line: str) -> list[str]:
+        # Python attribute completion takes precedence when the token
+        # under the cursor contains a '.'  — `vfs.<TAB>`, `os.path.<TAB>`,
+        # etc. — since it's the more specific signal. We fall through to
+        # filename completion otherwise so bare tokens still work.
+        py = self._complete_python(line)
+        if py:
+            return py
         self._completion_entries = await self._read_completion_entries()
         return self._complete_filename(line)
 
     def _complete_filename(self, line: str) -> list[str]:
+        # Used as the linenoise completion callback — runs synchronously
+        # against the pre-populated entries. Try Python attribute
+        # completion first so `vfs.<TAB>` works; fall back to filename
+        # completion when the token has no dot.
+        py = self._complete_python(line)
+        if py:
+            return py
         return self._filename_completion_candidates(
             line, self._completion_entries)
+
+    def _complete_python(self, line: str) -> list[str]:
+        delimiters = " \t\r\n'\"`({[=,:;+-*/%&|^~<>!"
+        start = len(line)
+        while start > 0 and line[start - 1] not in delimiters:
+            start -= 1
+        token = line[start:]
+        if "." not in token:
+            return []
+        head_dotted, _, partial = token.rpartition(".")
+        # Walk a chain of attribute accesses on a name in our namespace.
+        parts = head_dotted.split(".")
+        if not parts or not parts[0].isidentifier():
+            return []
+        try:
+            obj = self._ns[parts[0]]
+        except KeyError:
+            return []
+        for part in parts[1:]:
+            if not part.isidentifier():
+                return []
+            try:
+                obj = getattr(obj, part)
+            except Exception:
+                return []
+        try:
+            attrs = dir(obj)
+        except Exception:
+            return []
+        head = line[:start] + head_dotted + "."
+        results = []
+        for a in attrs:
+            if a.startswith("_") and not partial.startswith("_"):
+                continue
+            if a.startswith(partial):
+                results.append(head + a)
+        results.sort()
+        return results
 
     @staticmethod
     def _filename_completion_candidates(line: str,
