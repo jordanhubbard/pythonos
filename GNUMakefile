@@ -462,6 +462,7 @@ STDLIB_REAL_FILES := \
 
 $(STDLIB_SHIM)/.stamp: $(CPYTHON_LIB)/enum.py $(CPYTHON_LIB)/struct.py $(CPYTHON_LIB)/codeop.py \
                         $(CPYTHON_LIB)/__future__.py \
+                        $(CPYTHON_LIB)/_py_warnings.py $(CPYTHON_LIB)/warnings.py \
                         $(CPYTHON_LIB)/json/__init__.py \
                         tools/stdlib_stubs/inspect.py \
                         tools/stdlib_stubs/pathlib.py \

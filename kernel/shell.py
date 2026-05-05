@@ -638,8 +638,15 @@ class Shell:
             return result is None   # None = need more input
         except SyntaxError:
             return False
-        except Exception:
-            # codeop unavailable (e.g. __future__ not frozen yet); assume complete
+        except Exception as _e:
+            # codeop unavailable (e.g. _py_warnings not frozen yet);
+            # surface in the kernel log so silent breakage doesn't hide
+            # regressions like the multi-line-def-at-REPL one.
+            try:
+                import kernel.log as _log
+                _log.warn(f"_is_incomplete: codeop failed: {_e!r}")
+            except Exception:
+                pass
             return False
 
     # ── Built-in shell commands ───────────────────────────────────────────────
