@@ -46,6 +46,15 @@ DOCK_FG           = 0xFFFFFF
 DOCK_LABEL_BG     = 0x000000
 DOCK_LABEL_FG     = 0xFFFFFF
 
+# Top menu bar — semi-translucent strip with the wordmark on the left
+# and uptime/time on the right. Painted before windows so it's behind
+# them in z-order, but we offset the new-window placement below it so
+# it stays visible.
+MENU_BAR_H        = 24
+MENU_BAR_BG       = 0x101830
+MENU_BAR_FG       = 0xE6E0C0
+MENU_BAR_PAD_X    = 12
+
 
 # ── CompositorWindow ────────────────────────────────────────────────────────
 
@@ -116,6 +125,10 @@ class Compositor:
         self._dock_hot = -1            # currently-hovered slot index or -1
         self._dock_icons: dict[str, object] = {}    # name → SDL_Surface
         self._close_hot_win: 'CompositorWindow | None' = None
+        # Pre-uploaded desktop background; lazy-loaded the first time
+        # bridge mode opens. Decoded from kernel.gui.assets.DESKTOP_BG_PNG.
+        self._bg_surface: 'SDL_Surface | None' = None
+        self._boot_tick0 = 0   # snapshot at start() — used for the menu-bar uptime
 
     # ── Window registry ─────────────────────────────────────────────────────
 
@@ -191,11 +204,28 @@ class Compositor:
         from kernel.bridge import bridge as _br, BridgeError
         fb_handle = self._bridge_fb_handle
         try:
-            # Desktop background — fill whole window surface.
-            _br.cast("surface.fill_rect", {
-                "handle": fb_handle, "rect": None,
-                "rgb": (self._desktop_bg & 0xFFFFFF) | 0xFF000000,
-            })
+            # Desktop background — blit the pre-uploaded image if loaded,
+            # otherwise fall back to a solid-colour fill.
+            bg = self._bg_surface
+            if bg is not None:
+                src_handle = bg._sync_to_host()
+                if src_handle != 0:
+                    _br.cast("surface.blit", {
+                        "src": src_handle,
+                        "dst": fb_handle,
+                        "dst_rect": {"x": 0, "y": 0, "w": bg.w, "h": bg.h},
+                    })
+                else:
+                    _br.cast("surface.fill_rect", {
+                        "handle": fb_handle, "rect": None,
+                        "rgb": (self._desktop_bg & 0xFFFFFF) | 0xFF000000,
+                    })
+            else:
+                _br.cast("surface.fill_rect", {
+                    "handle": fb_handle, "rect": None,
+                    "rgb": (self._desktop_bg & 0xFFFFFF) | 0xFF000000,
+                })
+            self._draw_menu_bar_bridge(fb_handle)
             for win in self._windows:
                 if win.chrome:
                     chrome_color = CHROME_FOCUS_BG if win.focused else CHROME_UNFOCUS_BG
@@ -252,6 +282,53 @@ class Compositor:
                      f"falling back to local framebuffer")
             self._bridge_present = False
             self._redraw_local()
+
+    def _uptime_str(self) -> str:
+        """HH:MM:SS since compositor.start(). Wall-clock time would
+        need an RTC; kernel doesn't have one yet, so uptime is what we
+        can honestly show."""
+        try:
+            import _hal
+            ticks = int(getattr(_hal, "_pit_ticks", 0) or 0)
+        except Exception:
+            ticks = 0
+        # PIT/timer is 100 Hz on both archs; each tick = 10 ms.
+        elapsed = max(0, (ticks - self._boot_tick0) // 100)
+        h = elapsed // 3600
+        m = (elapsed // 60) % 60
+        s = elapsed % 60
+        return f"{h:02d}:{m:02d}:{s:02d}"
+
+    def _draw_menu_bar_bridge(self, fb_handle: int) -> None:
+        """Top menu bar: PythonOS wordmark on the left, uptime on the
+        right. ~24 px tall, semi-opaque strip painted right after the
+        background so windows can sit on top of it (we choose to leave
+        it always-visible by clipping app windows below MENU_BAR_H —
+        see _focus / window.x,y placement in apps)."""
+        from kernel.bridge import bridge as _br
+        _br.cast("surface.fill_rect", {
+            "handle": fb_handle,
+            "rect": {"x": 0, "y": 0,
+                      "w": self._bridge_w, "h": MENU_BAR_H},
+            "rgb": (MENU_BAR_BG & 0xFFFFFF) | 0xFF000000,
+        })
+        wordmark = "PythonOS"
+        _br.cast("text.draw", {
+            "handle": fb_handle,
+            "x": MENU_BAR_PAD_X,
+            "y": (MENU_BAR_H - GLYPH_H) // 2,
+            "text": wordmark,
+            "fg": (MENU_BAR_FG & 0xFFFFFF) | 0xFF000000,
+        })
+        clock = self._uptime_str()
+        clock_w = len(clock) * GLYPH_W
+        _br.cast("text.draw", {
+            "handle": fb_handle,
+            "x": self._bridge_w - clock_w - MENU_BAR_PAD_X,
+            "y": (MENU_BAR_H - GLYPH_H) // 2,
+            "text": clock,
+            "fg": (MENU_BAR_FG & 0xFFFFFF) | 0xFF000000,
+        })
 
     def _dock_total_w(self) -> int:
         n = len(self._dock_apps)
@@ -558,11 +635,32 @@ class Compositor:
         if self._running:
             return
         self._running = True
+        try:
+            import _hal
+            self._boot_tick0 = int(getattr(_hal, "_pit_ticks", 0) or 0)
+        except Exception:
+            self._boot_tick0 = 0
         loop = loop or asyncio.get_event_loop()
         self._tasks.append(loop.create_task(self._open_bridge_window()))
         self._tasks.append(loop.create_task(self._draw_loop()))
         self._tasks.append(loop.create_task(self._input_loop()))
         log.info("compositor: started")
+
+    def _load_desktop_bg(self) -> None:
+        """Decode the embedded background PNG into an SDL_Surface. Called
+        once after bridge mode opens (so we have a host the surface can
+        upload to)."""
+        if self._bg_surface is not None:
+            return
+        try:
+            from kernel.gui.assets import DESKTOP_BG_PNG
+            from kernel.gui.image import load_bytes as _img_load
+            self._bg_surface = _img_load(DESKTOP_BG_PNG)
+            log.info(f"compositor: desktop background loaded "
+                     f"({self._bg_surface.w}x{self._bg_surface.h})")
+        except Exception as e:
+            log.warn(f"compositor: desktop background load failed: {e}")
+            self._bg_surface = None
 
     async def _open_bridge_window(self) -> None:
         """Probe the host pythonos_bridge with a hello + display.open.
@@ -592,6 +690,8 @@ class Compositor:
         # existing _route_event handler picks them up.
         from kernel.bridge import input as _br_input
         _br_input.start_forwarder()
+        # Decode + register the desktop background once the host is up.
+        self._load_desktop_bg()
         log.info(f"compositor: bridge presenter active "
                  f"({self._bridge_w}x{self._bridge_h}, fb_handle={self._bridge_fb_handle})")
 
