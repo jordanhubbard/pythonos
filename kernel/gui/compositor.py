@@ -150,11 +150,14 @@ class Compositor:
     def add_window(self, win: CompositorWindow) -> None:
         if not win.app_name and self._launching_app:
             win.app_name = self._launching_app
+        old = self.focused_window
+        if old is not None:
+            old.focused = False
+            old.dirty = True
         self._windows.append(win)
-        if self._focus_idx < 0:
-            self._focus_idx = 0
-            win.focused = True
-            self._refresh_app_menus(win)
+        self._focus_idx = len(self._windows) - 1
+        win.focused = True
+        self._refresh_app_menus(win)
         win.dirty = True
 
     def remove_window(self, win: CompositorWindow) -> None:
