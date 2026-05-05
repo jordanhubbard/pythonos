@@ -286,9 +286,9 @@ def main() -> int:
                 _send(s, "_fb_ = __import__('apps.files', fromlist=['browser'])", wait=3.0)
                 _send(s, "_at = __import__('apps.demos.audio_tone', fromlist=['main'])", wait=3.0)
                 _send(s, "_r = __import__('apps', fromlist=['registry']).registry", wait=2.0)
-                out = _send(s, "len(_r.list_apps())", wait=2.5)
+                out = _send(s, "len(_r.list_apps()) >= 6", wait=2.5)
                 check("apps registry populated (>=6 apps)",
-                      any(t in out for t in ("6", "7", "8", "9")),
+                      "True" in out,
                       detail=(out.strip().splitlines()[-1] if out.strip() else "(empty)"))
 
                 # Render a compositor desktop window and verify pixel-by-pixel
