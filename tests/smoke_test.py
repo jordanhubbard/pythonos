@@ -268,6 +268,11 @@ def run() -> int:
             else:
                 failed += 1
 
+            if run_multiline_def_test(sock):
+                passed += 1
+            else:
+                failed += 1
+
             if run_ed_editor_test(sock):
                 passed += 1
             else:
@@ -329,6 +334,50 @@ def run_file_copy_test(sock: socket.socket) -> bool:
         return False
 
     print("[PASS] 'ftp get/put file copy'                   → round-trip bytes matched")
+    return True
+
+
+def run_multiline_def_test(sock: socket.socket) -> bool:
+    """Define a function across multiple input lines, then call it.
+
+    Regression guard: codeop must be importable for the shell to detect
+    incomplete blocks. Previously this silently fell back to "compile
+    every line as complete", which broke def/class at the prompt because
+    `_py_warnings` wasn't frozen and codeop's import chain failed.
+
+    We send the whole block plus the call as one stream and read until
+    we see the call's marker — that way we don't have to second-guess
+    when each `>>> ` lands relative to `... ` continuation prompts.
+    """
+    payload = (
+        b"def _multiline_smoke(x):\n"
+        b"    return x + x + x\n"
+        b"\n"
+        b"_multiline_smoke(14)\n"
+    )
+    sock.sendall(payload)
+    buf = b""
+    sock.settimeout(RECV_TIMEOUT)
+    deadline = time.monotonic() + RECV_TIMEOUT
+    marker = b"42"
+    while time.monotonic() < deadline:
+        try:
+            chunk = sock.recv(4096)
+        except socket.timeout:
+            break
+        if not chunk:
+            break
+        buf += chunk
+        # Need both the marker and a trailing prompt so the next test
+        # starts cleanly.
+        if marker in buf and buf.rstrip().endswith(b">>>"):
+            break
+    response = buf.decode("utf-8", errors="replace")
+    if marker.decode() not in response:
+        print("[FAIL] 'multi-line def at REPL' did not return 42")
+        print(f"       got: {response!r}")
+        return False
+    print("[PASS] 'multi-line def at REPL'                 → returned 42")
     return True
 
 

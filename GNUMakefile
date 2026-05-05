@@ -458,7 +458,7 @@ STDLIB_SHIM   := $(BUILD)/stdlib_shim
 STDLIB_REAL_FILES := \
 	enum.py typing.py operator.py types.py \
 	reprlib.py keyword.py copy.py weakref.py _weakrefset.py contextlib.py \
-	warnings.py copyreg.py struct.py codeop.py __future__.py
+	warnings.py _py_warnings.py copyreg.py struct.py codeop.py __future__.py
 
 $(STDLIB_SHIM)/.stamp: $(CPYTHON_LIB)/enum.py $(CPYTHON_LIB)/struct.py $(CPYTHON_LIB)/codeop.py \
                         $(CPYTHON_LIB)/__future__.py \

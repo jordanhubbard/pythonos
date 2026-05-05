@@ -87,11 +87,12 @@ def main():
         print(f"banner: {banner!r}\n")
         probes = [
             "1+1\n",
-            # The full-Python-interpreter goal — VFS-backed import
-            'import _vfs_test\n',
-            '_vfs_test.GREETING\n',
-            '_vfs_test.square(9)\n',
-            '_vfs_test.doc()\n',
+            # Multi-line def at REPL — should now accumulate via codeop
+            "def square(n):\n",
+            "    return n * n\n",
+            "\n",
+            "square(7)\n",
+            "square(9) + square(10)\n",
         ]
         for p in probes:
             print(f"\n--- send: {p.rstrip()}")
