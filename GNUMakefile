@@ -94,6 +94,16 @@ ISO_OUT    := pythonos.iso
 DOCKER_IMG := pythonos-builder
 LIBPYTHON  := deps/cpython/libpython3.14.a
 
+ifeq ($(HOST_ARCH),arm64)
+HOST_DOCKER_ARCH := arm64
+else ifeq ($(HOST_ARCH),x86_64)
+HOST_DOCKER_ARCH := amd64
+else
+HOST_DOCKER_ARCH := $(HOST_UNAME_M)
+endif
+DOCKER_PLATFORM ?= linux/$(HOST_DOCKER_ARCH)
+DOCKER_USER ?= $(shell id -u):$(shell id -g)
+
 # Persistent storage for /home and /apps (epic pythonos-ef6). One ext2 image
 # shared between x86_64 and arm64 — / stays tmpfs. Built inside the Docker
 # container via tools/build_disk.sh; see tools/Dockerfile for e2fsprogs.
@@ -133,7 +143,7 @@ QEMU_GUI_FLAGS := -machine q35 $(QEMU_X86_CPU) $(QEMU_X86_ACCEL) -m 2G -smp $(SM
 .PHONY: all build build-gui run run-gui start stop restart test clean cleanall \
         docker-build help disk-image \
         bridge bridge-clean test-bridge \
-        _freeze _iso _libpython \
+        _freeze _iso _libpython FORCE \
         x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 test-gui-x86_64 run-fb-x86_64 \
         arm64 run-arm64 stop-arm64 test-arm64 test-arm64-gicv3 run-gui-arm64 run-fb-arm64 _iso_arm64 \
         run-fb test-gui
@@ -188,6 +198,10 @@ help:
 	@echo "Environment variables:"
 	@echo "  TARGET_ARCH={x86_64,arm64}     which arch the dispatch targets build/run"
 	@echo "                                 (default: host = $(HOST_ARCH))"
+	@echo "  DOCKER_PLATFORM=linux/<arch>   builder image platform"
+	@echo "                                 (default: host = $(DOCKER_PLATFORM))"
+	@echo "  DOCKER_USER=<uid:gid>          user for Docker volume writes"
+	@echo "                                 (default: host = $(DOCKER_USER))"
 	@echo "  SMP_CPUS=<n>                   number of x86_64 vCPUs (default: 2)"
 	@echo "  ARM64_SMP_CPUS=<n>             number of arm64 vCPUs (default: 2)"
 	@echo "  PYTHONOS_FREE_THREADING={0,1}  build CPython with --disable-gil (x86 default 1)"
@@ -241,7 +255,7 @@ disk-image: $(DISK_IMG)
 
 $(DISK_IMG): tools/build_disk.sh .docker-image
 	@mkdir -p build
-	docker run --rm --platform linux/amd64 -v $(PWD):/work -w /work $(DOCKER_IMG) \
+	docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) -v $(PWD):/work -w /work $(DOCKER_IMG) \
 	    bash tools/build_disk.sh $(DISK_IMG) $(DISK_SIZE_MB)
 
 # ── pythonos_bridge (host-side companion linking SDL2) ───────────────────────
@@ -281,7 +295,7 @@ run-gui-x86_64: $(ISO_OUT) $(DISK_IMG) bridge
 	    python3 tools/run_gui.py $(ISO_OUT)
 
 stop-x86_64:
-	@pkill -f "qemu-system-x86_64.*$(ISO_OUT)" || echo "No x86_64 QEMU running."
+	@pkill -f "[q]emu-system-x86_64.*$(ISO_OUT)" || echo "No x86_64 QEMU running."
 
 test-x86_64: $(ISO_OUT)
 	PYTHONOS_HOST_PORT=$(REPL_HOST_PORT) PYTHONOS_FILE_PORT=$(FILE_HOST_PORT) PYTHONOS_SMP_CPUS=$(SMP_CPUS) PYTHONOS_FREE_THREADING=$(PYTHONOS_FREE_THREADING) python3 tests/smoke_test.py $(ISO_OUT)
@@ -316,16 +330,20 @@ cleanall: clean
 
 # ── Docker image (rebuild only when Dockerfile changes) ──────────────────────
 
-.docker-image: tools/Dockerfile
-	docker build --platform linux/amd64 --load -t $(DOCKER_IMG) -f tools/Dockerfile .
-	@touch $@
+.docker-image: FORCE
+	@if [ ! -f $@ ] || [ "$$(cat $@)" != "$(DOCKER_IMG) $(DOCKER_PLATFORM)" ] || [ tools/Dockerfile -nt $@ ]; then \
+	    docker build --platform $(DOCKER_PLATFORM) --load -t $(DOCKER_IMG) -f tools/Dockerfile .; \
+	    printf '%s %s\n' "$(DOCKER_IMG)" "$(DOCKER_PLATFORM)" > $@; \
+	fi
+
+FORCE:
 
 docker-build: .docker-image
 
 # ── CPython library (slow, cached — only rebuild if missing) ─────────────────
 
 $(LIBPYTHON): .docker-image
-	docker run --rm --platform linux/amd64 -e PYTHONOS_FREE_THREADING=$(PYTHONOS_FREE_THREADING) -v $(PWD):/work -w /work $(DOCKER_IMG) \
+	docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) -e PYTHONOS_FREE_THREADING=$(PYTHONOS_FREE_THREADING) -v $(PWD):/work -w /work $(DOCKER_IMG) \
 	  bash -c "./tools/setup_cpython.sh --build"
 
 # ── Source file sets ($(wildcard) is evaluated by Make, not a subshell) ──────
@@ -371,7 +389,7 @@ KERNEL_DEPS := $(KERNEL_PY) $(ASYNCIO_PY) $(STUBS_PY) $(EXAMPLES_SRC) tools/free
 $(ISO_OUT): $(LIBPYTHON) \
             $(BOOT_SRC) $(HAL_SRC) $(LIBC_SRC) $(KERNEL_DEPS) \
             linker.ld .docker-image
-	docker run --rm --platform linux/amd64 -v $(PWD):/work -w /work $(DOCKER_IMG) \
+	docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) -v $(PWD):/work -w /work $(DOCKER_IMG) \
 	  bash -c "make -f GNUMakefile _freeze && make -f GNUMakefile _iso"
 	@echo "ISO ready: $(ISO_OUT)"
 
@@ -570,7 +588,7 @@ run-gui-arm64: $(ARM64_ELF) $(ARM64_DISK) bridge
 	    python3 tools/run_gui.py $(ARM64_ELF)
 
 stop-arm64:
-	@pkill -f "qemu-system-aarch64.*$(ARM64_ELF)" || echo "No arm64 QEMU running."
+	@pkill -f "[q]emu-system-aarch64.*$(ARM64_ELF)" || echo "No arm64 QEMU running."
 
 test-arm64: $(ARM64_ELF) $(ARM64_DISK)
 	PYTHONOS_ARM64_HOST_PORT=$(ARM64_REPL_HOST_PORT) PYTHONOS_ARM64_FILE_PORT=$(ARM64_FILE_HOST_PORT) PYTHONOS_ARM64_DISK=$(ARM64_DISK) python3 tests/smoke_test_arm64.py $(ARM64_ELF)
@@ -587,13 +605,13 @@ test-arm64-gicv3: $(ARM64_ELF) $(ARM64_DISK)
 # want to chase the upstream bug.
 PYTHONOS_ARM64_FREE_THREADING ?= 0
 $(LIBPYTHON_ARM64): .docker-image
-	docker run --rm --platform linux/amd64 -e PYTHONOS_FREE_THREADING=$(PYTHONOS_ARM64_FREE_THREADING) -v $(PWD):/work -w /work $(DOCKER_IMG) \
+	docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) -e PYTHONOS_FREE_THREADING=$(PYTHONOS_ARM64_FREE_THREADING) -v $(PWD):/work -w /work $(DOCKER_IMG) \
 	  bash -c "./tools/setup_cpython.sh --arch=arm64 --build"
 
 $(ARM64_ELF): $(LIBPYTHON_ARM64) \
               $(BOOT_SRC) $(HAL_SRC) $(LIBC_SRC) $(KERNEL_DEPS) \
               linker_arm64.ld .docker-image
-	docker run --rm --platform linux/amd64 -v $(PWD):/work -w /work $(DOCKER_IMG) \
+	docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) -v $(PWD):/work -w /work $(DOCKER_IMG) \
 	  bash -c "make -f GNUMakefile CPYTHON_LIB=deps-arm64/cpython-src/Lib ENCODINGS_SRC=deps-arm64/cpython-src/Lib/encodings _freeze && make -f GNUMakefile _iso_arm64"
 	@echo "ARM64 ELF ready: $(ARM64_ELF)"
 

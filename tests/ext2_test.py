@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -71,8 +72,20 @@ def _docker_e2fsck(image_path: str) -> tuple[int, str]:
     abspath = os.path.abspath(image_path)
     workdir = os.path.dirname(abspath)
     fname = os.path.basename(abspath)
+    docker_platform = os.environ.get("PYTHONOS_DOCKER_PLATFORM") or os.environ.get("DOCKER_PLATFORM")
+    if not docker_platform:
+        machine = platform.machine().lower()
+        if machine in ("arm64", "aarch64"):
+            docker_platform = "linux/arm64"
+        elif machine in ("x86_64", "amd64"):
+            docker_platform = "linux/amd64"
+    docker_user = os.environ.get("PYTHONOS_DOCKER_USER") or os.environ.get("DOCKER_USER")
+    if not docker_user and hasattr(os, "getuid") and hasattr(os, "getgid"):
+        docker_user = f"{os.getuid()}:{os.getgid()}"
     cmd = [
-        "docker", "run", "--rm", "--platform", "linux/amd64",
+        "docker", "run", "--rm",
+        *(["--platform", docker_platform] if docker_platform else []),
+        *(["--user", docker_user] if docker_user else []),
         "-v", f"{workdir}:/work", "-w", "/work",
         "pythonos-builder",
         "e2fsck", "-nf", fname,

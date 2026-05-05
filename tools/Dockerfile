@@ -1,11 +1,12 @@
-FROM --platform=linux/amd64 python:3.14-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 # python:3.14-slim-bookworm ships Python 3.14 at /usr/local/bin/python3.14.
 # We use Debian Bookworm's package set for the cross-compilation toolchain and
-# ISO tools, all of which are identical to the Ubuntu 24.04 packages we used
+# image tools, all of which are identical to the Ubuntu 24.04 packages we used
 # before. This avoids the deadsnakes PPA launchpadlib failure inside Docker
 # (add-apt-repository tries to connect to the Launchpad web API, which is
-# blocked in container builds).
+# blocked in container builds). grub-pc-bin is amd64-only in Debian; arm64
+# builds do not need it because they produce a QEMU -kernel ELF, not an x86 ISO.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc-x86-64-linux-gnu \
@@ -15,13 +16,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libc6-dev-arm64-cross \
     linux-libc-dev-arm64-cross \
     nasm \
-    grub-pc-bin \
     grub-common \
     xorriso \
     mtools \
     e2fsprogs \
     curl \
     ca-certificates \
+    && if apt-cache show grub-pc-bin >/dev/null 2>&1; then \
+        apt-get install -y --no-install-recommends grub-pc-bin; \
+    fi \
     && rm -rf /var/lib/apt/lists/*
 
 # Cross-compiler shims — the Makefile uses x86_64-elf-* but Debian provides
