@@ -11,3 +11,4 @@ from apps.demos import paint          # noqa: F401
 from apps.demos import life           # noqa: F401
 from apps.demos import keyboard       # noqa: F401
 from apps.demos import mandelbrot     # noqa: F401
+from apps.demos import spirograph     # noqa: F401

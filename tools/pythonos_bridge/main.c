@@ -584,6 +584,42 @@ static int op_surface_blit(BridgeState *st, int id, cJSON *params) {
     return send_ok(st->fd, id, NULL);
 }
 
+/* Bresenham line draw. params: {handle, x0, y0, x1, y1, rgb}.
+ * One bridge round-trip draws an arbitrarily long line — much
+ * cheaper than emitting one fill_rect per pixel from the guest. */
+static int op_surface_line(BridgeState *st, int id, cJSON *params) {
+    cJSON *jh   = cJSON_GetObjectItemCaseSensitive(params, "handle");
+    cJSON *jx0  = cJSON_GetObjectItemCaseSensitive(params, "x0");
+    cJSON *jy0  = cJSON_GetObjectItemCaseSensitive(params, "y0");
+    cJSON *jx1  = cJSON_GetObjectItemCaseSensitive(params, "x1");
+    cJSON *jy1  = cJSON_GetObjectItemCaseSensitive(params, "y1");
+    cJSON *jrgb = cJSON_GetObjectItemCaseSensitive(params, "rgb");
+    if (!cJSON_IsNumber(jh) || !cJSON_IsNumber(jx0) || !cJSON_IsNumber(jy0)
+        || !cJSON_IsNumber(jx1) || !cJSON_IsNumber(jy1)
+        || !cJSON_IsNumber(jrgb)) {
+        return send_err(st->fd, id, 4, "handle/x0/y0/x1/y1/rgb required");
+    }
+    SDL_Surface *s = handle_get(jh->valueint);
+    if (!s) return send_err(st->fd, id, 7, "invalid handle");
+    int x0 = jx0->valueint, y0 = jy0->valueint;
+    int x1 = jx1->valueint, y1 = jy1->valueint;
+    Uint32 color = (Uint32)jrgb->valuedouble;
+    int dx = (x1 > x0 ? x1 - x0 : x0 - x1);
+    int dy = -(y1 > y0 ? y1 - y0 : y0 - y1);
+    int sx = x0 < x1 ? 1 : -1;
+    int sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    while (1) {
+        SDL_Rect r = { x0, y0, 1, 1 };
+        SDL_FillRect(s, &r, color);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+    return send_ok(st->fd, id, NULL);
+}
+
 /* Vertical in-place scroll. dy < 0 shifts content up by |dy| pixels;
  * dy > 0 shifts down. Pixels at the newly exposed edge are unchanged —
  * the caller is expected to paint them. memmove handles overlap.
@@ -1063,6 +1099,7 @@ static const struct {
     { "surface.fill_rect",  op_surface_fill_rect  },
     { "surface.blit",       op_surface_blit       },
     { "surface.scroll",     op_surface_scroll     },
+    { "surface.line",       op_surface_line       },
     { "surface.upload",     op_surface_upload     },
     { "text.draw",          op_text_draw          },
     { "event.poll",         op_event_poll         },
