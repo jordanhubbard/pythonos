@@ -123,6 +123,8 @@ class Compositor:
         # reachable, push draw commands directly to it instead of
         # composing in-guest. Set lazily in start().
         self._bridge_present = False
+        self._bridge_needs_redraw = True
+        self._bridge_last_uptime = ""
         self._bridge_w = 0
         self._bridge_h = 0
         self._bridge_fb_handle = 0    # window's main surface handle
@@ -158,6 +160,7 @@ class Compositor:
         self._focus_idx = len(self._windows) - 1
         win.focused = True
         self._refresh_app_menus(win)
+        self._bridge_needs_redraw = True
         win.dirty = True
 
     def remove_window(self, win: CompositorWindow) -> None:
@@ -172,6 +175,7 @@ class Compositor:
         elif not self._windows:
             self._focus_idx = -1
             self._refresh_app_menus(None)
+        self._bridge_needs_redraw = True
 
     def cycle_focus(self, direction: int = 1) -> None:
         if not self._windows:
@@ -181,6 +185,7 @@ class Compositor:
         self._focus_idx = (self._focus_idx + direction) % len(self._windows)
         self._windows[self._focus_idx].focused = True
         self._refresh_app_menus(self._windows[self._focus_idx])
+        self._bridge_needs_redraw = True
         for w in self._windows:
             w.dirty = True
 
@@ -235,10 +240,14 @@ class Compositor:
 
     async def _redraw(self) -> None:
         if self._bridge_present:
-            # Always redraw in bridge mode — per-frame cost is just a
-            # handful of small JSON ops, and the dock + drag + cursor
-            # all want continuous updates.
-            self._redraw_bridge()
+            uptime = self._uptime_str()
+            if (not self._bridge_needs_redraw
+                    and uptime == self._bridge_last_uptime
+                    and not any(w.dirty for w in self._windows)):
+                return
+            self._bridge_last_uptime = uptime
+            self._bridge_needs_redraw = False
+            self._redraw_bridge(uptime)
             for w in self._windows:
                 w.dirty = False
         else:
@@ -246,7 +255,7 @@ class Compositor:
                 return
             self._redraw_local()
 
-    def _redraw_bridge(self) -> None:
+    def _redraw_bridge(self, uptime_text: str | None = None) -> None:
         """Issue draw commands straight to the host SDL window. No
         guest back-buffer; per-frame data on the wire is just JSON
         envelopes (no pixel payloads)."""
@@ -327,7 +336,7 @@ class Compositor:
             # Menu bar last so any open dropdown sits on top of the
             # rest of the desktop. Refresh the right-side uptime text
             # each frame so the clock ticks visibly.
-            self._menubar.set_right_text(self._uptime_str())
+            self._menubar.set_right_text(uptime_text or self._uptime_str())
             from kernel.gui.sdl2.surface import SDL_Surface
             fb_surf = SDL_Surface.from_handle(fb_handle,
                                                 self._bridge_w, self._bridge_h)
@@ -567,6 +576,7 @@ class Compositor:
         self._windows.remove(win)
         self._windows.append(win)
         self._focus_idx = len(self._windows) - 1
+        self._bridge_needs_redraw = True
 
     # ── Event routing ───────────────────────────────────────────────────────
 
@@ -583,11 +593,13 @@ class Compositor:
             if self._menubar.on_mouse_move(ev.x, ev.y):
                 if self._windows:
                     self._windows[-1].dirty = True
+                self._bridge_needs_redraw = True
                 return
         if ev.kind == _gui_input.MOUSE_DOWN and ev.code == 1:
             if self._menubar.on_mouse_down(ev.x, ev.y):
                 if self._windows:
                     self._windows[-1].dirty = True
+                self._bridge_needs_redraw = True
                 return
 
         # Mouse-button-down: dock click → focus → maybe-start-drag / close
@@ -632,9 +644,7 @@ class Compositor:
                 self._dock_hot = new_hot
                 if self._windows:
                     self._windows[-1].dirty = True   # force redraw
-                else:
-                    # Force at least one redraw without windows.
-                    pass
+                self._bridge_needs_redraw = True
             win = self.focused_window
             if win != None:
                 win.deliver(ev)
@@ -731,6 +741,8 @@ class Compositor:
         self._bridge_h = int(r.get("h", ch))
         self._bridge_fb_handle = int(r.get("fb_handle", 0))
         self._bridge_present = True
+        self._bridge_needs_redraw = True
+        self._bridge_last_uptime = ""
         # Forward host SDL events into kernel.gui.input.queue so the
         # existing _route_event handler picks them up.
         from kernel.bridge import input as _br_input

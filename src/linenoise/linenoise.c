@@ -1536,7 +1536,7 @@ char *linenoiseEditFeed(struct linenoiseState *l) {
 void linenoiseEditStop(struct linenoiseState *l) {
     if (!isatty(l->ifd) && !getenv("LINENOISE_ASSUME_TTY")) return;
     disableRawMode(l->ifd);
-    printf("\n");
+    if (write(l->ofd,"\n",1) == -1) {}
 }
 
 /* This just implements a blocking loop for the multiplexed API.

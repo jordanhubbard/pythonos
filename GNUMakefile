@@ -68,22 +68,29 @@ QEMU_X86_CPU   := -cpu host
 endif
 endif
 
-# arm64 acceleration. The kernel auto-detects GICv2 vs GICv3
-# (src/boot/gic_arm64.c) and the GICv3 path is verified under TCG via
-# `make test-arm64-gicv3` (cortex-a76 + virt,gic-version=3). Native
-# HVF on Apple Silicon is still gated on a QEMU upstream bug — Apple
+# arm64 acceleration. Linux/KVM currently stalls before GIC init on this
+# kernel, so it is opt-in via ARM64_KVM=1 until the EL2/GIC path is fixed.
+# Native HVF on Apple Silicon is still gated on a QEMU upstream bug — Apple
 # Silicon's hypervisor framework doesn't set the ISV (Instruction
 # Syndrome Valid) bit on stage-2 data aborts for GIC MMIO and QEMU's
 # hvf.c asserts on that. When the upstream lands, set ARM64_HVF=1 and
 # HVF will Just Work — the GICv3 driver is already in place.
+ARM64_KVM ?= 0
 ARM64_HVF ?= 0
 QEMU_ARM64_ACCEL :=
 QEMU_ARM64_CPU   := -cpu cortex-a57
 ifeq ($(HOST_ARCH),arm64)
 ifneq ($(HOST_ACCEL),)
+ifeq ($(HOST_ACCEL),kvm)
+ifeq ($(ARM64_KVM),1)
+QEMU_ARM64_ACCEL := -accel $(HOST_ACCEL)
+QEMU_ARM64_CPU   := -cpu host
+endif
+else
 ifeq ($(ARM64_HVF),1)
 QEMU_ARM64_ACCEL := -accel $(HOST_ACCEL)
 QEMU_ARM64_CPU   := -cpu host
+endif
 endif
 endif
 endif

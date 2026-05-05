@@ -35,9 +35,28 @@ RECV_TIMEOUT = float(os.environ.get("PYTHONOS_ARM64_RECV_TIMEOUT", "60"))
 
 
 def _qemu_accel_for(target_arch: str) -> list:
+    mode = os.environ.get("PYTHONOS_QEMU_ACCEL", "auto").strip().lower()
+    if mode in ("off", "none"):
+        mode = "tcg"
+    if mode not in ("auto", "kvm", "tcg"):
+        raise ValueError("PYTHONOS_QEMU_ACCEL must be auto, kvm, or tcg")
     host_machine = platform.machine().lower()
     host_arch = "arm64" if host_machine in ("arm64", "aarch64") else "x86_64"
-    if host_arch != target_arch:
+    kvm_ok = (platform.system() == "Linux"
+              and os.path.exists("/dev/kvm")
+              and os.access("/dev/kvm", os.R_OK | os.W_OK))
+    if mode == "kvm" and (host_arch != target_arch or not kvm_ok):
+        raise RuntimeError(
+            f"PYTHONOS_QEMU_ACCEL=kvm requested, but KVM is not usable "
+            f"for {target_arch} on this host")
+    arm64_kvm = os.environ.get("PYTHONOS_ARM64_KVM", "").strip().lower() \
+        in ("1", "true", "yes", "on")
+    if mode == "kvm" or (mode == "auto" and target_arch != "arm64"
+                         and host_arch == target_arch and kvm_ok) \
+            or (mode == "auto" and target_arch == "arm64" and arm64_kvm
+                and host_arch == target_arch and kvm_ok):
+        return ["-accel", "kvm", "-cpu", "host"]
+    if mode == "tcg" or host_arch != target_arch:
         return ["-cpu", "qemu64" if target_arch == "x86_64" else "cortex-a57"]
     if target_arch == "arm64":
         # HVF on Apple Silicon needs GICv3 (pythonos-nz1); stay on TCG.

@@ -28,6 +28,53 @@ def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _host_arch() -> str:
+    machine = platform.machine().lower()
+    if machine in ("arm64", "aarch64"):
+        return "arm64"
+    if machine in ("x86_64", "amd64"):
+        return "x86_64"
+    return machine
+
+
+def _kvm_available() -> bool:
+    return (platform.system() == "Linux"
+            and os.path.exists("/dev/kvm")
+            and os.access("/dev/kvm", os.R_OK | os.W_OK))
+
+
+def _qemu_accel(arch: str) -> str:
+    """Return kvm/tcg for this launch.
+
+    ``PYTHONOS_QEMU_ACCEL`` accepts ``auto`` (default), ``kvm``, or ``tcg``.
+    Auto enables KVM only where it is release-safe. arm64 KVM is currently
+    opt-in because this kernel stalls before GIC init under KVM on native
+    aarch64 hosts.
+    """
+    mode = os.environ.get("PYTHONOS_QEMU_ACCEL", "auto").strip().lower()
+    if mode in ("off", "none"):
+        mode = "tcg"
+    if mode not in ("auto", "kvm", "tcg"):
+        raise ValueError("PYTHONOS_QEMU_ACCEL must be auto, kvm, or tcg")
+    if mode == "kvm" and (_host_arch() != arch or not _kvm_available()):
+        raise RuntimeError(
+            f"PYTHONOS_QEMU_ACCEL=kvm requested, but KVM is not usable "
+            f"for {arch} on this host")
+    if mode == "auto":
+        if arch == "arm64":
+            return "kvm" if _truthy(os.environ.get("PYTHONOS_ARM64_KVM")) \
+                and _host_arch() == arch and _kvm_available() else "tcg"
+        return "kvm" if _host_arch() == arch and _kvm_available() else "tcg"
+    return mode
+
+
+def _qemu_cpu(arch: str, accel: str, fallback: str) -> str:
+    env_cpu = os.environ.get("PYTHONOS_QEMU_CPU")
+    if env_cpu:
+        return env_cpu
+    return "host" if accel == "kvm" and _host_arch() == arch else fallback
+
+
 def _bridge_bin() -> str:
     return os.environ.get(
         "PYTHONOS_BRIDGE_BIN",
@@ -148,10 +195,12 @@ def _qemu_cmd_x86_64(iso: str, repl_port: int, display: str, audiodev: str,
         netdev += "," + _hostfwd(bridge_listen_host,
                                  bridge_endpoint[1],
                                  bridge_guest_port)
+    accel = _qemu_accel("x86_64")
     cmd = [
         "qemu-system-x86_64",
         "-machine", "q35",
-        "-cpu", "qemu64",
+        "-accel", accel,
+        "-cpu", _qemu_cpu("x86_64", accel, "qemu64"),
         "-m", "2G",
         "-smp", "2",
         "-netdev", netdev,
@@ -189,10 +238,12 @@ def _qemu_cmd_arm64(elf: str, repl_port: int, display: str, audiodev: str,
         netdev += "," + _hostfwd(bridge_listen_host,
                                  bridge_endpoint[1],
                                  bridge_guest_port)
+    accel = _qemu_accel("arm64")
     cmd = [
         "qemu-system-aarch64",
         "-machine", "virt",
-        "-cpu", "cortex-a57",
+        "-accel", accel,
+        "-cpu", _qemu_cpu("arm64", accel, "cortex-a57"),
         "-m", "2G",
         "-smp", "2",
         "-no-reboot", "-no-shutdown",
@@ -343,6 +394,7 @@ def main() -> int:
             return 2
 
     print(f"[run-gui] booting {image} (arch={arch}) with -display {display}"
+          + f", accel={_qemu_accel(arch)}"
           + (f", bridge={bridge_transport}://{bridge_endpoint[0]}:{bridge_endpoint[1]}"
              if bridge_endpoint else ", bridge=off")
           + (f", app={gui_app}" if gui_app else "")

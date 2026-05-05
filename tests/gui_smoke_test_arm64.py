@@ -12,6 +12,7 @@ checks the x86 desktop smoke does.
 """
 
 import os
+import platform
 import socket
 import subprocess
 import sys
@@ -34,11 +35,34 @@ BOOT_TIMEOUT  = float(os.environ.get("PYTHONOS_ARM64_BOOT_TIMEOUT", "45"))
 PORT = int(os.environ.get("PYTHONOS_ARM64_GUI_PORT", "5561"))
 
 
+def _qemu_accel_for(target_arch: str) -> list:
+    mode = os.environ.get("PYTHONOS_QEMU_ACCEL", "auto").strip().lower()
+    if mode in ("off", "none"):
+        mode = "tcg"
+    if mode not in ("auto", "kvm", "tcg"):
+        raise ValueError("PYTHONOS_QEMU_ACCEL must be auto, kvm, or tcg")
+    host_machine = platform.machine().lower()
+    host_arch = "arm64" if host_machine in ("arm64", "aarch64") else "x86_64"
+    kvm_ok = (platform.system() == "Linux"
+              and os.path.exists("/dev/kvm")
+              and os.access("/dev/kvm", os.R_OK | os.W_OK))
+    if mode == "kvm" and (host_arch != target_arch or not kvm_ok):
+        raise RuntimeError(
+            f"PYTHONOS_QEMU_ACCEL=kvm requested, but KVM is not usable "
+            f"for {target_arch} on this host")
+    arm64_kvm = os.environ.get("PYTHONOS_ARM64_KVM", "").strip().lower() \
+        in ("1", "true", "yes", "on")
+    if mode == "kvm" or (mode == "auto" and target_arch == "arm64"
+                         and arm64_kvm and host_arch == target_arch and kvm_ok):
+        return ["-accel", "kvm", "-cpu", "host"]
+    return ["-cpu", "cortex-a57"]
+
+
 def _qemu_cmd():
     return [
         "qemu-system-aarch64",
         "-machine", "virt",
-        "-cpu", "cortex-a57",
+        *_qemu_accel_for("arm64"),
         "-m", "2G",
         "-smp", "2",
         "-no-reboot", "-no-shutdown",
