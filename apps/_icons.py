@@ -101,3 +101,31 @@ def audio_tone_icon() -> SDL_Surface:
     SDL_FillRect(s, SDL_Rect(30, 19, 2, 10), 0x60D0FF)
     SDL_FillRect(s, SDL_Rect(34, 16, 2, 16), 0x60D0FF)
     return s
+
+
+def paint_icon() -> SDL_Surface:
+    """Paint palette: white canvas with three color dabs."""
+    s = _new_icon(0xF0F0F0)
+    _border(s, 0x404040)
+    SDL_FillRect(s, SDL_Rect(10, 12, 8, 8), 0xE03020)   # red
+    SDL_FillRect(s, SDL_Rect(20, 12, 8, 8), 0x30B030)   # green
+    SDL_FillRect(s, SDL_Rect(30, 12, 8, 8), 0x3050E0)   # blue
+    # brush stroke
+    SDL_FillRect(s, SDL_Rect(8, 28, 32, 3), 0x101820)
+    SDL_FillRect(s, SDL_Rect(12, 31, 24, 2), 0x101820)
+    return s
+
+
+def keyboard_demo_icon() -> SDL_Surface:
+    """Stylized keyboard: 3 rows of small key rects."""
+    s = _new_icon(0x202030)
+    _border(s, 0x8090A0)
+    key = 0xD0D0D8
+    for row in range(3):
+        y = 14 + row * 8
+        for col in range(5):
+            x = 6 + col * 8
+            SDL_FillRect(s, SDL_Rect(x, y, 6, 6), key)
+    # spacebar
+    SDL_FillRect(s, SDL_Rect(10, 38, 28, 4), key)
+    return s
