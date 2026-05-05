@@ -163,6 +163,8 @@ class Shell:
             buf += ch
             self._write(ch)
 
+    HISTORY_FILE = "/home/.repl_history"
+
     def _history_add(self, line: str) -> None:
         if not self._linenoise_ready:
             return
@@ -171,6 +173,49 @@ class Shell:
         try:
             import _hal
             _hal.linenoise_history_add(line)
+        except Exception:
+            pass
+        # Best-effort persistent append. /home is ext2 on arm64 and
+        # tmpfs on x86 — either way the file write itself is cheap and
+        # we're already inside an async context (Shell.run).
+        asyncio.ensure_future(self._history_persist(line))
+
+    async def _history_persist(self, line: str) -> None:
+        try:
+            from kernel.fs.vfs import vfs, OpenFlags
+            fd = await vfs.open(self.HISTORY_FILE,
+                                OpenFlags.WRONLY | OpenFlags.CREAT
+                                | OpenFlags.APPEND)
+            try:
+                await vfs.write(fd, (line + "\n").encode("utf-8"))
+            finally:
+                vfs.close(fd)
+        except Exception:
+            pass
+
+    async def _history_load(self) -> None:
+        if not self._linenoise_ready:
+            return
+        try:
+            from kernel.fs.vfs import vfs
+            try:
+                fd = await vfs.open(self.HISTORY_FILE)
+            except FileNotFoundError:
+                return
+            chunks = []
+            try:
+                while True:
+                    chunk = await vfs.read(fd, 4096)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+            finally:
+                vfs.close(fd)
+            text = b"".join(chunks).decode("utf-8", errors="replace")
+            import _hal
+            for entry in text.splitlines():
+                if entry.strip():
+                    _hal.linenoise_history_add(entry)
         except Exception:
             pass
 
@@ -250,6 +295,8 @@ class Shell:
         self._write("Type 'help' for help.\n")
         self._write("Commands: ls ps pwd cd cat cp mv ftp ed sysinfo netstat\n")
         self._write("Helpers: sh()  sh('cmd args')  run('/path')  clear()\n\n")
+
+        await self._history_load()
 
         while True:
             prompt = self.CONT_PROMPT if self._block else self.PROMPT
