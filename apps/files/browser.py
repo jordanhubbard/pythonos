@@ -146,7 +146,8 @@ async def main(*args, **kwargs) -> None:
         nonlocal closed, pending
         if ev.kind == _gui_input.MOUSE_DOWN and ev.code == 1:
             # Mouse hits arrive in window-local coords (compositor adjusts for body).
-            local_y = ev.y - (win.y + 16)   # 16 = TITLE_BAR_H
+            from kernel.gui.compositor import TITLE_BAR_H
+            local_y = ev.y - (win.y + TITLE_BAR_H)
             if local_y < _HEADER_H:
                 return
             row = (local_y - _HEADER_H) // GLYPH_H

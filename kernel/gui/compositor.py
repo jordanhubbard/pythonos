@@ -25,13 +25,13 @@ from kernel.gui.sdl2.surface import SDL_Surface
 
 # ── Title-bar + dock geometry ──────────────────────────────────────────────
 
-TITLE_BAR_H = 16
+TITLE_BAR_H = 22     # tall enough for 11pt TTF + breathing room
 CHROME_BORDER = 1
 CHROME_FOCUS_BG   = 0x224488
 CHROME_UNFOCUS_BG = 0x303030
 CHROME_FG         = 0xFFFFFF
-CLOSE_BOX_W       = 12
-CLOSE_BOX_PAD     = 2
+CLOSE_BOX_W       = 14
+CLOSE_BOX_PAD     = 4
 CLOSE_BG          = 0xC04040
 CLOSE_BG_HOT      = 0xE05050
 CLOSE_FG          = 0xFFFFFF
@@ -260,7 +260,11 @@ class Compositor:
         guest back-buffer; per-frame data on the wire is just JSON
         envelopes (no pixel payloads)."""
         from kernel.bridge import bridge as _br, BridgeError
+        from kernel.gui.sdl2.surface import SDL_Surface
+        from kernel.gui.text import text_renderer
         fb_handle = self._bridge_fb_handle
+        fb_surf = SDL_Surface.from_handle(fb_handle,
+                                            self._bridge_w, self._bridge_h)
         try:
             # Desktop background — blit the pre-uploaded image if loaded,
             # otherwise fall back to a solid-colour fill.
@@ -292,16 +296,16 @@ class Compositor:
                                   "w": win.w, "h": TITLE_BAR_H},
                         "rgb": (chrome_color & 0xFFFFFF) | 0xFF000000,
                     })
-                    # Title text
-                    title_max = max(1, (win.w - 8 - CLOSE_BOX_W - 4) // GLYPH_W)
-                    title = (win.title or "")[:title_max]
-                    _br.cast("text.draw", {
-                        "handle": fb_handle,
-                        "x": win.x + 4,
-                        "y": win.y + (TITLE_BAR_H - GLYPH_H) // 2,
-                        "text": title,
-                        "fg": (CHROME_FG & 0xFFFFFF) | 0xFF000000,
-                    })
+                    # Title text — TTF, truncated to fit the title bar.
+                    title_text = win.title or ""
+                    title_max_w = max(1, win.w - 8 - CLOSE_BOX_W - 4)
+                    title_text = text_renderer.truncate_to_width(
+                        title_text, title_max_w, size=11)
+                    _tw, th = text_renderer.measure(title_text, size=11)
+                    text_renderer.draw(fb_surf,
+                                        win.x + 4,
+                                        win.y + (TITLE_BAR_H - th) // 2,
+                                        title_text, CHROME_FG, size=11)
                     # Close box (top-right of chrome).
                     cx, cy, cw, ch = self._close_box_rect(win)
                     is_hot = (self._close_hot_win is win)
@@ -311,14 +315,15 @@ class Compositor:
                         "rgb": ((CLOSE_BG_HOT if is_hot else CLOSE_BG)
                                 & 0xFFFFFF) | 0xFF000000,
                     })
-                    # ASCII × — use the lowercase x glyph for now.
-                    _br.cast("text.draw", {
-                        "handle": fb_handle,
-                        "x": cx + (cw - GLYPH_W) // 2,
-                        "y": cy + (ch - GLYPH_H) // 2,
-                        "text": "x",
-                        "fg": (CLOSE_FG & 0xFFFFFF) | 0xFF000000,
-                    })
+                    # Centered ×. Lowercase 'x' renders cleanly in both
+                    # TTF (which has the multiplication sign too, but
+                    # this is consistent with the older look) and the
+                    # bitmap-font fallback (which doesn't carry U+00D7).
+                    xtw, xth = text_renderer.measure("x", size=11)
+                    text_renderer.draw(fb_surf,
+                                        cx + (cw - xtw) // 2,
+                                        cy + (ch - xth) // 2,
+                                        "x", CLOSE_FG, size=11)
                 # Window body — blit src surface to dst at body position.
                 # _sync_to_host handles host-backed (no-op), guest-backed
                 # (lazy-create + upload), and mirrored (re-upload if dirty).
@@ -332,14 +337,12 @@ class Compositor:
                         "dst_rect": {"x": win.x, "y": body_y,
                                       "w": s.w, "h": s.h},
                     })
-            self._draw_dock_bridge(fb_handle)
+            self._draw_dock_bridge(fb_handle, fb_surf)
             # Menu bar last so any open dropdown sits on top of the
             # rest of the desktop. Refresh the right-side uptime text
-            # each frame so the clock ticks visibly.
+            # each frame so the clock ticks visibly. Caller may pass an
+            # uptime override (testing); otherwise we sample _hal ticks.
             self._menubar.set_right_text(uptime_text or self._uptime_str())
-            from kernel.gui.sdl2.surface import SDL_Surface
-            fb_surf = SDL_Surface.from_handle(fb_handle,
-                                                self._bridge_w, self._bridge_h)
             self._menubar.render(fb_surf, self._bridge_w)
             _br.call("display.present", {})
         except BridgeError as e:
@@ -373,13 +376,18 @@ class Compositor:
     def _dock_first_x(self) -> int:
         return (self._bridge_w - self._dock_total_w()) // 2
 
-    def _draw_dock_bridge(self, fb_handle: int) -> None:
+    def _draw_dock_bridge(self, fb_handle: int, fb_surf=None) -> None:
         """Paint the app dock at the bottom of the desktop window —
         macOS-flavored: centered, square icons (not text labels), with
         a tooltip-style label above the hovered slot."""
         if not self._dock_apps:
             return
         from kernel.bridge import bridge as _br
+        from kernel.gui.text import text_renderer
+        if fb_surf is None:
+            from kernel.gui.sdl2.surface import SDL_Surface
+            fb_surf = SDL_Surface.from_handle(fb_handle,
+                                                self._bridge_w, self._bridge_h)
         dock_y = self._bridge_h - DOCK_H
         # Dock backdrop.
         _br.cast("surface.fill_rect", {
@@ -413,24 +421,23 @@ class Compositor:
                     })
         if self._dock_hot >= 0:
             label = self._dock_apps[self._dock_hot][0]
-            label_w = len(label) * GLYPH_W + 8
+            tw, th = text_renderer.measure(label, size=11)
+            label_w = tw + 12
+            label_h = th + 6
             label_x = (first_x
                         + self._dock_hot * (DOCK_ICON_SIZE + DOCK_ICON_GAP)
                         + (DOCK_ICON_SIZE - label_w) // 2)
-            label_y = dock_y - GLYPH_H - 8
+            label_y = dock_y - label_h - 4
             label_x = max(4, min(self._bridge_w - 4 - label_w, label_x))
             _br.cast("surface.fill_rect", {
                 "handle": fb_handle,
                 "rect": {"x": label_x, "y": label_y,
-                          "w": label_w, "h": GLYPH_H + 4},
+                          "w": label_w, "h": label_h},
                 "rgb": (DOCK_LABEL_BG & 0xFFFFFF) | 0xFF000000,
             })
-            _br.cast("text.draw", {
-                "handle": fb_handle,
-                "x": label_x + 4, "y": label_y + 2,
-                "text": label,
-                "fg": (DOCK_LABEL_FG & 0xFFFFFF) | 0xFF000000,
-            })
+            text_renderer.draw(fb_surf,
+                                label_x + 6, label_y + 3,
+                                label, DOCK_LABEL_FG, size=11)
 
     def _ensure_icon(self, name: str):
         cached = self._dock_icons.get(name)
