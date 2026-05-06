@@ -137,22 +137,25 @@ update_changelog() {
     local file="CHANGELOG.md"
     [ -f "$file" ] || { info "no $file — skipping changelog update"; return 0; }
 
-    local entry
-    entry="$(render_changelog_entry "$version" "$range")"
-
-    local tmp
-    tmp="$(mktemp)"
-    awk -v entry="$entry" '
+    # macOS awk (BWK) rejects newlines in -v values, so stage the
+    # entry through a tempfile and getline it inside awk.
+    local entry_file out
+    entry_file="$(mktemp)"
+    out="$(mktemp)"
+    render_changelog_entry "$version" "$range" > "$entry_file"
+    awk -v entry_file="$entry_file" '
         /^## \[Unreleased\]/ && !done {
             print $0
             print ""
-            print entry
+            while ((getline line < entry_file) > 0) print line
+            close(entry_file)
             done = 1
             next
         }
         { print }
-    ' "$file" > "$tmp"
-    mv "$tmp" "$file"
+    ' "$file" > "$out"
+    mv "$out" "$file"
+    rm -f "$entry_file"
     info "updated CHANGELOG.md with [$version] entry"
 }
 
