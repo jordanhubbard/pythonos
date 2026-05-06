@@ -120,12 +120,15 @@ render_changelog_entry() {
     removed="$(printf '%s\n' "$raw" | awk -F'~~SECTION~~' '{print $4}')"
     other="$(  printf '%s\n' "$raw" | awk -F'~~SECTION~~' '{print $5}')"
 
+    # Use if/fi (not `[ ] && cmd`) so a trailing empty section
+    # doesn't leave the function returning 1, which would trip
+    # set -e at the call site under bash.
     printf '## [%s] - %s\n\n' "$version" "$date"
-    [ -n "$(printf '%s' "$added")"   ] && printf '### Added\n%s\n'   "$added"
-    [ -n "$(printf '%s' "$changed")" ] && printf '### Changed\n%s\n' "$changed"
-    [ -n "$(printf '%s' "$fixed")"   ] && printf '### Fixed\n%s\n'   "$fixed"
-    [ -n "$(printf '%s' "$removed")" ] && printf '### Removed\n%s\n' "$removed"
-    [ -n "$(printf '%s' "$other")"   ] && printf '### Other\n%s\n'   "$other"
+    if [ -n "$added"   ]; then printf '### Added\n%s\n'   "$added";   fi
+    if [ -n "$changed" ]; then printf '### Changed\n%s\n' "$changed"; fi
+    if [ -n "$fixed"   ]; then printf '### Fixed\n%s\n'   "$fixed";   fi
+    if [ -n "$removed" ]; then printf '### Removed\n%s\n' "$removed"; fi
+    if [ -n "$other"   ]; then printf '### Other\n%s\n'   "$other";   fi
 }
 
 # Insert a fresh entry under "## [Unreleased]" in CHANGELOG.md and
