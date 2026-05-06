@@ -142,7 +142,20 @@ main() {
     git push origin "$tag"
 
     info "creating GitHub release $tag"
-    gh release create "$tag" --title "$tag" --notes-file "$notes_file"
+    # Attach the bootable artifacts when present. Both are large binaries;
+    # we don't gate the release on their existence, so a CI-only release
+    # (no local make run) still works. validate-release.sh and CI together
+    # cover correctness; this is just convenience for downloaders.
+    local -a assets=()
+    [ -f pythonos.iso ]        && assets+=("pythonos.iso")
+    [ -f pythonos-arm64.elf ]  && assets+=("pythonos-arm64.elf")
+    if [ "${#assets[@]}" -gt 0 ]; then
+        info "attaching ${#assets[@]} artifact(s): ${assets[*]}"
+        gh release create "$tag" --title "$tag" --notes-file "$notes_file" \
+            "${assets[@]}"
+    else
+        gh release create "$tag" --title "$tag" --notes-file "$notes_file"
+    fi
 
     info "release complete: $tag"
 }

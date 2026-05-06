@@ -329,6 +329,27 @@ else
 test-gui: test-gui-x86_64
 endif
 
+# ── Release automation ──────────────────────────────────────────────────────
+# Same shape as nanolang/scripts/release.sh: clean main + GitHub CLI auth +
+# local validation gate + push + wait for CI + annotated tag + GitHub release.
+# scripts/release.sh accepts `major`, `minor`, `patch`, or an explicit X.Y.Z;
+# the Makefile wrappers are sugar so users can type `make release-minor`
+# instead of `./scripts/release.sh minor`.
+.PHONY: release release-major release-minor release-patch validate-release
+release: release-patch
+
+release-patch:
+	@./scripts/release.sh patch
+
+release-minor:
+	@./scripts/release.sh minor
+
+release-major:
+	@./scripts/release.sh major
+
+validate-release:
+	@./scripts/validate-release.sh
+
 clean:
 	rm -rf build $(ISO_OUT) iso/boot/pythonos.elf \
 	       build-arm64 $(ARM64_ELF) \

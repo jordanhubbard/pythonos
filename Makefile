@@ -16,6 +16,7 @@ TOP_GOALS := all build build-gui run run-gui run-fb start stop restart \
              test test-gui clean cleanall \
              docker-build help disk-image \
              bridge bridge-clean test-bridge \
+             release release-major release-minor release-patch validate-release \
              x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 \
                  test-gui-x86_64 \
              arm64 run-arm64 stop-arm64 test-arm64 run-gui-arm64 \
