@@ -132,9 +132,11 @@ main() {
     head_sha="$(git rev-parse HEAD)"
     wait_for_ci "$head_sha"
 
-    local notes_file
-    notes_file="$(mktemp)"
-    trap 'rm -f "$notes_file"' EXIT
+    # Use a global so the EXIT trap (which runs after main returns) can see
+    # the path under `set -u`. local-scoped vars go out of scope before EXIT.
+    NOTES_FILE="$(mktemp)"
+    trap 'rm -f "${NOTES_FILE:-}"' EXIT
+    local notes_file="$NOTES_FILE"
     release_notes "$previous" "$version" "$notes_file"
 
     info "creating annotated tag $tag"
