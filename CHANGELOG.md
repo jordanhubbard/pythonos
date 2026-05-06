@@ -11,11 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Add CHANGELOG.md + auto-categorized release entries
 
-
-- release.sh: stage changelog entry through tempfile (macOS awk)
 ### Fixed
-
 - release.sh: fix unbound-variable in EXIT trap after main returns
+
+### Other
+- release.sh: stage changelog entry through tempfile (macOS awk)
 - release.sh: render_changelog_entry must always return 0
 
 ## [0.1.0] - 2026-05-05

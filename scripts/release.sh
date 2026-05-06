@@ -66,69 +66,68 @@ commit_range() {
     fi
 }
 
-# Categorize commit subjects in $range into Keep-a-Changelog buckets.
-# PythonOS commits don't reliably use conventional-commit prefixes, so
-# we look at the leading verb. Output is the four buckets to stdout
-# separated by `~~SECTION~~` markers — read by render_changelog_entry.
+# Categorize commit subjects in $range into one Keep-a-Changelog
+# bucket and emit just that bucket's bullet list to stdout. PythonOS
+# commits don't reliably use conventional-commit prefixes, so we look
+# at the leading verb after stripping an optional `<scope>:` prefix
+# (e.g. `Dockerfile: fix x86 cross-build` → "fix x86 cross-build" →
+# Fixed). Bucket is one of: added, changed, fixed, removed, other.
+# Empty output means the bucket has no commits.
+#
+# We render each section with its own awk pass (rather than packing
+# all five into one string and splitting later) because awk's record
+# separator is \n, so a multi-line "raw" string can't be reliably
+# split with -F on a delimiter that lives only on some lines.
 categorize_commits() {
     local range="$1"
-    # Many PythonOS commits start with a `<scope>:` prefix
-    # (e.g. `Dockerfile: fix x86 cross-build`, `kernel.shell: add tab
-    # completion`). Strip an optional leading `<scope>:` before
-    # categorizing on the leading verb so we don't dump everything
-    # scoped into Other.
-    git log "$range" --pretty=format:'%s' --no-merges | awk '
-        BEGIN { added = ""; changed = ""; fixed = ""; removed = ""; other = "" }
+    local bucket="$2"
+    git log "$range" --pretty=format:'%s' --no-merges | awk -v bucket="$bucket" '
+        function emit(b, full,    _) {
+            if (b == bucket) print "- " full
+        }
         {
             full = $0
             verb = full
-            # Strip a single "<scope>:" prefix (no spaces in scope) so
-            # "release.sh: fix X" is categorized as Fixed, not Other.
             sub(/^[^[:space:]:]+:[[:space:]]*/, "", verb)
         }
         full ~ /^bd:/    { next }
         full ~ /^chore:/ { next }
-        verb ~ /^[Ff]ix/ || verb ~ /^fix:/                          { fixed   = fixed   "- " full "\n"; next }
-        verb ~ /^[Aa]dd/ || verb ~ /^feat:/ || verb ~ /^[Ii]mplement/ { added   = added   "- " full "\n"; next }
+        verb ~ /^[Ff]ix/ || verb ~ /^fix:/                          { emit("fixed",   full); next }
+        verb ~ /^[Aa]dd/ || verb ~ /^feat:/ || verb ~ /^[Ii]mplement/ { emit("added",   full); next }
         verb ~ /^[Rr]efactor/ || verb ~ /^[Uu]pdate/ ||
         verb ~ /^[Cc]hange/ || verb ~ /^[Mm]igrate/ ||
-        verb ~ /^[Mm]ove/ || verb ~ /^[Ww]ire/                       { changed = changed "- " full "\n"; next }
+        verb ~ /^[Mm]ove/ || verb ~ /^[Ww]ire/                       { emit("changed", full); next }
         verb ~ /^[Rr]emove/ || verb ~ /^[Dd]rop/ ||
-        verb ~ /^[Dd]elete/                                          { removed = removed "- " full "\n"; next }
-        { other = other "- " full "\n" }
-        END {
-            printf "%s~~SECTION~~%s~~SECTION~~%s~~SECTION~~%s~~SECTION~~%s",
-                   added, changed, fixed, removed, other
-        }
+        verb ~ /^[Dd]elete/                                          { emit("removed", full); next }
+        { emit("other", full) }
     '
 }
 
 # Build a Keep-a-Changelog entry for $version from commits in $range.
 # Mirrors nanolang's update_changelog convention. Sections are only
-# emitted when non-empty.
+# emitted when non-empty, and the function always returns 0.
 render_changelog_entry() {
     local version="$1"
     local range="$2"
     local date
     date="$(date +%Y-%m-%d)"
 
-    local raw added changed fixed removed other
-    raw="$(categorize_commits "$range")"
-    added="$(  printf '%s\n' "$raw" | awk -F'~~SECTION~~' '{print $1}')"
-    changed="$(printf '%s\n' "$raw" | awk -F'~~SECTION~~' '{print $2}')"
-    fixed="$(  printf '%s\n' "$raw" | awk -F'~~SECTION~~' '{print $3}')"
-    removed="$(printf '%s\n' "$raw" | awk -F'~~SECTION~~' '{print $4}')"
-    other="$(  printf '%s\n' "$raw" | awk -F'~~SECTION~~' '{print $5}')"
+    local added changed fixed removed other
+    added="$(   categorize_commits "$range" added)"
+    changed="$( categorize_commits "$range" changed)"
+    fixed="$(   categorize_commits "$range" fixed)"
+    removed="$( categorize_commits "$range" removed)"
+    other="$(   categorize_commits "$range" other)"
 
-    # Use if/fi (not `[ ] && cmd`) so a trailing empty section
-    # doesn't leave the function returning 1, which would trip
-    # set -e at the call site under bash.
+    # Use if/fi (not `[ ] && cmd`) so a trailing empty section doesn't
+    # leave the function returning 1, which would trip set -e at the
+    # call site under bash.
     printf '## [%s] - %s\n\n' "$version" "$date"
-    if [ -n "$added"   ]; then printf '### Added\n%s\n'   "$added";   fi
-    if [ -n "$changed" ]; then printf '### Changed\n%s\n' "$changed"; fi
-    if [ -n "$fixed"   ]; then printf '### Fixed\n%s\n'   "$fixed";   fi
-    if [ -n "$removed" ]; then printf '### Removed\n%s\n' "$removed"; fi
-    if [ -n "$other"   ]; then printf '### Other\n%s\n'   "$other";   fi
+    if [ -n "$added"   ]; then printf '### Added\n%s\n\n'   "$added";   fi
+    if [ -n "$changed" ]; then printf '### Changed\n%s\n\n' "$changed"; fi
+    if [ -n "$fixed"   ]; then printf '### Fixed\n%s\n\n'   "$fixed";   fi
+    if [ -n "$removed" ]; then printf '### Removed\n%s\n\n' "$removed"; fi
+    if [ -n "$other"   ]; then printf '### Other\n%s\n\n'   "$other";   fi
 }
 
 # Insert a fresh entry under "## [Unreleased]" in CHANGELOG.md and
