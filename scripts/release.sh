@@ -57,20 +57,113 @@ next_version() {
     printf '%s.%s.%s\n' "$major" "$minor" "$patch"
 }
 
+commit_range() {
+    local previous="$1"
+    if git rev-parse "v$previous" >/dev/null 2>&1; then
+        printf 'v%s..HEAD\n' "$previous"
+    else
+        printf 'HEAD\n'
+    fi
+}
+
+# Categorize commit subjects in $range into Keep-a-Changelog buckets.
+# PythonOS commits don't reliably use conventional-commit prefixes, so
+# we look at the leading verb. Output is the four buckets to stdout
+# separated by `~~SECTION~~` markers — read by render_changelog_entry.
+categorize_commits() {
+    local range="$1"
+    # Many PythonOS commits start with a `<scope>:` prefix
+    # (e.g. `Dockerfile: fix x86 cross-build`, `kernel.shell: add tab
+    # completion`). Strip an optional leading `<scope>:` before
+    # categorizing on the leading verb so we don't dump everything
+    # scoped into Other.
+    git log "$range" --pretty=format:'%s' --no-merges | awk '
+        BEGIN { added = ""; changed = ""; fixed = ""; removed = ""; other = "" }
+        {
+            full = $0
+            verb = full
+            # Strip a single "<scope>:" prefix (no spaces in scope) so
+            # "release.sh: fix X" is categorized as Fixed, not Other.
+            sub(/^[^[:space:]:]+:[[:space:]]*/, "", verb)
+        }
+        full ~ /^bd:/    { next }
+        full ~ /^chore:/ { next }
+        verb ~ /^[Ff]ix/ || verb ~ /^fix:/                          { fixed   = fixed   "- " full "\n"; next }
+        verb ~ /^[Aa]dd/ || verb ~ /^feat:/ || verb ~ /^[Ii]mplement/ { added   = added   "- " full "\n"; next }
+        verb ~ /^[Rr]efactor/ || verb ~ /^[Uu]pdate/ ||
+        verb ~ /^[Cc]hange/ || verb ~ /^[Mm]igrate/ ||
+        verb ~ /^[Mm]ove/ || verb ~ /^[Ww]ire/                       { changed = changed "- " full "\n"; next }
+        verb ~ /^[Rr]emove/ || verb ~ /^[Dd]rop/ ||
+        verb ~ /^[Dd]elete/                                          { removed = removed "- " full "\n"; next }
+        { other = other "- " full "\n" }
+        END {
+            printf "%s~~SECTION~~%s~~SECTION~~%s~~SECTION~~%s~~SECTION~~%s",
+                   added, changed, fixed, removed, other
+        }
+    '
+}
+
+# Build a Keep-a-Changelog entry for $version from commits in $range.
+# Mirrors nanolang's update_changelog convention. Sections are only
+# emitted when non-empty.
+render_changelog_entry() {
+    local version="$1"
+    local range="$2"
+    local date
+    date="$(date +%Y-%m-%d)"
+
+    local raw added changed fixed removed other
+    raw="$(categorize_commits "$range")"
+    added="$(  printf '%s\n' "$raw" | awk -F'~~SECTION~~' '{print $1}')"
+    changed="$(printf '%s\n' "$raw" | awk -F'~~SECTION~~' '{print $2}')"
+    fixed="$(  printf '%s\n' "$raw" | awk -F'~~SECTION~~' '{print $3}')"
+    removed="$(printf '%s\n' "$raw" | awk -F'~~SECTION~~' '{print $4}')"
+    other="$(  printf '%s\n' "$raw" | awk -F'~~SECTION~~' '{print $5}')"
+
+    printf '## [%s] - %s\n\n' "$version" "$date"
+    [ -n "$(printf '%s' "$added")"   ] && printf '### Added\n%s\n'   "$added"
+    [ -n "$(printf '%s' "$changed")" ] && printf '### Changed\n%s\n' "$changed"
+    [ -n "$(printf '%s' "$fixed")"   ] && printf '### Fixed\n%s\n'   "$fixed"
+    [ -n "$(printf '%s' "$removed")" ] && printf '### Removed\n%s\n' "$removed"
+    [ -n "$(printf '%s' "$other")"   ] && printf '### Other\n%s\n'   "$other"
+}
+
+# Insert a fresh entry under "## [Unreleased]" in CHANGELOG.md and
+# leave a blank Unreleased section above it. Idempotent for re-runs;
+# safe to skip if CHANGELOG.md doesn't exist (returns success).
+update_changelog() {
+    local version="$1"
+    local range="$2"
+    local file="CHANGELOG.md"
+    [ -f "$file" ] || { info "no $file — skipping changelog update"; return 0; }
+
+    local entry
+    entry="$(render_changelog_entry "$version" "$range")"
+
+    local tmp
+    tmp="$(mktemp)"
+    awk -v entry="$entry" '
+        /^## \[Unreleased\]/ && !done {
+            print $0
+            print ""
+            print entry
+            done = 1
+            next
+        }
+        { print }
+    ' "$file" > "$tmp"
+    mv "$tmp" "$file"
+    info "updated CHANGELOG.md with [$version] entry"
+}
+
 release_notes() {
     local previous="$1"
     local version="$2"
     local notes_file="$3"
-    local range=""
-    local commit_count=0
-
-    if git rev-parse "v$previous" >/dev/null 2>&1; then
-        range="v$previous..HEAD"
-        commit_count=$(git rev-list --count "$range")
-    else
-        range="HEAD"
-        commit_count=$(git rev-list --count HEAD)
-    fi
+    local range
+    range="$(commit_range "$previous")"
+    local commit_count
+    commit_count="$(git rev-list --count "$range")"
 
     {
         printf '## PythonOS v%s\n\n' "$version"
@@ -79,9 +172,10 @@ release_notes() {
         printf -- '- CI: green for `%s`\n\n' "$(git rev-parse --short HEAD)"
         printf '### Statistics\n'
         printf -- '- Commits since v%s: %s\n\n' "$previous" "$commit_count"
-        printf '### Changes\n\n'
-        git log "$range" --pretty=format:'- %s' --no-merges
-        printf '\n'
+        # Use the categorized changelog body for the GitHub release notes
+        # too — keeps the release page and CHANGELOG.md in lockstep.
+        render_changelog_entry "$version" "$range" \
+            | sed '1,/^$/d'   # drop the leading "## [version] - date" line
     } > "$notes_file"
 }
 
@@ -124,8 +218,23 @@ main() {
     info "releasing $tag (previous v$previous)"
     ./scripts/validate-release.sh
 
-    info "syncing and pushing main"
+    info "syncing main before changelog edit"
     git pull --rebase origin main
+
+    # Update CHANGELOG.md with the categorized commit entry, commit the
+    # change as part of the release, then push everything together so the
+    # CI run that gates the tag covers the changelog edit too. Skipped
+    # cleanly if CHANGELOG.md isn't present.
+    local range
+    range="$(commit_range "$previous")"
+    update_changelog "$version" "$range"
+    if ! git diff --quiet -- CHANGELOG.md 2>/dev/null; then
+        info "committing CHANGELOG.md update"
+        git add CHANGELOG.md
+        git commit -m "docs: update CHANGELOG for v$version"
+    fi
+
+    info "pushing main"
     git push origin main
 
     local head_sha
