@@ -64,3 +64,5 @@ When ending a work session:
 2. Run quality gates if code changed (`make test-chipset`; `make test` when Docker/QEMU are available).
 3. Close or update mac tasks to match reality.
 4. Commit and push only when the user asks.
+
+<!-- literate-ai: See SKILL.md for project-specific agent guidance. -->

@@ -1,0 +1,13 @@
+{
+  "schema": "urn:literate-ai:schema:v2:standard-language-command-profile",
+  "target": "python",
+  "toolchain": "python",
+  "source_entrypoint": "source/main.py",
+  "generated_test_entrypoint": "source/tests/litai_test.py",
+  "artifact_layout": "tree",
+  "artifact_entrypoint": "source/main.py",
+  "bazel_output_path": "run.pyz",
+  "build_strategy": "python-tree",
+  "runtime_strategy": "python",
+  "media_type": "application/vnd.literate-ai.python-application"
+}

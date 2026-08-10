@@ -1,0 +1,4 @@
+interface:
+  display_name: "Literate AI"
+  short_description: "Build software from exact specifications"
+  default_prompt: "Use $literate-ai to plan and implement this Component from its exact specifications, Flavors, and skills."

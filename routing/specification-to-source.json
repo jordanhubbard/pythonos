@@ -1,0 +1,9 @@
+{
+  "schema": "literate-ai/generation-routing@1",
+  "routing_id": "specification-to-source-coding-cli",
+  "version": "1.0.0",
+  "group_id": "regenerative-generation",
+  "required_locality": null,
+  "fallback_allowed": false,
+  "data_egress": "source-allowed"
+}

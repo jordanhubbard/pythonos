@@ -1,0 +1,70 @@
+{
+  "schema": "urn:literate-ai:schema:v2:project-definition",
+  "project_id": "pythonos",
+  "version": "1.0.0",
+  "profile": "canonical",
+  "agent_skill": "SKILL.md",
+  "component_roots": [
+    "components"
+  ],
+  "flavor_roots": [
+    "flavors"
+  ],
+  "skill_roots": [
+    "skills"
+  ],
+  "workflow_roots": [
+    "workflows"
+  ],
+  "routing_roots": [
+    "routing"
+  ],
+  "documentation_roots": [
+    "docs"
+  ],
+  "source_intelligence": {
+    "schema": "urn:literate-ai:schema:v1:project-source-intelligence-policy",
+    "provider_id": "none",
+    "command": null,
+    "minimum_version": null,
+    "artifact_path": null,
+    "stages": {
+      "project-maintenance": "off",
+      "source-generation": "off",
+      "cache-consumption": "off",
+      "source-to-specification": "off",
+      "repository-source-admission": "off",
+      "structural-review": "off"
+    },
+    "artifact_publication": "metadata-only"
+  },
+  "source_cache": {
+    "schema": "urn:literate-ai:schema:v2:source-cache-configuration",
+    "mode": "read-write",
+    "targets": [
+      {
+        "schema": "urn:literate-ai:schema:v2:source-cache-target",
+        "target_id": "standard-local",
+        "format": "filesystem-v2",
+        "root_kind": "operator-bound",
+        "root_reference": "standard-local-source-cache"
+      },
+      {
+        "schema": "urn:literate-ai:schema:v2:source-cache-target",
+        "target_id": "project-committed",
+        "format": "filesystem-v2",
+        "root_kind": "project-relative",
+        "root_reference": "generated/committed-source-cache"
+      }
+    ],
+    "write_target_id": "standard-local",
+    "require_unique": true
+  },
+  "test_receipt": "verification/current.json",
+  "default_flavor_selectors": [
+    "+python",
+    "+docker-crossbuild",
+    "+qemu-x86_64",
+    "+macos"
+  ]
+}
