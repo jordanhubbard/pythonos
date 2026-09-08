@@ -1,31 +1,26 @@
 # BSD make stub — delegates everything to GNU make.
 #
-# This file only matters when `make` reads it instead of GNUMakefile.
-# GNU make's auto-discovery prefers `GNUmakefile` (lowercase 'm');
-# we keep `GNUMakefile` (capital M) for legacy reasons, so this stub
-# explicitly forwards every common top-level goal to it.
-#
-# Prefer gmake (Homebrew GNU make) if present; fall back to plain make
-# (which on macOS is GNU make 3.81 — old but adequate).
-GMAKE ?= $(if $(shell which gmake 2>/dev/null),gmake,make)
+# GNU make auto-discovers GNUmakefile ahead of Makefile, so this file is
+# only read by BSD make (and any make that does not understand GNUmakefile).
+# Prefer Homebrew gmake on macOS; fall back to the platform `make`.
+GMAKE ?= $(if $(shell command -v gmake 2>/dev/null),gmake,make)
 
-# Targets that the user is expected to invoke directly. Every one is
-# forwarded as `gmake -f GNUMakefile <target>` so options like
-# `make TARGET_ARCH=arm64 build` work as expected.
+# Targets the user is expected to invoke. Each is forwarded as
+# `gmake <target>` so `make TARGET_ARCH=arm64 build` still works.
 TOP_GOALS := all build build-gui run run-gui run-fb start stop restart \
              test test-gui test-chipset clean cleanall \
              docker-build help disk-image \
              bridge bridge-clean test-bridge \
              release release-major release-minor release-patch validate-release \
              x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 \
-                 test-gui-x86_64 \
-             arm64 run-arm64 stop-arm64 test-arm64 run-gui-arm64 \
-                 test-gui-arm64
+                 test-gui-x86_64 run-fb-x86_64 \
+             arm64 run-arm64 stop-arm64 test-arm64 test-arm64-gicv3 \
+                 run-gui-arm64 test-gui-arm64 run-fb-arm64
 
 .PHONY: $(TOP_GOALS)
 $(TOP_GOALS):
-	@$(GMAKE) -f GNUMakefile $@
+	@$(GMAKE) $@
 
-# Catch-all for anything not enumerated above (e.g. internal `_freeze`).
+# Catch-all for anything not enumerated above (e.g. internal `_iso`).
 .DEFAULT:
-	@$(GMAKE) -f GNUMakefile $@
+	@$(GMAKE) $@

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Keep generated ISO/ELF images under `build/` and `build-arm64/`; linker
   scripts and GRUB config live with the C sources in `src/`.
+- Name the GNU make file `GNUmakefile`, drop `.docker-image: FORCE` so
+  unchanged sources no longer rebuild the ISO on every `make`, and generate
+  C header dependencies with `-MMD`.
 
 ## [0.2.0] - 2026-09-08
 

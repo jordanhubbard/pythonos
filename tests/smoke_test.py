@@ -30,7 +30,7 @@ RECV_TIMEOUT = 15.0    # per-response timeout
 
 
 def _qemu_accel_for(target_arch: str) -> list:
-    """Match the GNUMakefile policy: hardware acceleration (HVF/KVM) when
+    """Match the GNUmakefile policy: hardware acceleration (HVF/KVM) when
     the guest matches the host architecture, plain TCG with a generic CPU
     otherwise. arm64 HVF on Apple Silicon requires GICv3 (not yet
     implemented; tracked by pythonos-h7g), so arm64 stays on TCG even

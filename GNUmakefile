@@ -19,6 +19,22 @@
 #   make stop     # kill running QEMU instance
 #   make clean    # remove build artifacts (keeps libpython cache)
 #   make cleanall # remove everything including libpython
+#
+# This file is named GNUmakefile so GNU make picks it up automatically
+# (ahead of Makefile). The Makefile at the repo root is a BSD-make stub.
+
+.DEFAULT_GOAL := all
+
+# Disable built-in suffix rules (cc -c foo.c, etc.) so only our recipes run.
+.SUFFIXES:
+MAKEFLAGS += --no-builtin-rules
+
+# Delete the target if a recipe fails halfway through writing it.
+.DELETE_ON_ERROR:
+
+# Recursively expand $2 under directory $1 (GNU make). Used for Python
+# sources so a new file in any subdirectory invalidates the ISO/ELF.
+rwildcard = $(strip $(foreach d,$(wildcard $1*),$(call rwildcard,$d/,$2)) $(wildcard $1$2))
 
 # ── Host architecture and acceleration detection ─────────────────────────────
 # `uname -m` reports the running kernel's CPU arch. Apple Silicon Macs report
@@ -96,10 +112,17 @@ endif
 endif
 
 # Internal arch label used by the x86_64 build paths below; do not change.
-ARCH       := x86_64
-ISO_OUT    := build/pythonos.iso
-DOCKER_IMG := pythonos-builder
-LIBPYTHON  := deps/cpython/libpython3.14.a
+ARCH         := x86_64
+BUILD        := build
+BUILD_ARM64  := build-arm64
+ISO_DIR      := $(BUILD)/iso
+ISO_OUT      := $(BUILD)/pythonos.iso
+ARM64_ELF    := $(BUILD_ARM64)/pythonos-arm64.elf
+KERNEL_ELF   := $(BUILD)/pythonos.elf
+GRUB_CFG     := src/boot/grub.cfg
+DOCKER_IMG   := pythonos-builder
+LIBPYTHON    := deps/cpython/libpython3.14.a
+LIBPYTHON_ARM64 := deps-arm64/cpython/libpython3.14.a
 
 ifeq ($(HOST_ARCH),arm64)
 HOST_DOCKER_ARCH := arm64
@@ -114,7 +137,7 @@ DOCKER_USER ?= $(shell id -u):$(shell id -g)
 # Persistent storage for /home and /apps (epic pythonos-ef6). One ext2 image
 # shared between x86_64 and arm64 — / stays tmpfs. Built inside the Docker
 # container via tools/build_disk.sh; see tools/Dockerfile for e2fsprogs.
-DISK_IMG     := build/disk.img
+DISK_IMG     := $(BUILD)/disk.img
 DISK_SIZE_MB ?= 64
 ARM64_DISK   := $(DISK_IMG)
 REPL_HOST_PORT ?= $(if $(PYTHONOS_HOST_PORT),$(PYTHONOS_HOST_PORT),5555)
@@ -124,35 +147,34 @@ ARM64_FILE_HOST_PORT ?= 17002
 SMP_CPUS ?= $(if $(PYTHONOS_SMP_CPUS),$(PYTHONOS_SMP_CPUS),2)
 PYTHONOS_FREE_THREADING ?= 1
 
-QEMU_FLAGS := -machine q35 $(QEMU_X86_CPU) $(QEMU_X86_ACCEL) -m 2G -smp $(SMP_CPUS) \
-              -netdev user,id=net0,hostfwd=tcp::$(REPL_HOST_PORT)-:5000,hostfwd=tcp::$(FILE_HOST_PORT)-:7000 -device virtio-net-pci,netdev=net0 \
-              -device intel-hda -device hda-duplex \
-              -no-reboot -no-shutdown \
-              -drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
-              -device virtio-blk-pci,drive=hd0 \
-              -cdrom $(ISO_OUT) -boot d -nographic -serial mon:stdio
-
-# Same flags as QEMU_FLAGS, except `-nographic -serial mon:stdio` is replaced
-# by `-display sdl -vga std -serial stdio`. `-vga std` activates QEMU's
-# bochs-VBE adapter; GRUB negotiates the framebuffer through multiboot2 (see
+# Shared x86 QEMU machine bits. Serial vs GUI only differs in the display
+# and serial flags at the end. `-vga std` activates QEMU's bochs-VBE
+# adapter; GRUB negotiates the framebuffer through multiboot2 (see
 # src/boot/boot.asm) and the kernel picks it up via parse_mb2_framebuffer().
-# Used by `make run-gui-x86_64` — never by the default `run`/`test` targets.
-QEMU_GUI_FLAGS := -machine q35 $(QEMU_X86_CPU) $(QEMU_X86_ACCEL) -m 2G -smp $(SMP_CPUS) \
+QEMU_X86_BASE := -machine q35 $(QEMU_X86_CPU) $(QEMU_X86_ACCEL) -m 2G -smp $(SMP_CPUS) \
               -netdev user,id=net0,hostfwd=tcp::$(REPL_HOST_PORT)-:5000,hostfwd=tcp::$(FILE_HOST_PORT)-:7000 -device virtio-net-pci,netdev=net0 \
               -device intel-hda -device hda-duplex \
               -no-reboot -no-shutdown \
               -drive if=none,file=$(DISK_IMG),format=raw,id=hd0 \
               -device virtio-blk-pci,drive=hd0 \
-              -cdrom $(ISO_OUT) -boot d -display $(QEMU_DISPLAY) -vga std -serial stdio
+              -cdrom $(ISO_OUT) -boot d
+QEMU_FLAGS     := $(QEMU_X86_BASE) -nographic -serial mon:stdio
+QEMU_GUI_FLAGS := $(QEMU_X86_BASE) -display $(QEMU_DISPLAY) -vga std -serial stdio
+
+# Host-side docker invocations. CURDIR is make's working directory; PWD can
+# be inherited from the environment and point somewhere else.
+# Do not pass $(MAKE) into the container — that is the host binary.
+DOCKER_RUN = docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) \
+             -v $(CURDIR):/work -w /work
 
 # ── User-facing targets ───────────────────────────────────────────────────────
 
 .PHONY: all build build-gui run run-gui start stop restart test clean cleanall \
         docker-build help disk-image \
         bridge bridge-clean test-bridge \
-        _freeze _iso _libpython FORCE \
+        _freeze _iso _iso_arm64 \
         x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 test-gui-x86_64 run-fb-x86_64 \
-        arm64 run-arm64 stop-arm64 test-arm64 test-arm64-gicv3 run-gui-arm64 run-fb-arm64 _iso_arm64 \
+        arm64 run-arm64 stop-arm64 test-arm64 test-arm64-gicv3 run-gui-arm64 run-fb-arm64 \
         run-fb test-gui test-chipset
 
 
@@ -193,7 +215,7 @@ help:
 	@echo "                            kernel pushes pixels to ramfb directly"
 	@echo ""
 	@echo "Test:"
-	@echo "  make test-chipset         Host-side chipset, arcade, and dock tests (no QEMU)"
+	@echo "  make test-chipset         Host-side chipset, arcade, dock, and layout tests (no QEMU)"
 	@echo "  make test                 Boot in QEMU, run TCP-REPL smoke tests"
 	@echo "                            (x86: 41 tests, arm64: 28 tests)"
 	@echo "  make test-gui             Run headless GUI smoke tests"
@@ -230,7 +252,7 @@ help:
 	@echo "More:"
 	@echo "  README.md             quickstart, shell + Python REPL surface"
 	@echo "  docs/gui.md           GUI subsystem (compositor, apps, sdl2, decoders)"
-	@echo "  bd ready              open development tasks"
+	@echo "  mac task list --project pythonos --state=open"
 
 # Top-level dispatch. These pick x86_64 or arm64 based on TARGET_ARCH (which
 # defaults to the host arch). Explicit per-arch targets are listed below.
@@ -267,9 +289,8 @@ restart:   stop start
 disk-image: $(DISK_IMG)
 
 $(DISK_IMG): tools/build_disk.sh .docker-image
-	@mkdir -p build
-	docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) -v $(PWD):/work -w /work $(DOCKER_IMG) \
-	    bash tools/build_disk.sh $(DISK_IMG) $(DISK_SIZE_MB)
+	@mkdir -p $(BUILD)
+	$(DOCKER_RUN) $(DOCKER_IMG) bash tools/build_disk.sh $(DISK_IMG) $(DISK_SIZE_MB)
 
 # ── pythonos_bridge (host-side companion linking SDL2) ───────────────────────
 # See tools/pythonos_bridge/main.c. The bridge is a host program — entirely
@@ -298,9 +319,9 @@ run-x86_64: $(ISO_OUT) $(DISK_IMG)
 run-fb-x86_64: $(ISO_OUT) $(DISK_IMG)
 	qemu-system-x86_64 $(QEMU_GUI_FLAGS)
 
-	# Bridge desktop mode for x86_64: supervises pythonos_bridge as a sibling
-	# process. Default transport is native guest TCP; set
-	# PYTHONOS_BRIDGE_TRANSPORT=chardev to use the older COM2 path.
+# Bridge desktop mode for x86_64: supervises pythonos_bridge as a sibling
+# process. Default transport is native guest TCP; set
+# PYTHONOS_BRIDGE_TRANSPORT=chardev to use the older COM2 path.
 run-gui-x86_64: $(ISO_OUT) $(DISK_IMG) bridge
 	QEMU_DISPLAY=$(QEMU_DISPLAY) QEMU_AUDIODEV=$(QEMU_AUDIODEV) \
 	    PYTHONOS_DISK=$(DISK_IMG) \
@@ -367,59 +388,33 @@ clean:
 cleanall: clean
 	rm -rf .docker-image deps/Python-*.tar.xz deps-arm64/Python-*.tar.xz
 
-# ── Docker image (rebuild only when Dockerfile changes) ──────────────────────
+# ── Docker image (rebuild when the Dockerfile is newer than the stamp) ───────
+# Previously this stamp depended on a FORCE target, which marked every
+# ISO/ELF out of date on every `make`. Depend on the Dockerfile instead.
 
-.docker-image: FORCE
-	@if [ ! -f $@ ] || [ "$$(cat $@)" != "$(DOCKER_IMG) $(DOCKER_PLATFORM)" ] || [ tools/Dockerfile -nt $@ ]; then \
-	    docker build --platform $(DOCKER_PLATFORM) --load -t $(DOCKER_IMG) -f tools/Dockerfile .; \
-	    printf '%s %s\n' "$(DOCKER_IMG)" "$(DOCKER_PLATFORM)" > $@; \
-	fi
+.docker-image: tools/Dockerfile
+	docker build --platform $(DOCKER_PLATFORM) --load -t $(DOCKER_IMG) -f tools/Dockerfile .
+	printf '%s %s\n' "$(DOCKER_IMG)" "$(DOCKER_PLATFORM)" > $@
 
-FORCE:
-
-docker-build: .docker-image
+# Always rebuild the image (new platform, broken stamp, Dockerfile pulled in).
+docker-build:
+	$(MAKE) -B .docker-image
 
 # ── CPython library (slow, cached — only rebuild if missing) ─────────────────
 
-$(LIBPYTHON): .docker-image
-	docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) -e PYTHONOS_FREE_THREADING=$(PYTHONOS_FREE_THREADING) -v $(PWD):/work -w /work $(DOCKER_IMG) \
-	  bash -c "./tools/setup_cpython.sh --build"
+$(LIBPYTHON): tools/setup_cpython.sh .docker-image
+	$(DOCKER_RUN) -e PYTHONOS_FREE_THREADING=$(PYTHONOS_FREE_THREADING) $(DOCKER_IMG) \
+	  ./tools/setup_cpython.sh --build
 
 # ── Source file sets ($(wildcard) is evaluated by Make, not a subshell) ──────
 
 BOOT_SRC   := $(wildcard src/boot/*.c src/boot/*.h src/boot/*.asm src/boot/*.S src/boot/*.cfg src/boot/*.ld)
 HAL_SRC    := $(wildcard src/hal/*.c  src/hal/*.h)
 LIBC_SRC   := $(wildcard src/libc/*.c src/libc/include/*.h src/libc/include/sys/*.h)
-KERNEL_PY  := $(wildcard \
-                   kernel/*.py \
-                   kernel/bridge/*.py \
-                   kernel/bus/*.py \
-                   kernel/display/*.py \
-                   kernel/drivers/*.py \
-                   kernel/drivers/block/*.py \
-                   kernel/drivers/display/*.py \
-                   kernel/drivers/input/*.py \
-                   kernel/drivers/net/*.py \
-                   kernel/fs/*.py \
-                   kernel/gui/*.py \
-                   kernel/gui/sdl2/*.py \
-                   kernel/gui/image/*.py \
-                   kernel/hal/*.py \
-                   kernel/interrupts/*.py \
-                   kernel/memory/*.py \
-                   kernel/net/*.py \
-                   kernel/sound/*.py \
-                   kernel/chipset/*.py \
-                   kernel/drivers/sound/*.py \
-                   apps/*.py \
-                   apps/demos/*.py \
-                   apps/terminal/*.py \
-                   apps/editor/*.py \
-                   apps/image_viewer/*.py \
-                   apps/files/*.py \
-                   apps/toaster/*.py)
+LINENOISE_SRC := $(wildcard src/linenoise/*.c src/linenoise/*.h)
+KERNEL_PY  := $(call rwildcard,kernel/,*.py) $(call rwildcard,apps/,*.py)
 ASYNCIO_PY := $(wildcard asyncio/*.py)
-STUBS_PY   := $(wildcard tools/stdlib_stubs/*.py tools/stdlib_stubs/ctypes/*.py)
+STUBS_PY   := $(call rwildcard,tools/stdlib_stubs/,*.py)
 EXAMPLES_SRC := $(wildcard examples/*.py examples/*.txt)
 
 # Python sources shared by both architectures
@@ -428,10 +423,9 @@ KERNEL_DEPS := $(KERNEL_PY) $(ASYNCIO_PY) $(STUBS_PY) $(EXAMPLES_SRC) tools/free
 # ── Kernel ISO (fast — skips libpython rebuild) ──────────────────────────────
 
 $(ISO_OUT): $(LIBPYTHON) \
-            $(BOOT_SRC) $(HAL_SRC) $(LIBC_SRC) $(KERNEL_DEPS) \
+            $(BOOT_SRC) $(HAL_SRC) $(LIBC_SRC) $(LINENOISE_SRC) $(KERNEL_DEPS) \
             src/linker.ld src/boot/grub.cfg .docker-image
-	docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) -v $(PWD):/work -w /work $(DOCKER_IMG) \
-	  bash -c "make -f GNUMakefile _freeze && make -f GNUMakefile _iso"
+	$(DOCKER_RUN) $(DOCKER_IMG) make _iso
 	@echo "ISO ready: $(ISO_OUT)"
 
 # ── Internal targets — called from inside Docker, not directly by users ───────
@@ -456,10 +450,9 @@ KERN_CFLAGS := $(COMMON_CFLAGS)
 ASFLAGS     := -f elf64
 LIBGCC      := $(shell $(CC) -print-libgcc-file-name 2>/dev/null || echo "")
 LDFLAGS     := -T src/linker.ld -nostdlib -z max-page-size=0x1000
-
-BUILD   := build
-ISO_DIR := build/iso
-GRUB_CFG := src/boot/grub.cfg
+# Generated next to each .o so header edits rebuild the right objects
+# inside Docker. Recursive `=` so $(@) is the current target.
+DEPFLAGS = -MMD -MP -MF $(@:.o=.d)
 
 BOOT_ASM  := src/boot/boot.asm src/boot/isr_stubs.asm \
              src/boot/kthread_switch.asm src/boot/ap_trampoline_blob.asm
@@ -478,7 +471,6 @@ HAL_OBJS  := $(patsubst src/%.c,$(BUILD)/%.c.o,$(HAL_C))
 LIBC_OBJS := $(patsubst src/%.c,$(BUILD)/%.c.o,$(LIBC_C))
 LINENOISE_OBJS := $(patsubst src/%.c,$(BUILD)/%.c.o,$(LINENOISE_C))
 
-KERNEL_ELF := $(BUILD)/pythonos.elf
 AP_TRAMPOLINE_BIN := $(BUILD)/boot/ap_trampoline.bin
 
 $(BUILD)/%.asm.o: src/%.asm
@@ -495,21 +487,21 @@ $(BUILD)/boot/ap_trampoline_blob.asm.o: src/boot/ap_trampoline_blob.asm $(AP_TRA
 
 $(BUILD)/boot/%.c.o: src/boot/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(BOOT_CFLAGS) -c $< -o $@
+	$(CC) $(BOOT_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 $(BUILD)/hal/%.c.o: src/hal/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(KERN_CFLAGS) -c $< -o $@
+	$(CC) $(KERN_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 $(BUILD)/libc/%.c.o: src/libc/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(KERN_CFLAGS) -c $< -o $@
+	$(CC) $(KERN_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 # linenoise warns -Wunused-result on the read/write return values it
 # intentionally discards; suppress to keep the kernel build warning-free.
 $(BUILD)/linenoise/%.c.o: src/linenoise/%.c
 	@mkdir -p $(dir $@)
-	$(CC) $(KERN_CFLAGS) -Wno-unused-result -Wno-unused-but-set-variable -c $< -o $@
+	$(CC) $(KERN_CFLAGS) $(DEPFLAGS) -Wno-unused-result -Wno-unused-but-set-variable -c $< -o $@
 
 ENCODINGS_SRC := deps/cpython-src/Lib/encodings
 CPYTHON_LIB   := deps/cpython-src/Lib
@@ -560,14 +552,16 @@ $(STDLIB_SHIM)/.stamp: $(CPYTHON_LIB)/enum.py $(CPYTHON_LIB)/struct.py $(CPYTHON
 	@cp tools/stdlib_stubs/sdl2.py        $(STDLIB_SHIM)/sdl2.py
 	@touch $@
 
-_freeze: $(STDLIB_SHIM)/.stamp
+$(BUILD)/frozen_kernel.c: $(KERNEL_DEPS) $(STDLIB_SHIM)/.stamp
 	@mkdir -p $(BUILD)
 	python3 tools/freeze_kernel.py kernel asyncio $(ENCODINGS_SRC) \
-	    $(STDLIB_SHIM) examples apps $(BUILD)/frozen_kernel.c
+	    $(STDLIB_SHIM) examples apps $@
+
+_freeze: $(BUILD)/frozen_kernel.c
 
 $(BUILD)/frozen_kernel.o: $(BUILD)/frozen_kernel.c
 	@mkdir -p $(BUILD)
-	$(CC) $(KERN_CFLAGS) -c $< -o $@
+	$(CC) $(KERN_CFLAGS) $(DEPFLAGS) -c $< -o $@
 
 $(KERNEL_ELF): $(BOOT_OBJS) $(HAL_OBJS) $(LIBC_OBJS) $(LINENOISE_OBJS) \
                $(BUILD)/frozen_kernel.o $(PYTHON_LIB)
@@ -581,9 +575,6 @@ _iso: $(KERNEL_ELF) $(GRUB_CFG)
 	grub-mkrescue -o $(ISO_OUT) $(ISO_DIR)
 
 # ── arm64 build support ───────────────────────────────────────────────────────
-
-ARM64_ELF        := build-arm64/pythonos-arm64.elf
-LIBPYTHON_ARM64  := deps-arm64/cpython/libpython3.14.a
 
 ARM64_SMP_CPUS ?= 2
 QEMU_ARM64_FLAGS := -machine virt $(QEMU_ARM64_CPU) $(QEMU_ARM64_ACCEL) -m 2G -smp $(ARM64_SMP_CPUS) \
@@ -621,9 +612,9 @@ run-fb-arm64: $(ARM64_ELF) $(ARM64_DISK)
 	    -device virtio-blk-device,drive=hd0 \
 	    -kernel $(ARM64_ELF)
 
-	# Bridge desktop mode for arm64: supervises pythonos_bridge as a sibling
-	# process. Default transport is native guest TCP; set
-	# PYTHONOS_BRIDGE_TRANSPORT=chardev to use the older virtconsole path.
+# Bridge desktop mode for arm64: supervises pythonos_bridge as a sibling
+# process. Default transport is native guest TCP; set
+# PYTHONOS_BRIDGE_TRANSPORT=chardev to use the older virtconsole path.
 run-gui-arm64: $(ARM64_ELF) $(ARM64_DISK) bridge
 	PYTHONOS_GUI_ARCH=arm64 PYTHONOS_ARM64_DISK=$(ARM64_DISK) \
 	    PYTHONOS_DISK=$(ARM64_DISK) \
@@ -647,15 +638,17 @@ test-arm64-gicv3: $(ARM64_ELF) $(ARM64_DISK)
 # by pythonos-hyg). Override with PYTHONOS_ARM64_FREE_THREADING=1 if you
 # want to chase the upstream bug.
 PYTHONOS_ARM64_FREE_THREADING ?= 0
-$(LIBPYTHON_ARM64): .docker-image
-	docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) -e PYTHONOS_FREE_THREADING=$(PYTHONOS_ARM64_FREE_THREADING) -v $(PWD):/work -w /work $(DOCKER_IMG) \
-	  bash -c "./tools/setup_cpython.sh --arch=arm64 --build"
+$(LIBPYTHON_ARM64): tools/setup_cpython.sh .docker-image
+	$(DOCKER_RUN) -e PYTHONOS_FREE_THREADING=$(PYTHONOS_ARM64_FREE_THREADING) $(DOCKER_IMG) \
+	  ./tools/setup_cpython.sh --arch=arm64 --build
 
 $(ARM64_ELF): $(LIBPYTHON_ARM64) \
-              $(BOOT_SRC) $(HAL_SRC) $(LIBC_SRC) $(KERNEL_DEPS) \
+              $(BOOT_SRC) $(HAL_SRC) $(LIBC_SRC) $(LINENOISE_SRC) $(KERNEL_DEPS) \
               src/linker_arm64.ld .docker-image
-	docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) -v $(PWD):/work -w /work $(DOCKER_IMG) \
-	  bash -c "make -f GNUMakefile CPYTHON_LIB=deps-arm64/cpython-src/Lib ENCODINGS_SRC=deps-arm64/cpython-src/Lib/encodings _freeze && make -f GNUMakefile _iso_arm64"
+	$(DOCKER_RUN) $(DOCKER_IMG) \
+	  make CPYTHON_LIB=deps-arm64/cpython-src/Lib \
+	       ENCODINGS_SRC=deps-arm64/cpython-src/Lib/encodings \
+	       _iso_arm64
 	@echo "ARM64 ELF ready: $(ARM64_ELF)"
 
 # Internal: build arm64 ELF (called from inside Docker)
@@ -669,7 +662,6 @@ CFLAGS_ARM64 := -std=c11 -O2 -ffreestanding -fno-stack-protector -fno-pie \
                 -I src/linenoise \
                 -I deps-arm64/cpython/Include -I deps-arm64/cpython
 
-BUILD_ARM64 := build-arm64
 LIBGCC_ARM64 := $(shell $(CC_ARM64) -print-libgcc-file-name 2>/dev/null || echo "")
 
 BOOT_ARM64_S  := src/boot/boot_arm64.S
@@ -690,27 +682,34 @@ $(BUILD_ARM64)/boot/boot_arm64.S.o: src/boot/boot_arm64.S
 
 $(BUILD_ARM64)/boot/%.c.o: src/boot/%.c
 	@mkdir -p $(dir $@)
-	$(CC_ARM64) $(CFLAGS_ARM64) -c $< -o $@
+	$(CC_ARM64) $(CFLAGS_ARM64) $(DEPFLAGS) -c $< -o $@
 
 $(BUILD_ARM64)/hal/%.c.o: src/hal/%.c
 	@mkdir -p $(dir $@)
-	$(CC_ARM64) $(CFLAGS_ARM64) -c $< -o $@
+	$(CC_ARM64) $(CFLAGS_ARM64) $(DEPFLAGS) -c $< -o $@
 
 $(BUILD_ARM64)/libc/%.c.o: src/libc/%.c
 	@mkdir -p $(dir $@)
-	$(CC_ARM64) $(CFLAGS_ARM64) -c $< -o $@
+	$(CC_ARM64) $(CFLAGS_ARM64) $(DEPFLAGS) -c $< -o $@
 
 $(BUILD_ARM64)/linenoise/%.c.o: src/linenoise/%.c
 	@mkdir -p $(dir $@)
-	$(CC_ARM64) $(CFLAGS_ARM64) -Wno-unused-result -Wno-unused-but-set-variable -c $< -o $@
+	$(CC_ARM64) $(CFLAGS_ARM64) $(DEPFLAGS) -Wno-unused-result -Wno-unused-but-set-variable -c $< -o $@
 
 $(BUILD_ARM64)/frozen_kernel.o: $(BUILD)/frozen_kernel.c
 	@mkdir -p $(BUILD_ARM64)
-	$(CC_ARM64) $(CFLAGS_ARM64) -c $< -o $@
+	$(CC_ARM64) $(CFLAGS_ARM64) $(DEPFLAGS) -c $< -o $@
 
 _iso_arm64: $(BOOT_ARM64_OBJS) $(HAL_ARM64_OBJS) $(LIBC_ARM64_OBJS) \
             $(LINENOISE_ARM64_OBJS) \
-            $(BUILD_ARM64)/frozen_kernel.o deps-arm64/cpython/libpython3.14.a
+            $(BUILD_ARM64)/frozen_kernel.o $(LIBPYTHON_ARM64)
 	@mkdir -p $(BUILD_ARM64)
 	$(LD_ARM64) -T src/linker_arm64.ld -nostdlib -o $(ARM64_ELF) $^ $(LIBGCC_ARM64)
 	@echo "ARM64 ELF: $(ARM64_ELF)"
+
+# Compiler-generated header dependencies (missing files are ignored).
+-include $(BOOT_OBJS:.o=.d) $(HAL_OBJS:.o=.d) $(LIBC_OBJS:.o=.d) \
+         $(LINENOISE_OBJS:.o=.d) $(BUILD)/frozen_kernel.d \
+         $(BOOT_ARM64_OBJS:.o=.d) $(HAL_ARM64_OBJS:.o=.d) \
+         $(LIBC_ARM64_OBJS:.o=.d) $(LINENOISE_ARM64_OBJS:.o=.d) \
+         $(BUILD_ARM64)/frozen_kernel.d

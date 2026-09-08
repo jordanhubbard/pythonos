@@ -13,9 +13,9 @@ toolchain:
   minimum_versions:
     git: "2.38"
 bootstrap:
-  command: test -f GNUMakefile
+  command: test -f GNUmakefile
   creates:
-    - GNUMakefile
+    - GNUmakefile
 test:
   command: make test-chipset
 evidence:

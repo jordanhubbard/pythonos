@@ -8,6 +8,10 @@
 CC      ?= cc
 PREFIX  ?= /usr/local
 
+.DEFAULT_GOAL := all
+.SUFFIXES:
+.DELETE_ON_ERROR:
+
 CFLAGS  ?= -O2 -g -Wall -Wextra -Wno-unused-parameter -std=c11
 CFLAGS  += -D_DEFAULT_SOURCE
 CFLAGS  += $(shell pkg-config --cflags sdl2)
@@ -20,6 +24,7 @@ LDLIBS  += $(shell pkg-config --libs SDL2_ttf)
 
 SRCS := main.c vendor/cJSON.c
 OBJS := $(SRCS:.c=.o)
+DEPS := $(OBJS:.o=.d)
 BIN  := pythonos_bridge
 
 .PHONY: all clean install selftest
@@ -30,14 +35,16 @@ $(BIN): $(OBJS)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
 %.o: %.c
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CFLAGS) -MMD -MP -c -o $@ $<
+
+-include $(DEPS)
 
 # Quick smoke check — opens a window for ~2 seconds, no JSON involved.
 selftest: $(BIN)
 	./$(BIN) --selftest
 
 clean:
-	rm -f $(OBJS) $(BIN)
+	rm -f $(OBJS) $(DEPS) $(BIN)
 
 install: $(BIN)
 	install -d $(DESTDIR)$(PREFIX)/bin
