@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-08
+
+### Added
+- Add a software chipset display and arcade LoadView games.
+
+### Other
+- Dockerfile: pin grub-pc-bin 2.06-13+deb12u2
+- Switch task tracking from beads to mac.
+- Compositor chrome: TTF window titles, close-box ×, dock labels
+
+
 ## [0.1.2] - 2026-05-05
 
 ### Other
