@@ -152,5 +152,5 @@ registry.register(
     description="Pac-Maze — pellets, walls, four ghosts",
     entry=main,
     icon_factory=pacmaze_icon,
-    category="demo",
+    category="game",
 )

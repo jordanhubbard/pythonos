@@ -18,10 +18,11 @@ class AppInfo:
     # dock calls it lazily once the bridge is up. None falls back to
     # a generated colored square with the app name.
     icon_factory:  Callable[[], object] | None = None
-    # "app"  — full apps. Surfaced in the dock and the System > Apps menu.
-    # "demo" — graphics/audio demos. Surfaced only in the System > Demos
-    #          menu (not the dock), matching the macOS dock convention
-    #          where demos / sample apps live in a separate launcher.
+    # "app"  — full apps. Pinned in the dock and listed under System > Apps.
+    # "demo" — graphics/audio demos. Desktop context menu + System > Demos
+    #          (not pinned in the dock). A running demo appears in the dock
+    #          until its last window closes, matching macOS unpinned apps.
+    # "game" — arcade titles. Desktop context menu + System > Games.
     category:      str = "app"
     # Per-app menubar declarations — each entry is a kernel.gui.menubar.Menu.
     # The compositor appends these to the system menubar when this app

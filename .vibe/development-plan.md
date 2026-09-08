@@ -17,6 +17,14 @@ entirely in Python on top of the existing framebuffer and mixer.
 - **Task tracking (2026-09-08):** mac project `pythonos` is the
   authoritative ledger (`mac task`). Open beads were imported as mac
   tasks and then closed in beads. Do not use `bd` for new work.
+- **Dock (2026-09-08, approved):** Default dock is `category="app"`
+  including toaster. Unpinned running apps appear while running and
+  leave when the launch ends and no windows remain. Keep in Dock /
+  Remove from Dock on dock-icon context-click (session-only pins).
+  Desktop wallpaper right-click / two-finger / control-click shows
+  Demos and Games. Arcade titles are `category="game"`. System → Games
+  was added so those titles stay reachable from the menu bar.
+  Tracking: `task_f9e1a49b91e740b4847f8618c1ea5254`.
 - Serial `make run` is unchanged. The desktop continues to exist, but
   as the Workbench **View** sitting on the chipset, not as a second
   painter of the framebuffer.

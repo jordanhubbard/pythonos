@@ -154,5 +154,5 @@ registry.register(
     description="Chipset sprite / copper / Paula demo",
     entry=main,
     icon_factory=bouncing_ball_icon,
-    category="demo",
+    category="game",
 )

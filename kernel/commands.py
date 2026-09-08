@@ -368,6 +368,7 @@ async def pythonos_gui(argv: list[str], cwd: str, write) -> None:
     import apps.toaster                      # noqa: F401
     from apps import registry
     from kernel.gui.compositor import compositor
+    from kernel.gui.desktop import seed_desktop
 
     apps_list = registry.list_apps()
     if not apps_list:
@@ -391,9 +392,14 @@ async def pythonos_gui(argv: list[str], cwd: str, write) -> None:
         start_for_gui()
     except Exception as e:
         _line(write, f"pythonos_gui: chipset start skipped: {e}")
-    compositor.start()
     try:
-        await target.entry()
+        seed_desktop(compositor, registry)
+    except Exception as e:
+        _line(write, f"pythonos_gui: desktop seed skipped: {e}")
+    compositor.start()
+    compositor._dock.ensure(target.name, target.entry, target.icon_factory)
+    try:
+        await compositor._launch_dock_app(target.name, target.entry)
     except Exception as e:
         _line(write, f"pythonos_gui: {target.name} crashed: {e}")
     _line(write, "pythonos_gui: app exited; back at REPL")

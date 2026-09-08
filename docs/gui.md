@@ -16,6 +16,7 @@ Inside the compositor:
 
 - `Tab` / `Shift-Tab` cycle focus between windows.
 - Click on a window's title bar to drag it; click in the body to focus + raise it.
+- Two-finger click, right-click, or control-click on empty wallpaper opens a **Demos** / **Games** launch menu. The same gesture on a dock icon offers **Keep in Dock** / **Remove from Dock**.
 - `ESC` typically closes the focused app and returns to the REPL.
 
 ## Architecture
@@ -111,6 +112,7 @@ The kernel uses `load_bytes` (not file paths) because libc's `open()` returns EN
 - **`CompositorWindow(title, x, y, w, h, chrome=True)`** — every app instantiates one; the surface field is an `SDL_Surface` the app draws into.
 - **`compositor.add_window(win)`** registers the window; **`compositor.start()`** spawns the draw loop (~30 fps) and the input-routing task.
 - **Tab / Shift-Tab** cycle focus globally; mouse-button-down on a title bar starts a drag; click in a window's body focuses + raises it.
+- The dock shows pinned bundled apps. Running demos/games appear there until they quit; right-click a dock icon to Keep in Dock or Remove from Dock. Right-click empty wallpaper for Demos and Games.
 - Rendering is whole-screen each frame when any window is dirty (a v0 simplification; per-window damage rects are a planned optimisation).
 
 Color theme: desktop background `0x202840`, focused-window chrome `0x224488`, unfocused chrome `0x303030`.
@@ -144,7 +146,7 @@ The simplest demo is around 60 lines and exercises every half of the bridge. Use
 2. Paint to `win.surface` using `SDL_FillRect`, `SDL_BlitSurface`, `surface.draw_text`, or your own bitmap glyph code (see `clock.py`). Set `win.dirty = True` after any change.
 3. Receive events by setting an event handler: `win.set_event_handler(callable)`. The handler runs synchronously inside the compositor's input-routing task — keep it cheap, and use the `state` dict pattern to communicate with the main coroutine.
 4. The main coroutine awaits `asyncio.sleep(1.0 / fps)` between frames. Bail out when `state["closed"]` or `win._closed`.
-5. Register: `registry.register(name=, description=, entry=main, icon_factory=, category=)`. `category="demo"` puts it in the System → Demos menu only; the default `"app"` adds it to the dock.
+5. Register: `registry.register(name=, description=, entry=main, icon_factory=, category=)`. `category="app"` (default) pins the icon in the dock and lists it under System → Apps. `category="demo"` is System → Demos plus the desktop background context menu. `category="game"` is System → Games plus that same desktop menu. Demos and games are not pinned; they appear in the dock only while running, unless the user chooses **Keep in Dock**.
 6. Add a line `from apps.demos import yourdemo` to `apps/demos/__init__.py` so the import-time `register()` fires.
 
 `apps/_icons.py` has `_new_icon`, `_border`, and per-app icon factories — copy and modify one for your dock icon.

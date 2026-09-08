@@ -133,5 +133,5 @@ registry.register(
     description="Raiders — Galaxian-style formation and dive",
     entry=main,
     icon_factory=raiders_icon,
-    category="demo",
+    category="game",
 )

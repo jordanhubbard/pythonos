@@ -193,7 +193,7 @@ help:
 	@echo "                            kernel pushes pixels to ramfb directly"
 	@echo ""
 	@echo "Test:"
-	@echo "  make test-chipset         Host-side chipset + arcade tests (no QEMU)"
+	@echo "  make test-chipset         Host-side chipset, arcade, and dock tests (no QEMU)"
 	@echo "  make test                 Boot in QEMU, run TCP-REPL smoke tests"
 	@echo "                            (x86: 41 tests, arm64: 28 tests)"
 	@echo "  make test-gui             Run headless GUI smoke tests"
@@ -312,6 +312,7 @@ stop-x86_64:
 test-chipset:
 	python3 tests/chipset_test.py
 	python3 tests/arcade_test.py
+	python3 tests/dock_test.py
 
 test-x86_64: test-chipset $(ISO_OUT)
 	PYTHONOS_HOST_PORT=$(REPL_HOST_PORT) PYTHONOS_FILE_PORT=$(FILE_HOST_PORT) PYTHONOS_SMP_CPUS=$(SMP_CPUS) PYTHONOS_FREE_THREADING=$(PYTHONOS_FREE_THREADING) python3 tests/smoke_test.py $(ISO_OUT)

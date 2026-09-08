@@ -2,7 +2,7 @@
 
 The compositor reserves :data:`MENU_BAR_H` pixels at the top of its
 output surface for this bar. When no app has focus, the bar shows a
-*system menu* (Apple-style menus + a list of registered apps and demos).
+*system menu* (PythonOS / Apps / Demos / Games).
 When an app does have focus, its declared menus are appended after the
 system menu, replacing nothing — the system menu always shows.
 
@@ -438,3 +438,36 @@ class MenuBar:
             self.close()
             return True
         return False
+
+    def paint_popup(self, surface, popup) -> None:
+        """Paint a :class:`kernel.gui.dock.Popup` using the dropdown palette.
+
+        Hit-testing stays on the popup's own rects so TTF vs bitmap
+        metrics cannot desync clicks from rows.
+        """
+        if not getattr(popup, "is_open", False) or popup.anchor is None:
+            return
+        x, y, w, h = popup.anchor
+        surface._fill_rect(x + 2, y + 2, w, h, 0x000000)
+        surface._fill_rect(x, y, w, h, DROPDOWN_BG)
+        surface._fill_rect(x, y, w, 1, DROPDOWN_BORDER)
+        surface._fill_rect(x, y + h - 1, w, 1, DROPDOWN_BORDER)
+        surface._fill_rect(x, y, 1, h, DROPDOWN_BORDER)
+        surface._fill_rect(x + w - 1, y, 1, h, DROPDOWN_BORDER)
+        for i, it in enumerate(popup.items):
+            if i >= len(popup.item_rects):
+                break
+            ix, iy, iw, ih = popup.item_rects[i]
+            if it.separator:
+                surface._fill_rect(ix + 4, iy + ih // 2, iw - 8, 1, SEPARATOR_FG)
+                continue
+            if i == popup.hot_index and it.enabled:
+                surface._fill_rect(ix + 1, iy, iw - 2, ih, DROPDOWN_HOT_BG)
+                fg, bg = DROPDOWN_HOT_FG, DROPDOWN_HOT_BG
+            else:
+                fg = DROPDOWN_FG if it.enabled else DISABLED_FG
+                bg = DROPDOWN_BG
+            _tw, th = self._measure_text(it.label)
+            self._draw_text(surface, ix + DROPDOWN_PAD_X,
+                             iy + max(0, (ih - th) // 2),
+                             it.label, fg, bg)

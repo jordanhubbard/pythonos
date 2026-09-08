@@ -2,7 +2,7 @@
 
 A bare-metal operating system where CPython 3.14 **is** the kernel — not a program running on an OS, but the OS itself. Python owns the machine from interrupt handlers to the interactive shell. Runs on x86_64 and arm64 (QEMU `virt`).
 
-Boots directly to a `>>>` prompt on the serial console. The interactive prompt is a real Python REPL — define functions and classes, `import` files written to `/examples` or `/home`, recall history with up-arrow (persisted across reboots on the ext2 mount). An opt-in **GUI desktop** with a stacking compositor, PySDL2-compatible Python API, PNG/JPEG decoders, audio mixer, a macOS-style menu bar, a polished desktop background, and a dock with seven built-in apps (terminal, editor, file browser, image viewer, system monitor, about, clock) plus seven demos (bouncing_ball, audio_tone, starfield, rainfall, plasma, paint, life) is one make target away — see **GUI Mode** below.
+Boots directly to a `>>>` prompt on the serial console. The interactive prompt is a real Python REPL — define functions and classes, `import` files written to `/examples` or `/home`, recall history with up-arrow (persisted across reboots on the ext2 mount). An opt-in **GUI desktop** with a stacking compositor, PySDL2-compatible Python API, PNG/JPEG decoders, audio mixer, a macOS-style menu bar (PythonOS / Apps / Demos / Games), a polished desktop background, and a dock of bundled apps (terminal, editor, file browser, image viewer, system monitor, about, clock, toaster) is one make target away — see **GUI Mode** below. Demos and games launch from a two-finger / control-click on the wallpaper (or the Demos and Games menus); they appear in the dock only while running, unless you Keep in Dock.
 
 Run `make help` at any time for the top-level target listing.
 
@@ -52,14 +52,14 @@ Use `Ctrl-A X` to exit QEMU.
 
 ### GUI Mode
 
-Opt-in graphical desktop with a stacking compositor, macOS-style menu bar (PythonOS / Apps / Demos), a custom desktop background image, mouse + keyboard input, audio output, and seven built-in apps + seven demos. The default `make run` and `make test` paths are unchanged — they still boot serial-only with `-nographic`.
+Opt-in graphical desktop with a stacking compositor, macOS-style menu bar (PythonOS / Apps / Demos / Games), a custom desktop background image, mouse + keyboard input, audio output, and bundled dock apps. Right-click (or two-finger / control-click) the wallpaper to launch demos and games. The default `make run` and `make test` paths are unchanged — they still boot serial-only with `-nographic`.
 
 A software **chipset** (`kernel.chipset`) owns the scan while the GUI
 clock runs: copper lists, dual playfields, eight sprites, a blitter, and
 four Paula audio channels — all pure Python. LoadView games:
 `pythonos_gui sprites`, `defender`, `pacmaze`, `raiders`, and
 `pythonos_gui toaster`. ESC returns to Workbench.
-`make test-chipset` runs the host-side chipset and arcade tests without QEMU.
+`make test-chipset` runs the host-side chipset, arcade, and dock tests without QEMU.
 
 ```bash
 # Boot to framebuffer REPL inside an SDL window;

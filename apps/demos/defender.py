@@ -179,5 +179,5 @@ registry.register(
     description="Defender — scrolling hills, landers, Paula thrust",
     entry=main,
     icon_factory=defender_icon,
-    category="demo",
+    category="game",
 )

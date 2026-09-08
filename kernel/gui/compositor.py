@@ -20,6 +20,14 @@ import kernel.log as log
 from kernel.display import framebuffer as _fb_mod
 from kernel.display.font import GLYPH_W, GLYPH_H
 from kernel.gui import input as _gui_input
+from kernel.gui.dock import (
+    Dock,
+    Popup,
+    desktop_background_hit,
+    desktop_popup_items,
+    dock_popup_items,
+    is_context_click,
+)
 from kernel.gui.sdl2.surface import SDL_Surface
 
 
@@ -137,9 +145,11 @@ class Compositor:
         self._bridge_w = 0
         self._bridge_h = 0
         self._bridge_fb_handle = 0    # window's main surface handle
-        # App dock — registered apps surface as clickable buttons at the
-        # bottom of the desktop. Each entry is (name, async_entry_fn).
-        self._dock_apps: list[tuple[str, callable, callable | None]] = []
+        # App dock — pinned bundled apps plus running unpinned transients.
+        self._dock = Dock()
+        self._popup = Popup()
+        self._mods = 0                 # tracked Ctrl for control-click
+        self._active_launches: set[str] = set()
         self._dock_hot = -1            # currently-hovered slot index or -1
         self._dock_icons: dict[str, object] = {}    # name → SDL_Surface
         self._close_hot_win: 'CompositorWindow | None' = None
@@ -158,6 +168,11 @@ class Compositor:
 
     # ── Window registry ─────────────────────────────────────────────────────
 
+    @property
+    def _dock_apps(self) -> list:
+        """Visible dock slots as (name, entry, icon_factory) tuples."""
+        return [(i.name, i.entry, i.icon_factory) for i in self._dock.visible()]
+
     def add_window(self, win: CompositorWindow) -> None:
         if not win.app_name and self._launching_app:
             win.app_name = self._launching_app
@@ -169,6 +184,8 @@ class Compositor:
         self._focus_idx = len(self._windows) - 1
         win.focused = True
         self._refresh_app_menus(win)
+        if win.app_name:
+            self._refresh_dock_running(win.app_name)
         self._bridge_needs_redraw = True
         win.dirty = True
 
@@ -176,6 +193,7 @@ class Compositor:
         if win not in self._windows:
             return
         idx = self._windows.index(win)
+        name = win.app_name
         self._windows.remove(win)
         if idx == self._focus_idx and self._windows:
             self._focus_idx = min(self._focus_idx, len(self._windows) - 1)
@@ -184,6 +202,8 @@ class Compositor:
         elif not self._windows:
             self._focus_idx = -1
             self._refresh_app_menus(None)
+        if name:
+            self._refresh_dock_running(name)
         self._bridge_needs_redraw = True
 
     def cycle_focus(self, direction: int = 1) -> None:
@@ -372,6 +392,7 @@ class Compositor:
             # uptime override (testing); otherwise we sample _hal ticks.
             self._menubar.set_right_text(uptime_text or self._uptime_str())
             self._menubar.render(fb_surf, self._bridge_w)
+            self._menubar.paint_popup(fb_surf, self._popup)
             _br.call("display.present", {})
         except BridgeError as e:
             log.warn(f"compositor: bridge frame failed ({e}); "
@@ -527,29 +548,52 @@ class Compositor:
 
     def register_dock_app(self, name: str, entry,
                             icon_factory=None) -> None:
-        """Add an app to the dock. `entry` is an awaitable callable;
+        """Pin an app to the dock. `entry` is an awaitable callable;
         `icon_factory` is an optional zero-arg function that returns
         a 48x48 SDL_Surface."""
-        for entry_tuple in self._dock_apps:
-            if entry_tuple[0] == name:
-                return
-        self._dock_apps.append((name, entry, icon_factory))
+        self._dock.pin(name, entry, icon_factory)
+
+    def _refresh_dock_running(self, name: str) -> None:
+        launching = name in self._active_launches
+        has_win = any(w.app_name == name for w in self._windows)
+        self._dock.set_running(name, launching or has_win)
+        n = len(self._dock_apps)
+        if self._dock_hot >= n:
+            self._dock_hot = -1
+        self._bridge_needs_redraw = True
+
+    def _window_rects(self) -> list:
+        rects = []
+        for win in self._windows:
+            h = win.h + (TITLE_BAR_H if win.chrome else 0)
+            rects.append((win.x, win.y, win.w, h))
+        return rects
+
+    def _mark_chrome_dirty(self) -> None:
+        if self._windows:
+            self._windows[-1].dirty = True
+        self._bridge_needs_redraw = True
 
     async def _launch_dock_app(self, name: str, entry) -> None:
         # Stamp newly-created windows with the app name so the menu bar
         # can pick up registered per-app menus on focus.
         prev = self._launching_app
         self._launching_app = name
+        self._active_launches.add(name)
+        self._refresh_dock_running(name)
         try:
             await entry()
         except Exception as e:
             log.warn(f"dock: {name} crashed: {e}")
         finally:
             self._launching_app = prev
+            self._active_launches.discard(name)
+            self._refresh_dock_running(name)
 
     def launch_app(self, name: str, *args) -> None:
         """Spawn an app by registry name. Apps inside the desktop call
-        this to open another app (e.g. files browser → editor)."""
+        this to open another app (e.g. files browser → editor). Unpinned
+        apps appear in the dock while they run."""
         from apps import registry
         info = registry.get(name)
         if info is None:
@@ -559,6 +603,7 @@ class Compositor:
             loop = asyncio.get_event_loop()
         except RuntimeError:
             return
+        self._dock.ensure(name, info.entry, info.icon_factory)
         loop.create_task(self._launch_dock_app(name,
                                                 lambda: info.entry(*args)))
 
@@ -646,6 +691,7 @@ class Compositor:
         try:
             self._menubar.set_right_text(self._uptime_str())
             self._menubar.render(back, back.width)
+            self._menubar.paint_popup(back, self._popup)
         finally:
             self._menubar._font_state = font_state
         if chipset_mod is not None and chipset_mod.is_running:
@@ -692,12 +738,57 @@ class Compositor:
 
     # ── Event routing ───────────────────────────────────────────────────────
 
+    def _handle_context_click(self, x: int, y: int) -> bool:
+        """Open a dock-icon or desktop launch menu. Returns True if a
+        menu was shown (the click is consumed)."""
+        self._menubar.close()
+        desk_w, desk_h = self._desktop_size()
+        slot = self._dock_slot_at(x, y)
+        if slot >= 0:
+            name = self._dock_apps[slot][0]
+            pinned = self._dock.is_pinned(name)
+
+            def keep(n=name) -> None:
+                self._dock.pin(n)
+                self._mark_chrome_dirty()
+
+            def remove(n=name) -> None:
+                self._dock.unpin(n)
+                nvis = len(self._dock_apps)
+                if self._dock_hot >= nvis:
+                    self._dock_hot = -1
+                self._mark_chrome_dirty()
+
+            items = dock_popup_items(pinned, on_keep=keep, on_remove=remove)
+            self._popup.show(x, y, items, desk_w)
+            self._mark_chrome_dirty()
+            return True
+        if desktop_background_hit(x, y, desk_w, desk_h,
+                                  window_rects=self._window_rects()):
+            from apps import registry
+            items = desktop_popup_items(registry.list_apps(),
+                                        launch=self.launch_app)
+            self._popup.show(x, y, items, desk_w)
+            self._mark_chrome_dirty()
+            return True
+        return False
+
     def _route_event(self, ev) -> None:
         # Tab / Shift-Tab cycles focus globally
         if ev.kind == _gui_input.KEY_DOWN and ev.code == _gui_input.KEY_TAB:
             direction = -1 if (ev.mods & _gui_input.MOD_SHIFT) else 1
             self.cycle_focus(direction)
             return
+
+        # Track Ctrl so control-click works even if mouse events omit mods.
+        # Event-kind KEY_DOWN/KEY_UP names are overwritten by arrow codes
+        # later in kernel.gui.input (1 / 2 remain the kind values).
+        if ev.kind in (1, 2) and ev.code in (_gui_input.KEY_LCTRL,
+                                              _gui_input.KEY_RCTRL):
+            if ev.kind == 1:
+                self._mods |= _gui_input.MOD_CTRL
+            else:
+                self._mods &= ~_gui_input.MOD_CTRL
 
         try:
             from kernel.chipset import chipset as _cs
@@ -711,28 +802,43 @@ class Compositor:
         except Exception:
             pass
 
+        if ev.kind == _gui_input.MOUSE_MOVE and self._popup.is_open:
+            if self._popup.on_move(ev.x, ev.y):
+                self._mark_chrome_dirty()
+            return
+        if ev.kind == _gui_input.MOUSE_DOWN and self._popup.is_open:
+            self._popup.click(ev.x, ev.y)
+            self._mark_chrome_dirty()
+            return
+
         # Menu bar gets first crack at clicks (and at moves while a
         # dropdown is open, so the hover highlight tracks the cursor).
         if ev.kind == _gui_input.MOUSE_MOVE and self._menubar.is_open:
             if self._menubar.on_mouse_move(ev.x, ev.y):
-                if self._windows:
-                    self._windows[-1].dirty = True
-                self._bridge_needs_redraw = True
+                self._mark_chrome_dirty()
                 return
         if ev.kind == _gui_input.MOUSE_DOWN and ev.code == 1:
             if self._menubar.on_mouse_down(ev.x, ev.y):
-                if self._windows:
-                    self._windows[-1].dirty = True
-                self._bridge_needs_redraw = True
+                self._popup.hide()
+                self._mark_chrome_dirty()
                 return
+
+        if ev.kind == _gui_input.MOUSE_DOWN:
+            mods = ev.mods | self._mods
+            if is_context_click(ev.code, mods):
+                if self._handle_context_click(ev.x, ev.y):
+                    return
 
         # Mouse-button-down: dock click → focus → maybe-start-drag / close
         if ev.kind == _gui_input.MOUSE_DOWN and ev.code == 1:  # left button
             slot = self._dock_slot_at(ev.x, ev.y)
             if slot >= 0:
                 name, entry, _icon = self._dock_apps[slot]
+                if entry is None:
+                    return
                 log.info(f"dock: launching {name}")
-                asyncio.get_event_loop().create_task(self._launch_dock_app(name, entry))
+                asyncio.get_event_loop().create_task(
+                    self._launch_dock_app(name, entry))
                 return
             win = self._window_at(ev.x, ev.y)
             if win != None:
