@@ -15,7 +15,7 @@ Asserts:
     (lifecycle, identity, tss, lock, capacity, attr).
 
 Usage:
-    python3 tests/smoke_test_arm64.py [path/to/pythonos-arm64.elf]
+    python3 tests/smoke_test_arm64.py [path/to/build-arm64/pythonos-arm64.elf]
 """
 
 import os
@@ -25,7 +25,7 @@ import subprocess
 import sys
 import time
 
-ELF = sys.argv[1] if len(sys.argv) > 1 else "pythonos-arm64.elf"
+ELF = sys.argv[1] if len(sys.argv) > 1 else "build-arm64/pythonos-arm64.elf"
 DISK = (os.environ.get("PYTHONOS_DISK")
         or os.environ.get("PYTHONOS_ARM64_DISK")
         or "build/disk.img")

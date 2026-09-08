@@ -345,7 +345,7 @@ def _wait_proc(proc: subprocess.Popen) -> int:
 
 
 def main() -> int:
-    image = sys.argv[1] if len(sys.argv) > 1 else "pythonos.iso"
+    image = sys.argv[1] if len(sys.argv) > 1 else "build/pythonos.iso"
     arch = os.environ.get("PYTHONOS_GUI_ARCH")
     if arch is None:
         arch = "arm64" if image.endswith(".elf") else "x86_64"

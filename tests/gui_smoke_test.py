@@ -30,7 +30,7 @@ from qmp_helper import (
     QemuMonitor, parse_ppm, sample_pixel, color_close,
 )
 
-ISO = sys.argv[1] if len(sys.argv) > 1 else "pythonos.iso"
+ISO = sys.argv[1] if len(sys.argv) > 1 else "build/pythonos.iso"
 PORT = int(os.environ.get("PYTHONOS_GUI_HOST_PORT", "5559"))
 BOOT_TIMEOUT = float(os.environ.get("PYTHONOS_GUI_BOOT_TIMEOUT", "30"))
 

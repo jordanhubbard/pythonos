@@ -26,7 +26,7 @@ from qmp_helper import (
 )
 
 
-ISO = sys.argv[1] if len(sys.argv) > 1 else "pythonos.iso"
+ISO = sys.argv[1] if len(sys.argv) > 1 else "build/pythonos.iso"
 PORT = int(os.environ.get("PYTHONOS_GUI_HOST_PORT", "5560"))
 MON  = "/tmp/pythonos-desktop.mon.sock"
 PPM  = "/tmp/pythonos-desktop.ppm"

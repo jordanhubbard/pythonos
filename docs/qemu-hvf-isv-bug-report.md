@@ -71,7 +71,7 @@ qemu-system-aarch64 \
   -accel hvf -cpu host \
   -machine virt,gic-version=3 \
   -m 2G -smp 2 -nographic \
-  -kernel pythonos-arm64.elf
+  -kernel build-arm64/pythonos-arm64.elf
 ```
 
 The kernel image is a small bare-metal ELF that:

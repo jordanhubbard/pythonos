@@ -19,8 +19,8 @@ import sys
 import time
 
 
-ELF  = sys.argv[1] if len(sys.argv) > 1 else "pythonos-arm64.elf"
-DISK = os.environ.get("PYTHONOS_ARM64_DISK", "disk-arm64.img")
+ELF  = sys.argv[1] if len(sys.argv) > 1 else "build-arm64/pythonos-arm64.elf"
+DISK = os.environ.get("PYTHONOS_ARM64_DISK", "build/disk.img")
 SMP_CPUS = os.environ.get("PYTHONOS_ARM64_GICV3_SMP_CPUS", "2")
 BOOT_TIMEOUT = float(os.environ.get("PYTHONOS_ARM64_GICV3_BOOT_TIMEOUT", "30"))
 

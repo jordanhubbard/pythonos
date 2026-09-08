@@ -12,7 +12,7 @@ import tempfile
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ISO = os.path.join(ROOT, "pythonos.iso")
+ISO = os.path.join(ROOT, "build", "pythonos.iso")
 HOST_PORT = 5557
 
 

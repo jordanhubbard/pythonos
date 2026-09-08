@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Keep generated ISO/ELF images under `build/` and `build-arm64/`; linker
+  scripts and GRUB config live with the C sources in `src/`.
+
 ## [0.2.0] - 2026-09-08
 
 ### Added

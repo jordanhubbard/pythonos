@@ -5,7 +5,7 @@ on port 5555 (host) → 5000 (guest), runs a handful of Python expressions,
 and verifies expected output.
 
 Usage:
-    python3 tests/smoke_test.py [path/to/pythonos.iso]
+    python3 tests/smoke_test.py [path/to/build/pythonos.iso]
 
 Exit code: 0 = all tests passed, 1 = failure.
 """
@@ -18,7 +18,7 @@ import sys
 import tempfile
 import time
 
-ISO = sys.argv[1] if len(sys.argv) > 1 else "pythonos.iso"
+ISO = sys.argv[1] if len(sys.argv) > 1 else "build/pythonos.iso"
 import platform
 
 HOST_PORT = int(os.environ.get("PYTHONOS_HOST_PORT", "5555"))

@@ -18,7 +18,7 @@ Run `make help` at any time for the top-level target listing.
 
 ```bash
 make docker-build   # build the Docker cross-compilation image once
-make                # cross-compile libpython + kernel, produce pythonos.iso
+make                # cross-compile libpython + kernel, produce build/pythonos.iso
 ```
 
 ### Subsequent builds (fast — libpython is cached)
@@ -418,8 +418,13 @@ On arm64 with `make run-gui-arm64` the equivalent markers are:
 src/
   boot/         asm + C bootstrap: GDT, IDT, PIC, PIT, serial, framebuffer (x86_64)
                 boot_arm64.asm, main_arm64.c — GIC, generic timer (arm64)
+                grub.cfg — GRUB menu (ISO staging copies this into build/iso/)
   hal/          hal.c — _hal Python C extension (port I/O, MMIO, interrupts, DMA)
   libc/         freestanding libc: buddy allocator, string, stdio, POSIX stubs
+  linker.ld / linker_arm64.ld   ELF layouts for the two arches
+
+build/                   x86_64 objects, pythonos.iso, disk.img (gitignored)
+build-arm64/             arm64 objects and pythonos-arm64.elf (gitignored)
 
 kernel/
   __init__.py        boot() entry point — wires all subsystems

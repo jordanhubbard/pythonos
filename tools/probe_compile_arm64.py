@@ -12,7 +12,7 @@ import sys
 import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ELF  = os.path.join(ROOT, "pythonos-arm64.elf")
+ELF  = os.path.join(ROOT, "build-arm64", "pythonos-arm64.elf")
 DISK = os.path.join(ROOT, "build", "disk.img")
 
 

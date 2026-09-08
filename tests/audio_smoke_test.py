@@ -24,7 +24,7 @@ import sys
 import time
 
 
-ISO  = sys.argv[1] if len(sys.argv) > 1 else "pythonos.iso"
+ISO  = sys.argv[1] if len(sys.argv) > 1 else "build/pythonos.iso"
 PORT = int(os.environ.get("PYTHONOS_AUDIO_HOST_PORT", "5562"))
 WAV  = "/tmp/pythonos-audio.wav"
 LOG  = "/tmp/pythonos-audio-serial.log"

@@ -97,7 +97,7 @@ endif
 
 # Internal arch label used by the x86_64 build paths below; do not change.
 ARCH       := x86_64
-ISO_OUT    := pythonos.iso
+ISO_OUT    := build/pythonos.iso
 DOCKER_IMG := pythonos-builder
 LIBPYTHON  := deps/cpython/libpython3.14.a
 
@@ -313,6 +313,7 @@ test-chipset:
 	python3 tests/chipset_test.py
 	python3 tests/arcade_test.py
 	python3 tests/dock_test.py
+	python3 tests/layout_test.py
 
 test-x86_64: test-chipset $(ISO_OUT)
 	PYTHONOS_HOST_PORT=$(REPL_HOST_PORT) PYTHONOS_FILE_PORT=$(FILE_HOST_PORT) PYTHONOS_SMP_CPUS=$(SMP_CPUS) PYTHONOS_FREE_THREADING=$(PYTHONOS_FREE_THREADING) python3 tests/smoke_test.py $(ISO_OUT)
@@ -357,11 +358,11 @@ validate-release:
 	@./scripts/validate-release.sh
 
 clean:
-	rm -rf build $(ISO_OUT) iso/boot/pythonos.elf \
-	       build-arm64 $(ARM64_ELF) \
+	rm -rf build iso \
+	       build-arm64 \
+	       pythonos.iso pythonos-arm64.elf disk-arm64.img \
 	       deps/cpython deps/cpython-src \
-	       deps-arm64/cpython deps-arm64/cpython-src \
-	       disk-arm64.img
+	       deps-arm64/cpython deps-arm64/cpython-src
 
 cleanall: clean
 	rm -rf .docker-image deps/Python-*.tar.xz deps-arm64/Python-*.tar.xz
@@ -386,7 +387,7 @@ $(LIBPYTHON): .docker-image
 
 # ── Source file sets ($(wildcard) is evaluated by Make, not a subshell) ──────
 
-BOOT_SRC   := $(wildcard src/boot/*.c src/boot/*.h src/boot/*.asm src/boot/*.S)
+BOOT_SRC   := $(wildcard src/boot/*.c src/boot/*.h src/boot/*.asm src/boot/*.S src/boot/*.cfg src/boot/*.ld)
 HAL_SRC    := $(wildcard src/hal/*.c  src/hal/*.h)
 LIBC_SRC   := $(wildcard src/libc/*.c src/libc/include/*.h src/libc/include/sys/*.h)
 KERNEL_PY  := $(wildcard \
@@ -428,7 +429,7 @@ KERNEL_DEPS := $(KERNEL_PY) $(ASYNCIO_PY) $(STUBS_PY) $(EXAMPLES_SRC) tools/free
 
 $(ISO_OUT): $(LIBPYTHON) \
             $(BOOT_SRC) $(HAL_SRC) $(LIBC_SRC) $(KERNEL_DEPS) \
-            linker.ld .docker-image
+            src/linker.ld src/boot/grub.cfg .docker-image
 	docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) -v $(PWD):/work -w /work $(DOCKER_IMG) \
 	  bash -c "make -f GNUMakefile _freeze && make -f GNUMakefile _iso"
 	@echo "ISO ready: $(ISO_OUT)"
@@ -454,10 +455,11 @@ BOOT_CFLAGS := $(COMMON_CFLAGS) -mno-sse -mno-sse2 -mno-mmx -mno-80387
 KERN_CFLAGS := $(COMMON_CFLAGS)
 ASFLAGS     := -f elf64
 LIBGCC      := $(shell $(CC) -print-libgcc-file-name 2>/dev/null || echo "")
-LDFLAGS     := -T linker.ld -nostdlib -z max-page-size=0x1000
+LDFLAGS     := -T src/linker.ld -nostdlib -z max-page-size=0x1000
 
 BUILD   := build
-ISO_DIR := iso
+ISO_DIR := build/iso
+GRUB_CFG := src/boot/grub.cfg
 
 BOOT_ASM  := src/boot/boot.asm src/boot/isr_stubs.asm \
              src/boot/kthread_switch.asm src/boot/ap_trampoline_blob.asm
@@ -572,13 +574,15 @@ $(KERNEL_ELF): $(BOOT_OBJS) $(HAL_OBJS) $(LIBC_OBJS) $(LINENOISE_OBJS) \
 	@mkdir -p $(BUILD)
 	$(LD) $(LDFLAGS) -o $@ $^ $(LIBGCC)
 
-_iso: $(KERNEL_ELF)
+_iso: $(KERNEL_ELF) $(GRUB_CFG)
+	@mkdir -p $(ISO_DIR)/boot/grub $(dir $(ISO_OUT))
+	cp $(GRUB_CFG) $(ISO_DIR)/boot/grub/grub.cfg
 	cp $(KERNEL_ELF) $(ISO_DIR)/boot/pythonos.elf
 	grub-mkrescue -o $(ISO_OUT) $(ISO_DIR)
 
 # ── arm64 build support ───────────────────────────────────────────────────────
 
-ARM64_ELF        := pythonos-arm64.elf
+ARM64_ELF        := build-arm64/pythonos-arm64.elf
 LIBPYTHON_ARM64  := deps-arm64/cpython/libpython3.14.a
 
 ARM64_SMP_CPUS ?= 2
@@ -649,7 +653,7 @@ $(LIBPYTHON_ARM64): .docker-image
 
 $(ARM64_ELF): $(LIBPYTHON_ARM64) \
               $(BOOT_SRC) $(HAL_SRC) $(LIBC_SRC) $(KERNEL_DEPS) \
-              linker_arm64.ld .docker-image
+              src/linker_arm64.ld .docker-image
 	docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER) -v $(PWD):/work -w /work $(DOCKER_IMG) \
 	  bash -c "make -f GNUMakefile CPYTHON_LIB=deps-arm64/cpython-src/Lib ENCODINGS_SRC=deps-arm64/cpython-src/Lib/encodings _freeze && make -f GNUMakefile _iso_arm64"
 	@echo "ARM64 ELF ready: $(ARM64_ELF)"
@@ -708,5 +712,5 @@ _iso_arm64: $(BOOT_ARM64_OBJS) $(HAL_ARM64_OBJS) $(LIBC_ARM64_OBJS) \
             $(LINENOISE_ARM64_OBJS) \
             $(BUILD_ARM64)/frozen_kernel.o deps-arm64/cpython/libpython3.14.a
 	@mkdir -p $(BUILD_ARM64)
-	$(LD_ARM64) -T linker_arm64.ld -nostdlib -o $(ARM64_ELF) $^ $(LIBGCC_ARM64)
+	$(LD_ARM64) -T src/linker_arm64.ld -nostdlib -o $(ARM64_ELF) $^ $(LIBGCC_ARM64)
 	@echo "ARM64 ELF: $(ARM64_ELF)"

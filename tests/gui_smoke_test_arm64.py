@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from qmp_helper import QemuMonitor, parse_ppm
 
 
-ELF  = sys.argv[1] if len(sys.argv) > 1 else "pythonos-arm64.elf"
+ELF  = sys.argv[1] if len(sys.argv) > 1 else "build-arm64/pythonos-arm64.elf"
 DISK = (os.environ.get("PYTHONOS_DISK")
         or os.environ.get("PYTHONOS_ARM64_DISK")
         or "build/disk.img")

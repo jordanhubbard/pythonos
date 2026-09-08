@@ -1,9 +1,10 @@
-# Build artifacts
+# Build artifacts — generated images live under build/ and build-arm64/.
+# Root-level names are ignored so leftover copies from older trees stay untracked.
 build/
 build-arm64/
 pythonos.iso
 pythonos-arm64.elf
-iso/boot/pythonos.elf
+iso/
 src/hal/hal.o
 disk-arm64.img
 

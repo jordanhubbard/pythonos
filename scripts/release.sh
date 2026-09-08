@@ -263,8 +263,8 @@ main() {
     # (no local make run) still works. validate-release.sh and CI together
     # cover correctness; this is just convenience for downloaders.
     local -a assets=()
-    [ -f pythonos.iso ]        && assets+=("pythonos.iso")
-    [ -f pythonos-arm64.elf ]  && assets+=("pythonos-arm64.elf")
+    [ -f build/pythonos.iso ]       && assets+=("build/pythonos.iso#pythonos.iso")
+    [ -f build-arm64/pythonos-arm64.elf ] && assets+=("build-arm64/pythonos-arm64.elf#pythonos-arm64.elf")
     if [ "${#assets[@]}" -gt 0 ]; then
         info "attaching ${#assets[@]} artifact(s): ${assets[*]}"
         gh release create "$tag" --title "$tag" --notes-file "$notes_file" \
