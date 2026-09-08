@@ -247,6 +247,7 @@ def py_desktop(app_name: str | None = None):
         import apps.sysmon            # noqa: F401
         import apps.about             # noqa: F401
         import apps.clock             # noqa: F401
+        import apps.toaster           # noqa: F401
         from apps import registry
         # Dock holds full apps; demos live only in the menu bar so the
         # dock stays a launcher for everyday tools.
@@ -258,6 +259,11 @@ def py_desktop(app_name: str | None = None):
         _seed_system_menus(compositor, registry)
     except Exception as e:
         log.warn(f"py_desktop: app registration: {e}")
+    try:
+        from kernel.chipset import start_for_gui
+        start_for_gui()
+    except Exception as e:
+        log.warn(f"py_desktop: chipset start skipped: {e}")
     compositor.start()
     if app_name:
         try:

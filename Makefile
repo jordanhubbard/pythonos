@@ -13,7 +13,7 @@ GMAKE ?= $(if $(shell which gmake 2>/dev/null),gmake,make)
 # forwarded as `gmake -f GNUMakefile <target>` so options like
 # `make TARGET_ARCH=arm64 build` work as expected.
 TOP_GOALS := all build build-gui run run-gui run-fb start stop restart \
-             test test-gui clean cleanall \
+             test test-gui test-chipset clean cleanall \
              docker-build help disk-image \
              bridge bridge-clean test-bridge \
              release release-major release-minor release-patch validate-release \

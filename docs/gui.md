@@ -9,7 +9,7 @@ Everything below is implemented in Python on top of the same `_hal` extension an
 | Command | What it does |
 |---|---|
 | `make run-gui` | Boot **and** auto-launch the desktop with the full app dock. Host-side `tools/run_gui.py` spawns `pythonos_bridge`, brings up an SDL window, and sends the kickoff command over the TCP REPL once the kernel is up. |
-| `make run-gui PYTHONOS_GUI_APP=<name>` | Same, but pre-launch a specific app: `terminal` / `editor` / `files` / `image_viewer` / `sysmon` / `about` / `clock` for full apps; `bouncing_ball` / `audio_tone` / `starfield` / `rainfall` / `plasma` / `paint` / `life` for demos. |
+| `make run-gui PYTHONOS_GUI_APP=<name>` | Same, but pre-launch a specific app: `terminal` / `editor` / `files` / `image_viewer` / `sysmon` / `about` / `clock` / `toaster` for full apps; `bouncing_ball` / `audio_tone` / `starfield` / `rainfall` / `plasma` / `paint` / `life` / `sprites` / `defender` / `pacmaze` / `raiders` for demos. |
 | `make run-gui-x86_64` / `make run-gui-arm64` | Explicit per-arch forms. |
 
 Inside the compositor:
@@ -148,6 +148,32 @@ The simplest demo is around 60 lines and exercises every half of the bridge. Use
 6. Add a line `from apps.demos import yourdemo` to `apps/demos/__init__.py` so the import-time `register()` fires.
 
 `apps/_icons.py` has `_new_icon`, `_border`, and per-app icon factories — copy and modify one for your dock icon.
+
+## Chipset (Amiga-class display and audio)
+
+`kernel.chipset` is a software Agnus/Denise/Paula. It owns framebuffer
+presents while its clock is running. A **View** is copper + two
+playfields + eight sprites + a palette. `chipset.load_view(view)` swaps
+the active View; Workbench is one View, games and the Video Toaster are
+others.
+
+```python
+from kernel.chipset import chipset, View, MODE_INDEXED, Wait, Move
+v = View(320, 200, mode=MODE_INDEXED, scale=3)
+v.copper.instructions = [Wait(0), Move("COLOR00", 0x102040)]
+chipset.load_view(v)
+```
+
+Demos: `pythonos_gui sprites` (sprites + copper + Paula; arrows move,
+space fires), `defender` (scrolling hills + landers), `pacmaze`
+(pellets and ghosts), `raiders` (Galaxian-style formation), and
+`pythonos_gui toaster` (dual playfields + wipe). ESC
+returns to Workbench. While the chipset clock runs, the compositor
+paints Workbench playfields (windows, dock, menubar) and does not call
+`fb.present` — the raster is the only present path. Host tests:
+`make test-chipset` (no QEMU).
+
+See `docs/superpowers/specs/2026-09-08-chipset-multimedia-os-design.md`.
 
 ## Tests
 

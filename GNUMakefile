@@ -153,7 +153,7 @@ QEMU_GUI_FLAGS := -machine q35 $(QEMU_X86_CPU) $(QEMU_X86_ACCEL) -m 2G -smp $(SM
         _freeze _iso _libpython FORCE \
         x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 test-gui-x86_64 run-fb-x86_64 \
         arm64 run-arm64 stop-arm64 test-arm64 test-arm64-gicv3 run-gui-arm64 run-fb-arm64 _iso_arm64 \
-        run-fb test-gui
+        run-fb test-gui test-chipset
 
 
 # ── Help ─────────────────────────────────────────────────────────────────────
@@ -193,6 +193,7 @@ help:
 	@echo "                            kernel pushes pixels to ramfb directly"
 	@echo ""
 	@echo "Test:"
+	@echo "  make test-chipset         Host-side chipset + arcade tests (no QEMU)"
 	@echo "  make test                 Boot in QEMU, run TCP-REPL smoke tests"
 	@echo "                            (x86: 41 tests, arm64: 28 tests)"
 	@echo "  make test-gui             Run headless GUI smoke tests"
@@ -214,7 +215,7 @@ help:
 	@echo "  PYTHONOS_FREE_THREADING={0,1}  build CPython with --disable-gil (x86 default 1)"
 	@echo "  PYTHONOS_GUI_APP=<name>        which app run-gui auto-launches"
 	@echo "                                 (bouncing_ball | terminal | editor | files |"
-	@echo "                                  image_viewer | audio_tone)"
+	@echo "                                  image_viewer | audio_tone | sprites | toaster)"
 	@echo "  PYTHONOS_BRIDGE_HOST=<addr>    bridge listen address (default: 127.0.0.1)"
 	@echo "  PYTHONOS_BRIDGE_PORT=<port>    bridge TCP port (default: 17010)"
 	@echo "  PYTHONOS_BRIDGE_GUEST_PORT=<p> native guest bridge port (default: 5001)"
@@ -308,7 +309,11 @@ run-gui-x86_64: $(ISO_OUT) $(DISK_IMG) bridge
 stop-x86_64:
 	@pkill -f "[q]emu-system-x86_64.*$(ISO_OUT)" || echo "No x86_64 QEMU running."
 
-test-x86_64: $(ISO_OUT)
+test-chipset:
+	python3 tests/chipset_test.py
+	python3 tests/arcade_test.py
+
+test-x86_64: test-chipset $(ISO_OUT)
 	PYTHONOS_HOST_PORT=$(REPL_HOST_PORT) PYTHONOS_FILE_PORT=$(FILE_HOST_PORT) PYTHONOS_SMP_CPUS=$(SMP_CPUS) PYTHONOS_FREE_THREADING=$(PYTHONOS_FREE_THREADING) python3 tests/smoke_test.py $(ISO_OUT)
 
 # GUI smoke test — boots with -display none -vga std (headless GUI mode)
@@ -402,13 +407,15 @@ KERNEL_PY  := $(wildcard \
                    kernel/memory/*.py \
                    kernel/net/*.py \
                    kernel/sound/*.py \
+                   kernel/chipset/*.py \
                    kernel/drivers/sound/*.py \
                    apps/*.py \
                    apps/demos/*.py \
                    apps/terminal/*.py \
                    apps/editor/*.py \
                    apps/image_viewer/*.py \
-                   apps/files/*.py)
+                   apps/files/*.py \
+                   apps/toaster/*.py)
 ASYNCIO_PY := $(wildcard asyncio/*.py)
 STUBS_PY   := $(wildcard tools/stdlib_stubs/*.py tools/stdlib_stubs/ctypes/*.py)
 EXAMPLES_SRC := $(wildcard examples/*.py examples/*.txt)
@@ -621,7 +628,7 @@ run-gui-arm64: $(ARM64_ELF) $(ARM64_DISK) bridge
 stop-arm64:
 	@pkill -f "[q]emu-system-aarch64.*$(ARM64_ELF)" || echo "No arm64 QEMU running."
 
-test-arm64: $(ARM64_ELF) $(ARM64_DISK)
+test-arm64: test-chipset $(ARM64_ELF) $(ARM64_DISK)
 	PYTHONOS_ARM64_HOST_PORT=$(ARM64_REPL_HOST_PORT) PYTHONOS_ARM64_FILE_PORT=$(ARM64_FILE_HOST_PORT) PYTHONOS_ARM64_DISK=$(ARM64_DISK) python3 tests/smoke_test_arm64.py $(ARM64_ELF)
 
 # Boot the same kernel under TCG with -cpu cortex-a76 + gic-version=3

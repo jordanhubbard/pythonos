@@ -197,6 +197,11 @@ def main() -> int:
               "Compositor" in out,
               detail=(out.strip().splitlines()[-1] if out.strip() else ""))
 
+        out = _send(s, "type(__import__('kernel.chipset', fromlist=['chipset']).chipset).__name__", wait=2.5)
+        check("kernel.chipset.Chipset importable",
+              "Chipset" in out,
+              detail=(out.strip().splitlines()[-1] if out.strip() else ""))
+
         # 5. Pixel-level screendump verification via QEMU monitor.
         # We paint a known-color rectangle directly into the framebuffer
         # via the kernel.display.framebuffer.fb singleton, then capture

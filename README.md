@@ -54,6 +54,13 @@ Use `Ctrl-A X` to exit QEMU.
 
 Opt-in graphical desktop with a stacking compositor, macOS-style menu bar (PythonOS / Apps / Demos), a custom desktop background image, mouse + keyboard input, audio output, and seven built-in apps + seven demos. The default `make run` and `make test` paths are unchanged — they still boot serial-only with `-nographic`.
 
+A software **chipset** (`kernel.chipset`) owns the scan while the GUI
+clock runs: copper lists, dual playfields, eight sprites, a blitter, and
+four Paula audio channels — all pure Python. LoadView games:
+`pythonos_gui sprites`, `defender`, `pacmaze`, `raiders`, and
+`pythonos_gui toaster`. ESC returns to Workbench.
+`make test-chipset` runs the host-side chipset and arcade tests without QEMU.
+
 ```bash
 # Boot to framebuffer REPL inside an SDL window;
 # type `pythonos_gui` at >>> to open the compositor + an app.
@@ -68,6 +75,11 @@ PYTHONOS_GUI_APP=editor       make run-gui
 PYTHONOS_GUI_APP=files        make run-gui
 PYTHONOS_GUI_APP=image_viewer make run-gui
 PYTHONOS_GUI_APP=audio_tone   make run-gui
+PYTHONOS_GUI_APP=sprites      make run-gui
+PYTHONOS_GUI_APP=defender     make run-gui
+PYTHONOS_GUI_APP=pacmaze      make run-gui
+PYTHONOS_GUI_APP=raiders      make run-gui
+PYTHONOS_GUI_APP=toaster      make run-gui
 ```
 
 Inside the compositor:
@@ -75,7 +87,8 @@ Inside the compositor:
 - Click a window's title bar to drag it; click in the body to focus + raise.
 - **ESC** typically closes the focused app and returns to the REPL.
 
-See **`docs/gui.md`** for the full feature reference (compositor, sdl2 API surface, image decoders, audio backends, apps).
+See **`docs/gui.md`** for the full feature reference (compositor, chipset,
+sdl2 API surface, image decoders, audio backends, apps).
 
 The no-GIL build is currently supported on x86_64 QEMU with SMP enabled. It
 boots CPython with `PY_GIL_DISABLED=1`, starts AP-backed pthread workers through

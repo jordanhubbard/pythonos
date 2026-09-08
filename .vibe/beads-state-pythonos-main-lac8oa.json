@@ -1,0 +1,44 @@
+{
+  "conversationId": "pythonos-main-lac8oa",
+  "projectPath": "/Users/jkh/Src/pythonos",
+  "epicId": "pythonos-aom",
+  "phaseTasks": [
+    {
+      "phaseId": "questions",
+      "phaseName": "Questions",
+      "taskId": "pythonos-aom.1"
+    },
+    {
+      "phaseId": "research",
+      "phaseName": "Research",
+      "taskId": "pythonos-aom.2"
+    },
+    {
+      "phaseId": "design",
+      "phaseName": "Design",
+      "taskId": "pythonos-aom.3"
+    },
+    {
+      "phaseId": "structure",
+      "phaseName": "Structure",
+      "taskId": "pythonos-aom.4"
+    },
+    {
+      "phaseId": "plan",
+      "phaseName": "Plan",
+      "taskId": "pythonos-aom.5"
+    },
+    {
+      "phaseId": "implement",
+      "phaseName": "Implement",
+      "taskId": "pythonos-aom.6"
+    },
+    {
+      "phaseId": "commit",
+      "phaseName": "Commit",
+      "taskId": "pythonos-aom.7"
+    }
+  ],
+  "createdAt": "2026-09-08T06:54:20.926Z",
+  "updatedAt": "2026-09-08T06:54:20.926Z"
+}

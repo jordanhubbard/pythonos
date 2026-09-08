@@ -65,7 +65,16 @@ class CompositorWindow:
         self.w      = w
         self.h      = h
         self.chrome = chrome
-        self.surface = SDL_Surface(w, h)
+        # Chipset Workbench compose blits guest pixels onto playfields.
+        # Host-backed surfaces have pixels=None and would paint empty bodies.
+        host_backed = None
+        try:
+            from kernel.chipset import chipset as _cs
+            if _cs.is_running:
+                host_backed = False
+        except Exception:
+            host_backed = None
+        self.surface = SDL_Surface(w, h, host_backed=host_backed)
         self.dirty   = True
         self.focused = False
         self._on_event = None  # callback fn(Event) — set by app
@@ -238,7 +247,26 @@ class Compositor:
         s = win.surface
         fb.blit_buffer(s.pixels, s.w, s.h, win.x, body_y)
 
+    def _chipset_running(self) -> bool:
+        try:
+            from kernel.chipset import chipset as _cs
+            return _cs.is_running
+        except Exception:
+            return False
+
     async def _redraw(self) -> None:
+        if self._chipset_running():
+            uptime = self._uptime_str()
+            if (self._back is not None
+                    and uptime == self._bridge_last_uptime
+                    and not self._bridge_needs_redraw
+                    and not any(w.dirty for w in self._windows)
+                    and not self._menubar.is_open):
+                return
+            self._bridge_last_uptime = uptime
+            self._bridge_needs_redraw = False
+            self._redraw_local()
+            return
         if self._bridge_present:
             uptime = self._uptime_str()
             if (not self._bridge_needs_redraw
@@ -373,8 +401,16 @@ class Compositor:
             return 0
         return n * DOCK_ICON_SIZE + (n - 1) * DOCK_ICON_GAP
 
+    def _desktop_size(self) -> tuple[int, int]:
+        if self._bridge_w and self._bridge_h:
+            return self._bridge_w, self._bridge_h
+        fb = _fb_mod.fb
+        if fb is not None:
+            return fb.width, fb.height
+        return 1024, 768
+
     def _dock_first_x(self) -> int:
-        return (self._bridge_w - self._dock_total_w()) // 2
+        return (self._desktop_size()[0] - self._dock_total_w()) // 2
 
     def _draw_dock_bridge(self, fb_handle: int, fb_surf=None) -> None:
         """Paint the app dock at the bottom of the desktop window —
@@ -476,10 +512,11 @@ class Compositor:
         return cx <= x < cx + cw and cy <= y < cy + ch
 
     def _dock_slot_at(self, x: int, y: int) -> int:
-        if not self._dock_apps or not self._bridge_present:
+        if not self._dock_apps:
             return -1
-        dock_y = self._bridge_h - DOCK_H
-        if not (dock_y <= y < self._bridge_h):
+        _, desk_h = self._desktop_size()
+        dock_y = desk_h - DOCK_H
+        if not (dock_y <= y < desk_h):
             return -1
         first_x = self._dock_first_x()
         for i in range(len(self._dock_apps)):
@@ -525,8 +562,59 @@ class Compositor:
         loop.create_task(self._launch_dock_app(name,
                                                 lambda: info.entry(*args)))
 
+    def _paint_dock_local(self, back) -> None:
+        """Bitmap-font dock onto the in-guest back buffer (chipset path)."""
+        if not self._dock_apps:
+            return
+        w, h = back.width, back.height
+        dock_y = h - DOCK_H
+        back.fill_rect(0, dock_y, w, DOCK_H, DOCK_BG)
+        first_x = (w - self._dock_total_w()) // 2
+        slot_y = dock_y + (DOCK_H - DOCK_ICON_SIZE) // 2
+        for i, entry_tuple in enumerate(self._dock_apps):
+            name = entry_tuple[0]
+            slot_x = first_x + i * (DOCK_ICON_SIZE + DOCK_ICON_GAP)
+            if i == self._dock_hot:
+                back.fill_rect(slot_x - 4, slot_y - 4,
+                               DOCK_ICON_SIZE + 8, DOCK_ICON_SIZE + 8,
+                               DOCK_ICON_HOT_BG)
+            icon = self._ensure_icon(name)
+            pix = getattr(icon, "pixels", None) if icon is not None else None
+            if pix is not None:
+                back.blit_buffer(pix, icon.w, icon.h, slot_x, slot_y)
+            else:
+                back.fill_rect(slot_x, slot_y, DOCK_ICON_SIZE, DOCK_ICON_SIZE,
+                               0x303040)
+                if name:
+                    back.draw_text(slot_x + 16, slot_y + 20, name[0].upper(),
+                                   fg=DOCK_FG, bg=0x303040)
+        if self._dock_hot < 0:
+            return
+        label = self._dock_apps[self._dock_hot][0]
+        tw = len(label) * GLYPH_W
+        label_w = tw + 12
+        label_h = GLYPH_H + 6
+        label_x = (first_x
+                   + self._dock_hot * (DOCK_ICON_SIZE + DOCK_ICON_GAP)
+                   + (DOCK_ICON_SIZE - label_w) // 2)
+        label_y = dock_y - label_h - 4
+        label_x = max(4, min(w - 4 - label_w, label_x))
+        back.fill_rect(label_x, label_y, label_w, label_h, DOCK_LABEL_BG)
+        back.draw_text(label_x + 6, label_y + 3, label,
+                       fg=DOCK_LABEL_FG, bg=DOCK_LABEL_BG)
+
     def _redraw_local(self) -> None:
-        """Original in-guest compose + ramfb-MMIO present path."""
+        """In-guest compose. Presents via framebuffer unless the chipset
+        clock owns the scan — then the composed back-buffer is copied
+        into the Workbench playfield and the chipset presents."""
+        chipset_mod = None
+        try:
+            from kernel.chipset import chipset as chipset_mod
+            if chipset_mod.is_running and chipset_mod.active_view is not chipset_mod.workbench:
+                return
+        except Exception:
+            chipset_mod = None
+
         fb = _fb_mod.fb
         if fb == None:
             return
@@ -535,20 +623,37 @@ class Compositor:
             from kernel.display.framebuffer import Surface
             self._back = Surface(fb.width, fb.height)
         back = self._back
-        back.fill(self._desktop_bg)
+        if self._bg_surface is None:
+            self._load_desktop_bg()
+        bg = self._bg_surface
+        bg_pix = getattr(bg, "pixels", None) if bg is not None else None
+        if bg_pix is not None:
+            back.fill(self._desktop_bg)
+            back.blit_buffer(bg_pix, bg.w, bg.h, 0, 0)
+        else:
+            back.fill(self._desktop_bg)
         for win in self._windows:
             self._paint_chrome(win, back)
-            # Window body — only works if surface is guest-backed.
             s = win.surface
-            if getattr(s, "host_backed", False):
-                # This branch shouldn't normally hit (bridge mode is the
-                # only reason a surface goes host-backed). Skip the body
-                # rather than crashing — chrome alone is still visible.
-                pass
-            else:
-                back.blit_buffer(s.pixels, s.w, s.h, win.x,
+            pixels = getattr(s, "pixels", None)
+            if pixels is not None:
+                back.blit_buffer(pixels, s.w, s.h, win.x,
                                  win.y + (TITLE_BAR_H if win.chrome else 0))
             win.dirty = False
+        self._paint_dock_local(back)
+        font_state = self._menubar._font_state
+        self._menubar._font_state = False
+        try:
+            self._menubar.set_right_text(self._uptime_str())
+            self._menubar.render(back, back.width)
+        finally:
+            self._menubar._font_state = font_state
+        if chipset_mod is not None and chipset_mod.is_running:
+            wb = chipset_mod.workbench
+            if wb is not None and chipset_mod.active_view is wb:
+                if len(back._buf) == len(wb.pf0.pixels):
+                    wb.pf0.pixels[:] = back._buf
+            return
         fb.present(back._buf)
 
     # ── Hit-testing & focus ─────────────────────────────────────────────────
@@ -593,6 +698,18 @@ class Compositor:
             direction = -1 if (ev.mods & _gui_input.MOD_SHIFT) else 1
             self.cycle_focus(direction)
             return
+
+        try:
+            from kernel.chipset import chipset as _cs
+            if (_cs.active_view is not None
+                    and _cs.workbench is not None
+                    and _cs.active_view is not _cs.workbench):
+                cb = getattr(_cs, "on_event", None)
+                if cb is not None:
+                    cb(ev)
+                return
+        except Exception:
+            pass
 
         # Menu bar gets first crack at clicks (and at moves while a
         # dropdown is open, so the hover highlight tracks the cursor).

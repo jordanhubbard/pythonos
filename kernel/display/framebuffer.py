@@ -82,6 +82,10 @@ class Surface:
         for row in range(y1, y2):
             buf_fill32_at(self._buf, (row * self.width + x1) * 4, span, word)
 
+    def _fill_rect(self, x: int, y: int, w: int, h: int, colour: int) -> None:
+        """Alias so MenuBar.render can paint onto a local Surface."""
+        self.fill_rect(x, y, w, h, colour)
+
     def blit_buffer(self, buf, src_w: int, src_h: int,
                      dst_x: int, dst_y: int) -> None:
         """Copy a BGRX-formatted bytes-like buffer (src_w*src_h*4 bytes)
