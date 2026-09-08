@@ -31,7 +31,10 @@ deps-arm64/
 # macOS
 .DS_Store
 
-# Beads / Dolt files (added by bd init)
+# MAC local ticket mirrors (optional; hub ledger is authoritative)
+.tickets/
+
+# Beads / Dolt files (legacy; tracking moved to mac task)
 .dolt/
 *.db
 .beads-credential-key

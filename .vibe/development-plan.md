@@ -14,6 +14,9 @@ entirely in Python on top of the existing framebuffer and mixer.
 
 ## Key Decisions
 
+- **Task tracking (2026-09-08):** mac project `pythonos` is the
+  authoritative ledger (`mac task`). Open beads were imported as mac
+  tasks and then closed in beads. Do not use `bd` for new work.
 - Serial `make run` is unchanged. The desktop continues to exist, but
   as the Workbench **View** sitting on the chipset, not as a second
   painter of the framebuffer.
@@ -74,8 +77,8 @@ entirely in Python on top of the existing framebuffer and mixer.
 - Desktop goldens (`tests/goldens/x86_64/desktop.tilehashes`) hash the
   `pythonos_gui bouncing_ball` screen. Changing who paints the fb will
   require golden refresh and gui/desktop smoke updates.
-- Beads memory `desktop-os-scope`: guest is CPU-only; GPU deferred.
-  Beads memory `gui-architecture-mirror-sdl`: long-term host SDL via
+- Historical beads memory `desktop-os-scope`: guest is CPU-only; GPU deferred.
+  Historical beads memory `gui-architecture-mirror-sdl`: long-term host SDL via
   `sdl.call`. Chipset-as-display is a **guest** raster; it does not
   replace that memory for sdl2 apps, but Workbench present must not
   fight the raster for the same pixels.
@@ -86,7 +89,7 @@ a sink, not the compositor, while the chipset clock is running.
 
 ## Questions
 
-<!-- beads-phase-id: pythonos-aom.1 -->
+<!-- beads-phase-id: pythonos-aom.1 mac-task-id: task_d24ec3064917bb769b44580b2c22bc80 -->
 
 **Entrance criteria:** user request understood; existing GUI/audio
 mapped; the one architectural fork (chipset vs high-level runtime)
@@ -97,11 +100,11 @@ out-of-scope list agreed.
 
 ### Tasks
 
-*Tasks managed via `bd` CLI*
+*Tasks managed via `mac task --project pythonos`*
 
 ## Research
 
-<!-- beads-phase-id: pythonos-aom.2 -->
+<!-- beads-phase-id: pythonos-aom.2 mac-task-id: task_ce38516f1419ac3dcbe215f42c7933d2 -->
 
 **Entrance criteria:** Questions exit criteria met.
 
@@ -111,11 +114,11 @@ documented.
 
 ### Tasks
 
-*Tasks managed via `bd` CLI*
+*Tasks managed via `mac task --project pythonos`*
 
 ## Design
 
-<!-- beads-phase-id: pythonos-aom.3 -->
+<!-- beads-phase-id: pythonos-aom.3 mac-task-id: task_10a499eac9fdce631f2371e36572d0ee -->
 
 **Entrance criteria:** Research complete; personality locked.
 
@@ -124,11 +127,11 @@ specified in `docs/superpowers/specs/`.
 
 ### Tasks
 
-*Tasks managed via `bd` CLI*
+*Tasks managed via `mac task --project pythonos`*
 
 ## Structure
 
-<!-- beads-phase-id: pythonos-aom.4 -->
+<!-- beads-phase-id: pythonos-aom.4 mac-task-id: task_2d98f0ef96f210693b5debc711d2352f -->
 
 **Entrance criteria:** Design approved.
 
@@ -154,11 +157,11 @@ from `pythonos_gui` as today.
 
 ### Tasks
 
-*Tasks managed via `bd` CLI*
+*Tasks managed via `mac task --project pythonos`*
 
 ## Plan
 
-<!-- beads-phase-id: pythonos-aom.5 -->
+<!-- beads-phase-id: pythonos-aom.5 mac-task-id: task_a627b008c41baf46649ca6d64383aa9e -->
 
 **Entrance criteria:** Structure approved.
 
@@ -173,11 +176,11 @@ the user asks.
 
 ### Tasks
 
-*Tasks managed via `bd` CLI*
+*Tasks managed via `mac task --project pythonos`*
 
 ## Implement
 
-<!-- beads-phase-id: pythonos-aom.6 -->
+<!-- beads-phase-id: pythonos-aom.6 mac-task-id: task_9d5a9e0da67f463ee7962ee3d4a93534 -->
 
 **Entrance criteria:** Plan approved; tests exist in `tests/`.
 
@@ -193,20 +196,21 @@ Do not inflate `max_diffs`.
 
 ### Tasks
 
-*Tasks managed via `bd` CLI*
+*Tasks managed via `mac task --project pythonos`*
 
 ## Commit
 
-<!-- beads-phase-id: pythonos-aom.7 -->
+<!-- beads-phase-id: pythonos-aom.7 mac-task-id: task_22cc076958f07713c383859e843c7459 -->
 
 **Entrance criteria:** Implement exit criteria met; `make test` green.
 
 **Exit criteria:** Commits exist only after explicit user request
-(user git rule). Beads issues closed.
+(user git rule). Matching mac tasks closed.
 
 ### Tasks
 
-*Tasks managed via `bd` CLI*
+*Tasks managed via `mac task --project pythonos`*
 
 ---
-*This plan is maintained by the LLM and uses beads CLI for task management.*
+*This plan is maintained by the LLM and uses `mac task --project pythonos`
+for task management. Beads (`bd`) is frozen legacy history.*

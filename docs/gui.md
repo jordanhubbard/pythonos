@@ -200,4 +200,6 @@ Two pieces of test infrastructure are reusable on their own:
 - Indexed (palette) PNGs, progressive JPEGs, and 12-bit precision JPEGs are not decoded
 - The arm64 GUI smoke does not yet cover end-to-end mouse round-trip (no TCP REPL on arm64)
 
-These were all explicit deferrals during phased implementation; see `bd memories` and the closed `pythonos-*` issues for the rationale.
+These were all explicit deferrals during phased implementation; see
+`mac memory list --project pythonos` and closed historical `pythonos-*`
+beads (imported into mac tasks) for the rationale.

@@ -76,49 +76,41 @@ When a skill applies to the current task, use it. Key skills:
 - **PROVENANCE** — Write the project origin story chapter when provenance switches are enabled in `skills/config.yaml`
 
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
-## Beads Issue Tracker
+<!-- BEGIN MAC INTEGRATION -->
+## MAC Task Ledger
 
-This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
+This project uses **mac** (`mac task` / `mac project`) for issue tracking.
+The hub ledger is authoritative. Project name: **pythonos**.
+Do not run `bd`. See https://github.com/jordanhubbard/mac.
 
 ### Quick Reference
 
 ```bash
-bd ready              # Find available work
-bd show <id>          # View issue details
-bd update <id> --claim  # Claim work
-bd close <id>         # Complete work
+mac task list --project pythonos --state=open
+mac task list --project pythonos
+mac task show <task_id>
+mac task create "title" --project pythonos --description-file desc.txt
+mac task claim <task_id> <agent_id>
+mac task close <task_id> --reason "..."
+mac memory remember <key> "content" --project pythonos
 ```
+
+Dispatch is paused, so `mac task ready` stays empty until
+`mac project activate pythonos`.
 
 ### Rules
 
-- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
-- Run `bd prime` for detailed command reference and session close protocol
-- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+- Use `mac task` for ALL task tracking — do NOT use TodoWrite, TaskCreate, markdown TODO lists, or `bd`
+- Use `mac memory remember` for persistent knowledge — do NOT use MEMORY.md files
+- `.tickets/` is an optional gitignored local mirror; do not commit it
+- Legacy `.beads/` is frozen import history
 
 ## Session Completion
 
-**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+When ending a work session:
 
-**MANDATORY WORKFLOW:**
-
-1. **File issues for remaining work** - Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed) - Tests, linters, builds
-3. **Update issue status** - Close finished work, update in-progress items
-4. **PUSH TO REMOTE** - This is MANDATORY:
-   ```bash
-   git pull --rebase
-   bd dolt push
-   git push
-   git status  # MUST show "up to date with origin"
-   ```
-5. **Clean up** - Clear stashes, prune remote branches
-6. **Verify** - All changes committed AND pushed
-7. **Hand off** - Provide context for next session
-
-**CRITICAL RULES:**
-- Work is NOT complete until `git push` succeeds
-- NEVER stop before pushing - that leaves work stranded locally
-- NEVER say "ready to push when you are" - YOU must push
-- If push fails, resolve and retry until it succeeds
-<!-- END BEADS INTEGRATION -->
+1. File remaining work with `mac task create --project pythonos`
+2. Run quality gates if code changed (`make test-chipset`; `make test` when Docker/QEMU are available)
+3. Close or update mac tasks to match reality
+4. Commit and push only when the user asks
+<!-- END MAC INTEGRATION -->

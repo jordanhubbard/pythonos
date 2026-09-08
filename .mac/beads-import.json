@@ -1,0 +1,24 @@
+{
+  "migrated_at": "2026-09-08T16:33:00Z",
+  "project": "pythonos",
+  "note": "Open beads issues imported as mac tasks. Closed historical beads were not imported.",
+  "beads_to_mac": {
+    "pythonos-vsg": "task_7864665355175d3c380afc58d3e88481",
+    "pythonos-fup": "task_1fc9106ea69b694df13e83f5f2b7c465",
+    "pythonos-xkj": "task_2578832ed80ad6cf1add78f93e91cd6f",
+    "pythonos-aom.6.5": "task_4083b7257022ef97e454273337890d24",
+    "pythonos-aom": "task_eadc15e0f0d00ad333ade1445da6141c",
+    "pythonos-cpc": "task_c138104ac538bb5129d8567b6ff18b0a",
+    "pythonos-u07": "task_ddf03ba1bed7294111ee98c9d9146942",
+    "pythonos-va3": "task_43b02e00a17cd265e2180d716fc745c0",
+    "pythonos-aom.7": "task_22cc076958f07713c383859e843c7459",
+    "pythonos-aom.6": "task_9d5a9e0da67f463ee7962ee3d4a93534",
+    "pythonos-aom.5": "task_a627b008c41baf46649ca6d64383aa9e",
+    "pythonos-aom.4": "task_2d98f0ef96f210693b5debc711d2352f",
+    "pythonos-aom.3": "task_10a499eac9fdce631f2371e36572d0ee",
+    "pythonos-aom.2": "task_ce38516f1419ac3dcbe215f42c7933d2",
+    "pythonos-aom.1": "task_d24ec3064917bb769b44580b2c22bc80",
+    "pythonos-112": "task_fb145ce18a970922a5527aacacd35f74",
+    "pythonos-nz1": "task_55eeb02f20978914081fe635e3413687"
+  }
+}

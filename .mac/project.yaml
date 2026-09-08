@@ -1,0 +1,26 @@
+schema: mac.repository_contract.v1
+project: pythonos
+canonical_remote_url: git@github.com:jordanhubbard/pythonos.git
+default_branch: main
+platforms:
+  - darwin
+  - linux
+toolchain:
+  required_commands:
+    - python3
+    - git
+    - make
+  minimum_versions:
+    git: "2.38"
+bootstrap:
+  command: test -f GNUMakefile
+  creates:
+    - GNUMakefile
+test:
+  command: make test-chipset
+evidence:
+  required:
+    - repo.head_sha
+    - repo.dirty
+    - repo.files_changed
+    - tests
