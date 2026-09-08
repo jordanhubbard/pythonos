@@ -33,10 +33,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # in directly: grub-pc-bin is a fully self-contained payload (the
 # `/usr/lib/grub/i386-pc/*.mod` blobs that grub-mkrescue embeds), so
 # arch-mismatch on the host is fine — they're not executable host code.
-ARG GRUB_PC_BIN_VERSION=2.06-13+deb12u1
-ARG GRUB_PC_BIN_SHA256=
+ARG GRUB_PC_BIN_VERSION=2.06-13+deb12u2
+ARG GRUB_PC_BIN_SHA256=db6aced5a89f02e10e150140b4df9621196f311c26203baf8558b4c6808e1298
 RUN curl -fsSL -o /tmp/grub-pc-bin.deb \
-        "http://ftp.debian.org/debian/pool/main/g/grub2/grub-pc-bin_${GRUB_PC_BIN_VERSION}_amd64.deb" \
+        "https://deb.debian.org/debian/pool/main/g/grub2/grub-pc-bin_${GRUB_PC_BIN_VERSION}_amd64.deb" \
+    && echo "${GRUB_PC_BIN_SHA256}  /tmp/grub-pc-bin.deb" | sha256sum -c - \
     && dpkg-deb -x /tmp/grub-pc-bin.deb / \
     && rm /tmp/grub-pc-bin.deb
 
