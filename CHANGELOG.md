@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Fix macOS Docker installation and test bare make in CI
+- Make x86 GUI smoke tests wait for completed guest work under TCG, present
+  compositor Workbench frames immediately, and refresh the desktop golden for
+  the bundled background image.
 
 ### Other
 - Fall back to TCG when /dev/kvm exists but is not writable.

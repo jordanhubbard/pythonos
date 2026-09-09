@@ -4,7 +4,7 @@ End-to-end desktop smoke: boot the kernel, send `pythonos_gui
 bouncing_ball` over the TCP REPL, screendump, and verify the
 compositor-rendered desktop is visible with three signature pixels:
 
-    desktop background  (32, 40, 64)   = 0x202840
+    desktop background  (11, 17, 35)   = bundled background at (30, 30)
     title-bar chrome    (34, 68, 136)  = 0x224488 (focused)
     bouncing_ball body  (16, 24, 32)   = 0x101820
 
@@ -93,13 +93,45 @@ def main() -> int:
         s.sendall(b"pythonos_gui bouncing_ball\n")
         print("[desktop-smoke] sent: pythonos_gui bouncing_ball")
 
-        # Give the compositor a couple of 30-Hz ticks + the app's first frame.
-        time.sleep(4.0)
-
         mon = QemuMonitor(MON, connect_timeout=5)
         try:
-            mon.screendump(PPM)
-            w, h, rgb = parse_ppm(PPM)
+            # Desktop startup imports the app registry and decodes the
+            # background in the guest.  Under TCG that takes much longer than
+            # under KVM, so wait for the window's signature pixels instead of
+            # assuming a fixed four-second startup time.
+            frame_deadline = time.time() + 60.0
+            w = h = 0
+            rgb = b""
+            while time.time() < frame_deadline:
+                mon.screendump(PPM)
+                w, h, rgb = parse_ppm(PPM)
+                if w == 1024 and h == 768:
+                    title = sample_pixel(w, rgb, 80 + 160, 80 + 8)
+                    body = sample_pixel(w, rgb, 80 + 160,
+                                        80 + 22 + 100)
+                    if (color_close(title, (0x22, 0x44, 0x88), tolerance=8)
+                            and color_close(body, (0x10, 0x18, 0x20),
+                                            tolerance=8)):
+                        break
+                time.sleep(0.25)
+
+            # Preserve any shell-side startup error in the test log.  The
+            # desktop command is long-running on success, so ordinary output
+            # is otherwise intentionally left unread while screenshots run.
+            app_output = bytearray()
+            s.settimeout(0.1)
+            try:
+                while True:
+                    chunk = s.recv(8192)
+                    if not chunk:
+                        break
+                    app_output.extend(chunk)
+            except (TimeoutError, BlockingIOError):
+                pass
+            if app_output:
+                decoded = app_output.decode("utf-8", errors="replace")
+                if "Traceback" in decoded or "crashed:" in decoded:
+                    print("[desktop-smoke] guest output:\n" + decoded)
 
             passes = 0
             fails  = 0
@@ -118,7 +150,7 @@ def main() -> int:
 
             desk = sample_pixel(w, rgb, 30, 30)
             check("compositor desktop bg",
-                  color_close(desk, (0x20, 0x28, 0x40), tolerance=8),
+                  color_close(desk, (0x0B, 0x11, 0x23), tolerance=8),
                   detail=f"rgb={desk}")
 
             # Default bouncing_ball geometry: x=80, y=80, w=320, h=200, chrome on.
@@ -127,7 +159,7 @@ def main() -> int:
                   color_close(title, (0x22, 0x44, 0x88), tolerance=8),
                   detail=f"rgb={title}")
 
-            body = sample_pixel(w, rgb, 80 + 160, 80 + 16 + 100)
+            body = sample_pixel(w, rgb, 80 + 160, 80 + 22 + 100)
             check("bouncing_ball body bg",
                   color_close(body, (0x10, 0x18, 0x20), tolerance=8),
                   detail=f"rgb={body}")

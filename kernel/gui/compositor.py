@@ -699,6 +699,12 @@ class Compositor:
             if wb is not None and chipset_mod.active_view is wb:
                 if len(back._buf) == len(wb.pf0.pixels):
                     wb.pf0.pixels[:] = back._buf
+                    # A compositor redraw and the chipset clock are separate
+                    # asyncio tasks.  Present this completed Workbench frame
+                    # now instead of requiring a later chipset tick; under
+                    # slow/TCG guests both tasks can otherwise go to sleep
+                    # after their first pass with the old (blank) scanout.
+                    fb.present(back._buf)
             return
         fb.present(back._buf)
 

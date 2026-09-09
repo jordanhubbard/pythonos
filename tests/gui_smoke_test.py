@@ -19,6 +19,7 @@ for `make test`. This new test runs under `make test-gui-x86_64`.
 """
 
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -37,6 +38,7 @@ BOOT_TIMEOUT = float(os.environ.get("PYTHONOS_GUI_BOOT_TIMEOUT", "30"))
 SERIAL_LOG = "/tmp/pythonos-gui-smoke.log"
 MONITOR_SOCK = "/tmp/pythonos-gui-smoke.mon.sock"
 SCREENDUMP   = "/tmp/pythonos-gui-smoke.ppm"
+_SEND_SEQUENCE = 0
 
 
 def _qemu_cmd():
@@ -72,18 +74,34 @@ def _connect(deadline: float) -> socket.socket:
 
 
 def _send(s: socket.socket, line: str, wait: float = 2.5) -> str:
-    s.sendall((line + "\n").encode())
-    time.sleep(wait)
+    global _SEND_SEQUENCE
+    _SEND_SEQUENCE += 1
+    marker = f"__PYTHONOS_DONE_{_SEND_SEQUENCE}__"
+    # The TCP shell uses linenoise, so the next prompt can be echoed while a
+    # command is still running.  Queue a second command whose output marker is
+    # not present literally in the input stream; seeing it proves the first
+    # command completed.  Wait for the following prompt as well so no response
+    # bytes leak into the next assertion.
+    marker_expr = "+".join(f"chr({ord(ch)})" for ch in marker)
+    s.sendall((line + "\nprint(" + marker_expr + ")\n").encode())
     chunks = []
-    s.settimeout(0.4)
-    try:
-        while True:
+    deadline = time.time() + wait
+    marker_seen = False
+    while time.time() < deadline:
+        s.settimeout(min(0.4, max(0.01, deadline - time.time())))
+        try:
             data = s.recv(8192)
-            if not data:
-                break
-            chunks.append(data)
-    except (TimeoutError, BlockingIOError):
-        pass
+        except (TimeoutError, BlockingIOError):
+            continue
+        if not data:
+            break
+        chunks.append(data)
+        response = b"".join(chunks)
+        marker_pos = response.find(marker.encode())
+        if marker_pos >= 0:
+            marker_seen = True
+        if marker_seen and response.find(b">>> ", marker_pos) >= 0:
+            break
     s.settimeout(8)
     return b"".join(chunks).decode("utf-8", errors="replace")
 
@@ -256,16 +274,12 @@ def main() -> int:
                 # confirm the kernel-side pointer moved.
                 _send(s, "_gi = __import__('kernel.gui.input', fromlist=['pointer_position'])", wait=1.0)
                 out = _send(s, "_gi.pointer_position()", wait=1.5)
-                # Format like "(512, 384)"
-                start = out.rfind("(")
-                end   = out.rfind(")")
-                init_xy = None
-                if start != -1 and end != -1 and end > start:
-                    try:
-                        init_xy = tuple(int(t.strip())
-                                        for t in out[start+1:end].split(","))
-                    except ValueError:
-                        init_xy = None
+                # Format like "(512, 384)".  Match the tuple explicitly;
+                # the completion marker's echoed chr(...) expression also
+                # contains parentheses.
+                positions = re.findall(r"\((\d+)\s*,\s*(\d+)\)", out)
+                init_xy = (tuple(map(int, positions[-1]))
+                           if positions else None)
                 check("initial pointer_position() shape",
                       init_xy is not None and len(init_xy) == 2,
                       detail=str(init_xy))
@@ -304,13 +318,20 @@ def main() -> int:
                 _send(s, "_w = _c.CompositorWindow('SmokeDesk', x=200, y=150, w=320, h=200)", wait=1.5)
                 _send(s, "_c.compositor.add_window(_w)", wait=1.5)
                 _send(s, "_c.compositor.start()", wait=1.5)
-                # Give the 30Hz draw loop a couple of ticks.
-                time.sleep(1.0)
+                # The first redraw decodes the desktop PNG in the guest.  That
+                # is quick with KVM but can take tens of seconds under TCG, so
+                # synchronize on the dirty flag instead of using a host sleep.
+                out = _send(s, "_w.dirty", wait=60.0)
+                redraw_done = "False" in out
+                redraw_detail = (out.strip().splitlines()[-1]
+                                 if out.strip() else "(empty)")
+                check("compositor completed first redraw", redraw_done,
+                      detail=redraw_detail)
 
                 mon.screendump(SCREENDUMP)
                 w, h, rgb = parse_ppm(SCREENDUMP)
 
-                # Title bar runs from y=150 (chrome top) for 16 px; sample the
+                # Title bar runs from y=150 (chrome top) for 22 px; sample the
                 # middle of the bar at the window's horizontal centre.
                 title_px = sample_pixel(w, rgb, 200 + 320 // 2, 150 + 8)
                 check("compositor drew window title bar",
@@ -324,25 +345,28 @@ def main() -> int:
                       color_close(body_px, (0, 0, 0), tolerance=8),
                       detail=f"rgb={body_px}")
 
-                # Stop the compositor so we don't leak tasks into later tests.
-                _send(s, "import asyncio; asyncio.ensure_future(_c.compositor.stop())", wait=1.0)
-
                 if init_xy is not None:
                     mon.mouse_move(120, 0)
-                    time.sleep(1.2)
-                    out = _send(s, "_gi.pointer_position()", wait=1.5)
-                    s2 = out.rfind("("); e2 = out.rfind(")")
                     new_xy = None
-                    if s2 != -1 and e2 != -1 and e2 > s2:
-                        try:
-                            new_xy = tuple(int(t.strip())
-                                           for t in out[s2+1:e2].split(","))
-                        except ValueError:
-                            new_xy = None
+                    pointer_deadline = time.time() + 5.0
+                    while time.time() < pointer_deadline:
+                        out = _send(s, "_gi.pointer_position()", wait=2.0)
+                        positions = re.findall(
+                            r"\((\d+)\s*,\s*(\d+)\)", out)
+                        new_xy = (tuple(map(int, positions[-1]))
+                                  if positions else None)
+                        if (new_xy is not None
+                                and new_xy != init_xy):
+                            break
+                        time.sleep(0.1)
                     check("mouse_move moved kernel pointer",
                           new_xy is not None
                           and (new_xy[0] != init_xy[0] or new_xy[1] != init_xy[1]),
                           detail=f"{init_xy} -> {new_xy}")
+
+                # Stop only after the input assertion, and wait until the
+                # coroutine has run so later checks cannot inherit live tasks.
+                _send(s, "await _c.compositor.stop()", wait=5.0)
             finally:
                 mon.close()
 
