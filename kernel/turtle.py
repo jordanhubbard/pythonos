@@ -70,7 +70,7 @@ def _ensure_window():
     win.dirty = True
 
     def on_event(ev):
-        if ev.kind == _gui_input.KEY_DOWN and ev.code == _gui_input.KEY_ESC:
+        if ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code == _gui_input.KEY_ESC:
             close()
     win.set_event_handler(on_event)
 

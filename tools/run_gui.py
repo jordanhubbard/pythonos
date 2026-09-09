@@ -18,6 +18,7 @@ import socket
 import subprocess
 import sys
 import time
+import json
 
 
 def _macos() -> bool:
@@ -331,6 +332,56 @@ def _launch_qemu(cmd: list) -> int:
     return _wait_proc(subprocess.Popen(cmd))
 
 
+def _debug_session(image: str, arch: str, repl_port: int) -> dict | None:
+    """Create agent-debug endpoints and a durable session manifest.
+
+    This is opt-in because serial is redirected to a file in debug mode.
+    QMP is a local Unix socket and the native remote endpoint binds only to
+    loopback; no privileged debugger port is exposed to the network.
+    """
+    if not _truthy(os.environ.get("PYTHONOS_DEBUG")):
+        return None
+    build = os.path.abspath(os.environ.get("PYTHONOS_DEBUG_DIR", "build"))
+    os.makedirs(build, exist_ok=True)
+    prefix = os.path.join(build, "pythonos-debug")
+    native_port = int(os.environ.get(
+        "PYTHONOS_DEBUG_NATIVE_PORT",
+        os.environ.get("PYTHONOS_DEBUG_GDB_PORT", "12345")))
+    if not 0 < native_port < 65536:
+        raise ValueError("PYTHONOS_DEBUG_NATIVE_PORT must be a valid TCP port")
+    paths = {"native_remote": "127.0.0.1:" + str(native_port), "qmp": prefix + ".qmp.sock",
+             "serial_log": prefix + ".serial.log", "manifest": prefix + ".json"}
+    # These are fixed, generated debug artifacts under the chosen debug dir.
+    for path in (paths["qmp"], paths["serial_log"]):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+    symbols = image if arch == "arm64" else os.path.join("build", "pythonos.elf")
+    session = {
+        "version": 1, "arch": arch, "repl": {"host": "127.0.0.1", "port": repl_port},
+        "native_remote": paths["native_remote"], "qmp": paths["qmp"], "serial_log": paths["serial_log"],
+        "symbols": os.path.abspath(symbols), "image": os.path.abspath(image),
+    }
+    with open(paths["manifest"], "w", encoding="utf-8") as f:
+        json.dump(session, f, indent=2, sort_keys=True)
+        f.write("\n")
+    session["manifest"] = paths["manifest"]
+    return session
+
+
+def _add_debug_qemu_args(cmd: list, session: dict) -> None:
+    """Replace interactive serial with capture and add native control planes."""
+    serial_at = cmd.index("-serial") + 1
+    cmd[serial_at] = "file:" + session["serial_log"]
+    # QEMU names this option -gdb; its wire protocol is merely the transport
+    # used by the PythonOS native-debug adapter, not our public API.
+    cmd += ["-gdb", "tcp:" + session["native_remote"] + ",server=on,wait=off",
+            "-qmp", "unix:" + session["qmp"] + ",server=on,wait=off"]
+    if _truthy(os.environ.get("PYTHONOS_DEBUG_PAUSE")):
+        cmd.append("-S")
+
+
 def _wait_proc(proc: subprocess.Popen) -> int:
     try:
         proc.wait()
@@ -360,6 +411,7 @@ def main() -> int:
     if not os.path.exists(image):
         print(f"run-gui: {image} not found; run `make` first", file=sys.stderr)
         return 1
+    debug_session = _debug_session(image, arch, port)
 
     # Bridge mode is the normal run-gui path. Set PYTHONOS_BRIDGE=0
     # (or the old PYTHONOS_BRIDGE_SOCKET= compatibility knob to empty)
@@ -403,6 +455,9 @@ def main() -> int:
           + ("; guest auto-starts desktop via fw_cfg"
              if bridge_endpoint else "; legacy framebuffer path"),
           file=sys.stderr)
+    if debug_session:
+        print("[run-gui] debug manifest: " + debug_session["manifest"],
+              file=sys.stderr)
 
     try:
         if arch == "arm64":
@@ -410,11 +465,15 @@ def main() -> int:
                                   bridge_endpoint, gui_app,
                                   bridge_transport, listen_host,
                                   guest_bridge_port)
+            if debug_session:
+                _add_debug_qemu_args(cmd, debug_session)
             return _launch_qemu(cmd)
         cmd = _qemu_cmd_x86_64(image, port, display, audiodev,
                                bridge_endpoint, gui_app,
                                bridge_transport, listen_host,
                                guest_bridge_port)
+        if debug_session:
+            _add_debug_qemu_args(cmd, debug_session)
         return _launch_qemu(cmd)
     finally:
         if bridge_proc is not None and bridge_proc.poll() is None:

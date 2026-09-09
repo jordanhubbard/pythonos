@@ -98,6 +98,25 @@ Inside the compositor:
 See **`docs/gui.md`** for the full feature reference (compositor, chipset,
 sdl2 API surface, image decoders, audio backends, apps).
 
+### Native debug sessions
+
+For kernel, HAL, CPython, interrupt, or networking failures, start an
+agent-debug session rather than relying on the guest REPL alone:
+
+```bash
+PYTHONOS_DEBUG=1 make run-gui
+python3 tools/pythonos_debug.py serial
+python3 tools/pythonos_debug.py qmp status
+python3 tools/pythonos_debug.py native -- "bt" "info registers"
+```
+
+This creates `build/pythonos-debug.json` with loopback-only TCP REPL details,
+a native remote endpoint, a QMP control socket, symbol ELF, and a persistent serial
+log. `PYTHONOS_DEBUG_PAUSE=1` halts before execution for early-boot debugging.
+For example, repeated `net: rx error` warnings can be inspected with
+`python3 tools/pythonos_debug.py serial` even if the guest network stack or
+REPL is unavailable. See `skills/PYTHONOS_DEBUG.md` for the agent workflow.
+
 The no-GIL build is currently supported on x86_64 QEMU with SMP enabled. It
 boots CPython with `PY_GIL_DISABLED=1`, starts AP-backed pthread workers through
 `_thread`, and uses a small mmap shim that validates fixed mappings before

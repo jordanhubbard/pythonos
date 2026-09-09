@@ -355,7 +355,7 @@ class VirtioMmioInput:
         if self._ctrl:  mods |= _gui_input.MOD_CTRL
         if self._alt:   mods |= _gui_input.MOD_ALT
 
-        kind = _gui_input.KEY_DOWN if is_press else _gui_input.KEY_UP
+        kind = _gui_input.EVENT_KEY_DOWN if is_press else _gui_input.EVENT_KEY_UP
         ev = _gui_input.Event(kind=kind, code=keycode, text=ch, mods=mods)
         if _gui_input.queue != None:
             _gui_input.queue.post(ev)
@@ -402,7 +402,7 @@ class VirtioMmioInput:
         keycode = _EV_TO_KEY.get(code, _gui_input.KEY_NONE)
         if keycode == _gui_input.KEY_NONE:
             return
-        kind = _gui_input.KEY_DOWN if is_press else _gui_input.KEY_UP
+        kind = _gui_input.EVENT_KEY_DOWN if is_press else _gui_input.EVENT_KEY_UP
         mods = 0
         if self._shift: mods |= _gui_input.MOD_SHIFT
         if self._ctrl:  mods |= _gui_input.MOD_CTRL

@@ -83,7 +83,7 @@ async def main(*args, **kwargs) -> None:
     compositor.add_window(info)
 
     def on_event(ev):
-        if ev.kind == _gui_input.KEY_DOWN and ev.code == _gui_input.KEY_ESC:
+        if ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code == _gui_input.KEY_ESC:
             state["closed"] = True
         elif ev.kind == _gui_input.MOUSE_DOWN:
             state["advance"] = True
@@ -101,7 +101,12 @@ async def main(*args, **kwargs) -> None:
                                     fg=0x808898, bg=0x101820)
             info.dirty = True
 
+            # The turtle marker is intentionally rendered as simple line
+            # segments.  Keeping it visible for every micro-step leaves a
+            # distracting jagged trail over the finished figure.
+            t.hide()
             _DRAWS[pat]()
+            t.show()
 
             # Wait for click or close.
             state["advance"] = False

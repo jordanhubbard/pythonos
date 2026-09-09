@@ -163,7 +163,7 @@ async def main(*args, **kwargs) -> None:
                 last_click[0] = now
                 last_click[1] = idx
             return
-        if ev.kind != _gui_input.KEY_DOWN:
+        if ev.kind != _gui_input.EVENT_KEY_DOWN:
             return
         if ev.code == _gui_input.KEY_ESC:
             closed = True

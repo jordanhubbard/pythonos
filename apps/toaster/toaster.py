@@ -46,6 +46,7 @@ async def main(*args, **kwargs) -> None:
 
     prev = chipset.active_view
     chipset.load_view(v)
+    chipset.start()
 
     wiping = False
     wipe_t = 0.0
@@ -55,7 +56,7 @@ async def main(*args, **kwargs) -> None:
 
     def on_event(ev):
         nonlocal closed, wiping, wipe_t, program_b
-        if ev.kind != _gui_input.KEY_DOWN:
+        if ev.kind != _gui_input.EVENT_KEY_DOWN:
             return
         if ev.code == _gui_input.KEY_ESC:
             closed = True
@@ -108,6 +109,12 @@ async def main(*args, **kwargs) -> None:
         chipset.load_view(chipset.workbench)
     elif prev is not None:
         chipset.load_view(prev)
+    chipset.stop()
+    try:
+        from kernel.gui.compositor import compositor
+        compositor._bridge_needs_redraw = True
+    except Exception:
+        pass
 
 
 from apps._icons import toaster_icon

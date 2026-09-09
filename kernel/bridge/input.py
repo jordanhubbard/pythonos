@@ -77,12 +77,14 @@ def _translate(ev: dict):
         return _gui.Event(kind=_gui.MOUSE_UP,   code=int(ev.get("button", 0)),
                           x=x, y=y)
     if kind == _BR_KEY_DOWN:
-        return _gui.Event(kind=_gui.KEY_DOWN,
+        return _gui.Event(kind=_gui.EVENT_KEY_DOWN,
                           code=_translate_keycode(int(ev.get("code", 0))),
                           text=ev.get("text", ""))
     if kind == _BR_KEY_UP:
-        return _gui.Event(kind=_gui.KEY_UP,
+        return _gui.Event(kind=_gui.EVENT_KEY_UP,
                           code=_translate_keycode(int(ev.get("code", 0))))
+    if kind == _BR_QUIT:
+        return _gui.Event(kind=_gui.QUIT)
     return None
 
 

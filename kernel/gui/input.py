@@ -17,8 +17,10 @@ from dataclasses import dataclass
 
 # ── Event kinds ─────────────────────────────────────────────────────────────
 
-KEY_DOWN     = 1
-KEY_UP       = 2
+# Event kinds deliberately use a distinct namespace from key codes.  Do not
+# call these KEY_DOWN/KEY_UP: those names are needed for the arrow keys below.
+EVENT_KEY_DOWN = 1
+EVENT_KEY_UP   = 2
 MOUSE_MOVE   = 3
 MOUSE_DOWN   = 4
 MOUSE_UP     = 5
@@ -172,7 +174,7 @@ def install_ps2_bridge() -> None:
 
     def _forward(ke) -> None:
         # ke is kernel.drivers.keyboard.KeyEvent
-        kind = KEY_DOWN if ke.pressed else KEY_UP
+        kind = EVENT_KEY_DOWN if ke.pressed else EVENT_KEY_UP
         mods = 0
         if ke.shift: mods |= MOD_SHIFT
         if ke.ctrl:  mods |= MOD_CTRL

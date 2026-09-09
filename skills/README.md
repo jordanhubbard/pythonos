@@ -20,6 +20,7 @@ If `config.yaml` is missing, skills should assume default-on behavior.
 | File | Type | Description |
 |------|------|-------------|
 | [PROVENANCE.md](PROVENANCE.md) | Skill | Write a humorous project origin story chapter and chain it into the "Totally True and Not At All Embellished History" chronicle. Includes style guide, character notes, nav link format, and a checklist for adding a new Part. |
+| [PYTHONOS_DEBUG.md](PYTHONOS_DEBUG.md) | Skill | Attach a coding agent to a live PythonOS guest, inspect kernel state, and launch/debug GUI software through the TCP REPL. |
 | [config.yaml](config.yaml) | Configuration | Controls optional template conventions, including whether PROVENANCE behavior is enforced. |
 
 ## How to Use a Skill

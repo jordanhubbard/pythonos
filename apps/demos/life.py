@@ -66,7 +66,7 @@ async def _run(win: CompositorWindow) -> None:
         win.dirty = True
 
     def on_event(ev) -> None:
-        if ev.kind == _gui_input.KEY_DOWN:
+        if ev.kind == _gui_input.EVENT_KEY_DOWN:
             if ev.code == _gui_input.KEY_ESC:
                 state["closed"] = True
             elif ev.text == " ":

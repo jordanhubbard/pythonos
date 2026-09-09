@@ -12,18 +12,19 @@ async def run_view(view, tick, on_space=None, on_exit=None) -> None:
     """Load ``view``, call ``tick(keys)`` at 30 Hz until ESC."""
     prev = chipset.active_view
     chipset.load_view(view)
+    chipset.start()
     keys = set()
     closed = False
 
     def on_event(ev):
         nonlocal closed
-        if ev.kind == _gui_input.KEY_DOWN:
+        if ev.kind == _gui_input.EVENT_KEY_DOWN:
             if ev.code == _gui_input.KEY_ESC:
                 closed = True
             elif ev.code == _gui_input.KEY_SPACE and on_space is not None:
                 on_space()
             keys.add(ev.code)
-        elif ev.kind == _gui_input.KEY_UP:
+        elif ev.kind == _gui_input.EVENT_KEY_UP:
             keys.discard(ev.code)
 
     chipset.on_event = on_event
@@ -37,3 +38,9 @@ async def run_view(view, tick, on_space=None, on_exit=None) -> None:
         chipset.load_view(chipset.workbench)
     elif prev is not None:
         chipset.load_view(prev)
+    chipset.stop()
+    try:
+        from kernel.gui.compositor import compositor
+        compositor._bridge_needs_redraw = True
+    except Exception:
+        pass

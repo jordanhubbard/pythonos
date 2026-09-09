@@ -268,7 +268,7 @@ class TextWin:
     # ── Event ingestion ─────────────────────────────────────────────────
 
     def on_event(self, ev) -> None:
-        if ev.kind != _gui_input.KEY_DOWN:
+        if ev.kind != _gui_input.EVENT_KEY_DOWN:
             return
         # Special keys → byte sequence + a representative char.
         seq = _KEYCODE_BYTES.get(ev.code)

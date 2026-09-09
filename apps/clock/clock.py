@@ -87,7 +87,7 @@ async def _run(win: CompositorWindow) -> None:
     state = {"closed": False, "show_h": True}
 
     def on_event(ev) -> None:
-        if ev.kind == _gui_input.KEY_DOWN and ev.code == _gui_input.KEY_ESC:
+        if ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code == _gui_input.KEY_ESC:
             state["closed"] = True
         elif ev.kind == _gui_input.MOUSE_DOWN:
             state["show_h"] = not state["show_h"]

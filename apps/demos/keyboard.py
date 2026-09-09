@@ -32,8 +32,8 @@ _LOG_PAD = 6
 
 
 def _kind_label(kind: int) -> str:
-    if kind == _gui_input.KEY_DOWN:    return "KEY_DOWN"
-    if kind == _gui_input.KEY_UP:      return "KEY_UP"
+    if kind == _gui_input.EVENT_KEY_DOWN: return "KEY_DOWN"
+    if kind == _gui_input.EVENT_KEY_UP:   return "KEY_UP"
     if kind == _gui_input.MOUSE_MOVE:  return "MOUSE_MOVE"
     if kind == _gui_input.MOUSE_DOWN:  return "MOUSE_DOWN"
     if kind == _gui_input.MOUSE_UP:    return "MOUSE_UP"
@@ -43,8 +43,8 @@ def _kind_label(kind: int) -> str:
 
 
 def _kind_color(kind: int) -> int:
-    if kind == _gui_input.KEY_DOWN: return _KEY_DOWN_COLOR
-    if kind == _gui_input.KEY_UP:   return _KEY_UP_COLOR
+    if kind == _gui_input.EVENT_KEY_DOWN: return _KEY_DOWN_COLOR
+    if kind == _gui_input.EVENT_KEY_UP:   return _KEY_UP_COLOR
     return _MOUSE_COLOR
 
 
@@ -71,7 +71,7 @@ async def _run(win: CompositorWindow) -> None:
         return "  ".join(bits)
 
     def on_event(ev) -> None:
-        if ev.kind == _gui_input.KEY_DOWN and ev.code == _gui_input.KEY_ESC:
+        if ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code == _gui_input.KEY_ESC:
             state["closed"] = True
             return
         log.append((ev.kind, fmt(ev)))

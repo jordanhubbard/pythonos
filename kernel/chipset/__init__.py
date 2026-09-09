@@ -125,19 +125,26 @@ chipset = Chipset()
 def start_for_gui() -> None:
     """Wire dest size, mixer, present callback, Workbench View, clock."""
     from kernel.display.framebuffer import fb
-    if fb is None:
-        return
-    chipset.set_dest(fb.width, fb.height)
+    # Bridge GUI deliberately has no guest framebuffer: frames are uploaded
+    # to the host SDL window by _present_frame.  It still needs the exact same
+    # chipset clock and Workbench backing view as native-fb mode.
+    width = fb.width if fb is not None else DEFAULT_DEST_W
+    height = fb.height if fb is not None else DEFAULT_DEST_H
+    chipset.set_dest(width, height)
     try:
         from kernel.sound.mixer import mixer
         chipset.set_mixer(mixer)
     except Exception:
         pass
     chipset.set_present(_present_frame)
-    wb = chipset.ensure_workbench(fb.width, fb.height)
+    wb = chipset.ensure_workbench(width, height)
     if chipset.active_view is None:
         chipset.load_view(wb)
-    chipset.start()
+    # In bridge mode the compositor owns Workbench presentation until an app
+    # explicitly activates a LoadView.  Starting the raster clock here would
+    # replace the freshly opened desktop with an empty Workbench frame.
+    if fb is not None:
+        chipset.start()
 
 
 def _present_frame(buf: bytes, width: int, height: int) -> None:

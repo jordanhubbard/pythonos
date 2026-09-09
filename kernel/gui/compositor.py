@@ -106,6 +106,16 @@ class CompositorWindow:
     def deliver(self, ev) -> None:
         if self._on_event:
             try:
+                # GUI input is desktop-relative, while an app surface is
+                # body-relative.  Give every window the latter; this keeps
+                # drawing and hit-testing independent of window placement.
+                if ev.kind in (_gui_input.MOUSE_MOVE, _gui_input.MOUSE_DOWN,
+                               _gui_input.MOUSE_UP, _gui_input.MOUSE_WHEEL):
+                    from kernel.gui.input import Event
+                    ev = Event(kind=ev.kind, code=ev.code, text=ev.text,
+                               mods=ev.mods, x=ev.x - self.x,
+                               y=ev.y - self.y - (TITLE_BAR_H if self.chrome else 0),
+                               dx=ev.dx, dy=ev.dy)
                 self._on_event(ev)
             except Exception:
                 pass
@@ -780,8 +790,15 @@ class Compositor:
         return False
 
     def _route_event(self, ev) -> None:
+        # SDL_WINDOWEVENT_CLOSE reaches the bridge as QUIT.  A desktop is a
+        # session, not an uncloseable window: tear down its loops and host
+        # display rather than leaving a zombie presenter behind.
+        if ev.kind == _gui_input.QUIT:
+            asyncio.get_event_loop().create_task(self.stop())
+            return
+
         # Tab / Shift-Tab cycles focus globally
-        if ev.kind == _gui_input.KEY_DOWN and ev.code == _gui_input.KEY_TAB:
+        if ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code == _gui_input.KEY_TAB:
             direction = -1 if (ev.mods & _gui_input.MOD_SHIFT) else 1
             self.cycle_focus(direction)
             return
@@ -993,6 +1010,17 @@ class Compositor:
         for t in self._tasks:
             t.cancel()
         self._tasks.clear()
+        try:
+            from kernel.bridge import input as _bridge_input
+            _bridge_input.stop_forwarder()
+            from kernel.bridge import bridge as _bridge
+            if self._bridge_present:
+                _bridge.call("display.close", {})
+        except Exception:
+            pass
+        self._bridge_present = False
+        self._bridge_fb_handle = 0
+        self._bridge_needs_redraw = True
 
 
 # Module-level singleton

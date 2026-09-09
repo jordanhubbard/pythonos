@@ -84,7 +84,7 @@ async def _run(win: CompositorWindow) -> None:
                 _stroke_segment(last[0], last[1], ev.x, ev.y)
             state["last_xy"] = (ev.x, ev.y)
             return
-        if ev.kind == _gui_input.KEY_DOWN:
+        if ev.kind == _gui_input.EVENT_KEY_DOWN:
             if ev.code == _gui_input.KEY_ESC:
                 state["closed"] = True
                 return

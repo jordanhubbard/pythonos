@@ -176,10 +176,10 @@ class SDL_Event:
 
 def _populate(out: SDL_Event, ev) -> None:
     """Translate kernel.gui.input.Event into the SDL_Event union."""
-    if ev.kind in (_gui_input.KEY_DOWN, _gui_input.KEY_UP):
-        out.type = SDL_KEYDOWN if ev.kind == _gui_input.KEY_DOWN else SDL_KEYUP
+    if ev.kind in (_gui_input.EVENT_KEY_DOWN, _gui_input.EVENT_KEY_UP):
+        out.type = SDL_KEYDOWN if ev.kind == _gui_input.EVENT_KEY_DOWN else SDL_KEYUP
         out.key.type = out.type
-        out.key.state = 1 if ev.kind == _gui_input.KEY_DOWN else 0
+        out.key.state = 1 if ev.kind == _gui_input.EVENT_KEY_DOWN else 0
         out.key.repeat = 0
         out.key.keysym.sym = _to_sdl_keysym(ev.code)
         out.key.keysym.scancode = ev.code

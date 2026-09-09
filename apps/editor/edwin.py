@@ -226,7 +226,7 @@ class _Editor:
 
     def on_event(self, ev) -> bool:
         """Returns True if the editor should keep running."""
-        if ev.kind != _gui_input.KEY_DOWN:
+        if ev.kind != _gui_input.EVENT_KEY_DOWN:
             return True
 
         # Footer minibuffer: keystrokes go to the prompt, not the buffer.

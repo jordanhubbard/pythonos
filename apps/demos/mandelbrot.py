@@ -174,7 +174,7 @@ async def _run(win: CompositorWindow) -> None:
         view["dirty_pending"] = True
 
     def on_event(ev):
-        if ev.kind == _gui_input.KEY_DOWN:
+        if ev.kind == _gui_input.EVENT_KEY_DOWN:
             if ev.code == _gui_input.KEY_ESC:
                 view["closed"] = True
             elif ev.text == "r":

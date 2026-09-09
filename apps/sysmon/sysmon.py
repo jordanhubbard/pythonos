@@ -60,7 +60,7 @@ async def _run(win: CompositorWindow) -> None:
 
     def on_event(ev):
         nonlocal closed
-        if ev.kind == _gui_input.KEY_DOWN and ev.code == _gui_input.KEY_ESC:
+        if ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code == _gui_input.KEY_ESC:
             closed = True
 
     win.set_event_handler(on_event)
