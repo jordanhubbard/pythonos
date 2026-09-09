@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-09-09
+
+### Added
+- Add explicit interactive and headless desktop modes
+- Add native debug sessions and fix GUI demo runtime
+
+### Other
+- Exercise compositor window dragging in debug workload
+- Expose desktop co-process stalls to debug sessions
+- Capture bridge desktop frames for agent inspection
+- Instrument native bridge performance and automate GUI exercise
+
+
 ## [0.3.2] - 2026-09-09
 
 ### Fixed
