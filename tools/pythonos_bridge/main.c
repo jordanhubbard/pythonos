@@ -389,6 +389,32 @@ typedef struct {
 static OpMetric g_metrics[METRIC_CAP];
 static int g_metric_count = 0;
 
+#define SLOW_TRACE_CAP 128
+typedef struct { char op[48]; uint64_t ticks; } SlowTrace;
+static SlowTrace g_slow_trace[SLOW_TRACE_CAP];
+static int g_slow_head = 0, g_slow_count = 0;
+
+static uint64_t slow_threshold_us(void) {
+    const char *value = getenv("PYTHONOS_BRIDGE_SLOW_US");
+    if (!value || !value[0]) return 10000;  /* 10 ms blocks a 60 Hz UI frame */
+    char *end = NULL;
+    unsigned long long parsed = strtoull(value, &end, 10);
+    return end != value ? parsed : 10000;
+}
+
+static void slow_trace_record(const char *name, uint64_t elapsed) {
+    uint64_t frequency = SDL_GetPerformanceFrequency();
+    uint64_t us = frequency ? elapsed * 1000000ULL / frequency : 0;
+    if (us < slow_threshold_us()) return;
+    SlowTrace *row = &g_slow_trace[g_slow_head];
+    snprintf(row->op, sizeof(row->op), "%s", name);
+    row->ticks = elapsed;
+    g_slow_head = (g_slow_head + 1) % SLOW_TRACE_CAP;
+    if (g_slow_count < SLOW_TRACE_CAP) g_slow_count++;
+    LOG_WARN("desktop-main blocked: op=%s service_us=%llu", name,
+             (unsigned long long)us);
+}
+
 static void metric_record(const char *name, uint64_t elapsed) {
     OpMetric *m = NULL;
     for (int i = 0; i < g_metric_count; i++) {
@@ -402,6 +428,7 @@ static void metric_record(const char *name, uint64_t elapsed) {
     m->count++;
     m->total_ticks += elapsed;
     if (elapsed > m->max_ticks) m->max_ticks = elapsed;
+    slow_trace_record(name, elapsed);
 }
 
 static int op_debug_metrics(BridgeState *st, int id, cJSON *params) {
@@ -425,7 +452,21 @@ static int op_debug_metrics(BridgeState *st, int id, cJSON *params) {
         cJSON_AddItemToObject(rows, m->name, row);
     }
     cJSON_AddItemToObject(result, "ops", rows);
-    if (reset) { memset(g_metrics, 0, sizeof(g_metrics)); g_metric_count = 0; }
+    cJSON *trace = cJSON_CreateArray();
+    for (int i = 0; i < g_slow_count; i++) {
+        int slot = (g_slow_head - g_slow_count + i + SLOW_TRACE_CAP) % SLOW_TRACE_CAP;
+        SlowTrace *entry = &g_slow_trace[slot];
+        cJSON *row = cJSON_CreateObject();
+        cJSON_AddStringToObject(row, "op", entry->op);
+        cJSON_AddNumberToObject(row, "service_us",
+            (double)(entry->ticks * 1000000ULL / frequency));
+        cJSON_AddItemToArray(trace, row);
+    }
+    cJSON_AddItemToObject(result, "slow_ops", trace);
+    if (reset) {
+        memset(g_metrics, 0, sizeof(g_metrics)); g_metric_count = 0;
+        g_slow_head = g_slow_count = 0;
+    }
     return send_ok(st->fd, id, result);
 }
 

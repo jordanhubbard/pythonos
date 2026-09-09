@@ -133,6 +133,9 @@ def main() -> int:
     p_perf.add_argument("--reset", action="store_true")
     p_capture = commands.add_parser("capture", help="save the host SDL desktop as a BMP")
     p_capture.add_argument("path", nargs="?", default="build/pythonos-debug.bmp")
+    p_desktop = commands.add_parser("desktop", help="inspect or attach to the host desktop co-process")
+    p_desktop.add_argument("action", choices=("status", "metrics", "native"))
+    p_desktop.add_argument("commands", nargs=argparse.REMAINDER)
     p_exercise = commands.add_parser("exercise", help="launch and drive an app without human input")
     p_exercise.add_argument("app", help="registry app/demo/game name")
     p_exercise.add_argument("--seconds", type=float, default=1.0,
@@ -141,9 +144,10 @@ def main() -> int:
 
     # Native-control commands deliberately work even if the guest TCP stack
     # never came up — that is the point of this debugger plane.
-    if args.command in ("session", "serial", "qmp", "native"):
+    if args.command in ("session", "serial", "qmp", "native") or \
+            (args.command == "desktop" and args.action != "metrics"):
         try:
-            session = _load_session(args.session)
+            session = _load_session(getattr(args, "session", "build/pythonos-debug.json"))
             if args.command == "session":
                 print(json.dumps(session, indent=2, sort_keys=True))
                 return 0
@@ -156,6 +160,30 @@ def main() -> int:
                       "cont": "cont", "reset": "system_reset"}[args.action]
                 print(json.dumps(_qmp(session["qmp"], op), indent=2, sort_keys=True))
                 return 0
+            if args.command == "desktop":
+                desktop = session.get("desktop_co_process", {})
+                if args.action == "status":
+                    out = dict(desktop)
+                    log_path = desktop.get("log")
+                    if log_path and os.path.exists(log_path):
+                        with open(log_path, encoding="utf-8", errors="replace") as f:
+                            out["recent_log"] = f.readlines()[-80:]
+                    print(json.dumps(out, indent=2, sort_keys=True))
+                    return 0
+                pid = desktop.get("pid")
+                if not pid:
+                    raise ValueError("desktop co-process PID unavailable")
+                adapter = os.environ.get("PYTHONOS_DESKTOP_DEBUGGER",
+                                         "lldb" if sys.platform == "darwin" else "gdb")
+                if os.path.basename(adapter).startswith("lldb"):
+                    cmd = [adapter, "-p", str(pid)]
+                    for statement in args.commands:
+                        if statement != "--": cmd += ["-o", statement]
+                else:
+                    cmd = [adapter, "-p", str(pid)]
+                    for statement in args.commands:
+                        if statement != "--": cmd += ["-ex", statement]
+                return subprocess.call(cmd)
             # The default adapter uses the GDB remote protocol because QEMU
             # implements it, but the agent-facing command is `native` and a
             # different adapter may be selected without changing the session.
@@ -191,6 +219,9 @@ def main() -> int:
                 reply = dbg.execute(
                     "from kernel.bridge import bridge; print(bridge.performance_snapshot(reset=%s))"
                     % bool(args.reset))
+            elif args.command == "desktop":
+                reply = dbg.execute(
+                    "from kernel.bridge import bridge; print(bridge.call('debug.metrics', {'reset': False}))")
             elif args.command == "capture":
                 reply = dbg.execute(
                     "from kernel.bridge import bridge; print(bridge.call('debug.capture', {'path': %r}))"

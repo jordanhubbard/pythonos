@@ -22,6 +22,8 @@ python3 tools/pythonos_debug.py native -- "bt" "info registers"
 python3 tools/pythonos_debug.py exercise paint
 python3 tools/pythonos_debug.py perf
 python3 tools/pythonos_debug.py capture build/pythonos-debug.bmp
+python3 tools/pythonos_debug.py desktop status
+python3 tools/pythonos_debug.py desktop metrics
 ```
 
 Debug mode writes `build/pythonos-debug.json`, which records the local TCP
@@ -66,6 +68,13 @@ latency spike coincides with a stall or warning in `serial`.
 Use `capture PATH` to save the actual host SDL desktop as a BMP. Inspect that
 image directly after every visual workload; QEMU screendumps do not see bridge
 mode because the host companion, not QEMU, owns the visible window.
+
+`desktop status` identifies the host co-process and returns its recent log.
+Every host operation over 10 ms is logged as `desktop-main blocked` and kept
+in the `slow_ops` trace returned by `desktop metrics`. This is the direct
+signal for a busy cursor: the host SDL event loop cannot process cursor/window
+events while such an operation runs. `desktop native -- ...` attaches the
+platform native debugger (LLDB by default on macOS) to that co-process.
 
 ## Input invariants
 
