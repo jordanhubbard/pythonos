@@ -32,16 +32,17 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # ── Architecture selection ─────────────────────────────────────────────────────
 ARCH="x86_64"
+BUILD_REQUESTED=0
 for arg in "$@"; do
     case "$arg" in
         --arch=arm64)  ARCH="arm64"  ;;
         --arch=x86_64) ARCH="x86_64" ;;
+        --build)       BUILD_REQUESTED=1 ;;
     esac
 done
 
 if [[ "$ARCH" == "arm64" ]]; then
     DEPS_DIR="$REPO_ROOT/deps-arm64"
-    CPYTHON_SRC="$DEPS_DIR/cpython-src"
     CROSS_PREFIX="aarch64-elf"
     CC="${CROSS_PREFIX}-gcc"
     AR="${CROSS_PREFIX}-ar"
@@ -69,7 +70,6 @@ if [[ "$ARCH" == "arm64" ]]; then
     CONFIGURE_EXTRA=""
 else
     DEPS_DIR="$REPO_ROOT/deps"
-    CPYTHON_SRC="$DEPS_DIR/cpython-src"
     CROSS_PREFIX="x86_64-elf"
     CC="${CROSS_PREFIX}-gcc"
     AR="${CROSS_PREFIX}-ar"
@@ -94,6 +94,28 @@ else
     CONFIGURE_EXTRA=""
 fi
 
+# CPython's configure and build rewrite a large Makefile many times.  Keep
+# those operations off the repository bind mount: Docker Desktop on macOS can
+# expose partially updated files to a subsequent command in the same container.
+# Work on the container-native filesystem and publish the completed source tree
+# only after every requested setup/build step succeeds.
+PERSISTENT_CPYTHON_SRC="$DEPS_DIR/cpython-src"
+LOCAL_BUILD_ROOT="$(mktemp -d /tmp/pythonos-cpython.XXXXXX)"
+cleanup_local_build() {
+    rm -rf "$LOCAL_BUILD_ROOT"
+}
+trap cleanup_local_build EXIT
+
+LOCAL_DEPS_DIR="$LOCAL_BUILD_ROOT/$(basename "$DEPS_DIR")"
+CPYTHON_SRC="$LOCAL_DEPS_DIR/cpython-src"
+mkdir -p "$LOCAL_DEPS_DIR" "$LOCAL_BUILD_ROOT/src/hal"
+
+# Modules/Setup.local reaches _hal through ../../../src/hal/hal.c.  Copy its
+# writable output directory locally while linking its read-only dependencies.
+cp -f "$REPO_ROOT/src/hal/hal.c" "$LOCAL_BUILD_ROOT/src/hal/hal.c"
+ln -s "$REPO_ROOT/src/boot" "$LOCAL_BUILD_ROOT/src/boot"
+ln -s "$REPO_ROOT/src/linenoise" "$LOCAL_BUILD_ROOT/src/linenoise"
+
 FREE_THREADING="${PYTHONOS_FREE_THREADING:-0}"
 if [[ "$FREE_THREADING" == "1" ]]; then
     CONFIGURE_EXTRA="$CONFIGURE_EXTRA --disable-gil --with-mimalloc"
@@ -116,8 +138,8 @@ echo "${CPYTHON_SHA256}  $TARBALL" | sha256sum -c -
 # ── 2. Extract ───────────────────────────────────────────────────────────────
 if [ ! -d "$CPYTHON_SRC" ]; then
     echo "==> Extracting..."
-    tar -xf "$TARBALL" -C "$DEPS_DIR"
-    mv "$DEPS_DIR/Python-${CPYTHON_VERSION}" "$CPYTHON_SRC"
+    tar -xf "$TARBALL" -C "$LOCAL_DEPS_DIR"
+    mv -f "$LOCAL_DEPS_DIR/Python-${CPYTHON_VERSION}" "$CPYTHON_SRC"
 fi
 
 cd "$CPYTHON_SRC"
@@ -329,9 +351,16 @@ echo "==> Pre-generating frozen module headers with $FREEZE_PY ($FREEZE_PY_VER).
 mkdir -p Python/frozen_modules
 # Always regenerate all frozen module headers — tarball timestamps cannot be
 # trusted and using the wrong Python version silently corrupts the bytecode.
-grep -A1 'frozen_modules/.*\.h:' Makefile \
-    | grep $'^\t' \
-    | grep 'FREEZE_MODULE' \
+#
+# Read the rules from the pristine source template, not the generated Makefile.
+# The latter is rewritten several times above.  On Docker Desktop for macOS,
+# an immediately following read through the bind mount can transiently make
+# grep classify even a text file as binary.  Makefile.pre.in contains the same
+# freeze recipes and is never rewritten; `-a` also prevents grep's binary-file
+# short circuit from turning a successful first install into an empty pipeline.
+grep -a -A1 'frozen_modules/.*\.h:' Makefile.pre.in \
+    | grep -a $'^\t' \
+    | grep -a 'FREEZE_MODULE' \
     | sed 's/.*BOOTSTRAP) //' \
     | sed 's/.*FREEZE_MODULE) //' \
     | sed "s|\$(srcdir)|.|g" \
@@ -347,7 +376,7 @@ grep -A1 'frozen_modules/.*\.h:' Makefile \
 touch Python/frozen_modules/*.h 2>/dev/null || true
 
 # ── 6. Optionally build (Phase 2) ─────────────────────────────────────────────
-if [[ "${1:-}" == "--build" ]] || [[ "${2:-}" == "--build" ]]; then
+if [[ "$BUILD_REQUESTED" == "1" ]]; then
     PY_VERSION=$(sed -n 's/^VERSION=[[:space:]]*//p' "$CPYTHON_SRC/Makefile" | head -1 | tr -d '[:space:]')
     PY_ABIFLAGS=$(sed -n 's/^ABIFLAGS=[[:space:]]*//p' "$CPYTHON_SRC/Makefile" | head -1 | tr -d '[:space:]')
     LIBPYTHON_ARCHIVE="libpython${PY_VERSION}${PY_ABIFLAGS}.a"
@@ -389,14 +418,32 @@ if [[ "${1:-}" == "--build" ]] || [[ "${2:-}" == "--build" ]]; then
         LDFLAGS="" \
         2>&1 | tee "$DEPS_DIR/build.log"
 
-    # Copy outputs where the Makefile expects them
+    echo "==> CPython archive built successfully."
+else
+    echo ""
+    echo "Next: ./tools/setup_cpython.sh [--arch=arm64] --build"
+    echo "  or: cd $PERSISTENT_CPYTHON_SRC && make -j\$(nproc) libpython3.14.a CC=$CC CFLAGS=..."
+fi
+
+echo "==> Publishing configured CPython source tree..."
+PUBLISH_CPYTHON_SRC="$DEPS_DIR/cpython-src.tmp"
+rm -rf "$PUBLISH_CPYTHON_SRC"
+cp -rf "$CPYTHON_SRC" "$PUBLISH_CPYTHON_SRC"
+rm -rf "$PERSISTENT_CPYTHON_SRC"
+mv -f "$PUBLISH_CPYTHON_SRC" "$PERSISTENT_CPYTHON_SRC"
+
+if [[ "$BUILD_REQUESTED" == "1" ]]; then
+    # Publish the target archive last.  Its presence is Make's cache marker, so
+    # an interrupted source-tree copy must never leave a false successful build.
     mkdir -p "$DEPS_DIR/cpython/Include"
-    cp "$LIBPYTHON_ARCHIVE" "$DEPS_DIR/cpython/libpython3.14.a"
-    cp -r Include/. "$DEPS_DIR/cpython/Include/"
+    # Copy directly from container-native storage.  Reading back from the
+    # just-published bind-mounted tree can still observe stale zero-filled data
+    # on Docker Desktop, even after the write command has returned.
+    cp -rf "$CPYTHON_SRC/Include/." "$DEPS_DIR/cpython/Include/"
     if [[ "$ARCH" == "arm64" ]]; then
-        cp "$REPO_ROOT/deps/pyconfig_arm64.h" "$DEPS_DIR/cpython/pyconfig.h"
+        cp -f "$REPO_ROOT/deps/pyconfig_arm64.h" "$DEPS_DIR/cpython/pyconfig.h"
     else
-        cp "$REPO_ROOT/deps/pyconfig.h" "$DEPS_DIR/cpython/pyconfig.h"
+        cp -f "$REPO_ROOT/deps/pyconfig.h" "$DEPS_DIR/cpython/pyconfig.h"
     fi
     if [[ "$FREE_THREADING" == "1" ]]; then
         sed -i \
@@ -405,11 +452,9 @@ if [[ "${1:-}" == "--build" ]] || [[ "${2:-}" == "--build" ]]; then
             "$DEPS_DIR/cpython/pyconfig.h"
         printf '\n#define WITH_MIMALLOC 1\n' >> "$DEPS_DIR/cpython/pyconfig.h"
     fi
+    cp -f "$CPYTHON_SRC/$LIBPYTHON_ARCHIVE" \
+        "$DEPS_DIR/cpython/libpython3.14.a"
     echo "==> Done. Library: $DEPS_DIR/cpython/libpython3.14.a"
-else
-    echo ""
-    echo "Next: ./tools/setup_cpython.sh [--arch=arm64] --build"
-    echo "  or: cd $CPYTHON_SRC && make -j\$(nproc) libpython3.14.a CC=$CC CFLAGS=..."
 fi
 
 echo "==> CPython bare-metal setup complete."

@@ -62,6 +62,9 @@ def main() -> int:
           "needs: validate" in ci and "all-arches" in ci)
     check("CI runs validate-release.sh",
           "./scripts/validate-release.sh" in ci)
+    check("CI tests the documented bare make installation",
+          re.search(r"name:\s*Test documented installation\s+run:\s*make(?:\s|$)",
+                    ci) is not None)
     check("CI installs qemu-system-x86",
           "qemu_pkg: qemu-system-x86" in ci)
 
@@ -104,6 +107,20 @@ def main() -> int:
           'os.access("/dev/kvm"' in smoke)
     check("CI forces TCG so KVM permission cannot abort QEMU",
           "PYTHONOS_QEMU_ACCEL: tcg" in ci)
+
+    setup_cpython = _read("tools/setup_cpython.sh")
+    check("CPython freeze discovery uses the immutable source template",
+          "grep -a -A1 'frozen_modules/.*\\.h:' Makefile.pre.in" in setup_cpython)
+    check("CPython freeze discovery tolerates Docker Desktop binary misclassification",
+          "| grep -a $'^\\t'" in setup_cpython
+          and "| grep -a 'FREEZE_MODULE'" in setup_cpython)
+    check("CPython configures off the Docker Desktop bind mount",
+          "mktemp -d /tmp/pythonos-cpython.XXXXXX" in setup_cpython
+          and 'PERSISTENT_CPYTHON_SRC="$DEPS_DIR/cpython-src"' in setup_cpython
+          and 'cp -rf "$CPYTHON_SRC" "$PUBLISH_CPYTHON_SRC"' in setup_cpython)
+    check("CPython archive cache marker is published last",
+          setup_cpython.index('mv -f "$PUBLISH_CPYTHON_SRC" "$PERSISTENT_CPYTHON_SRC"')
+          < setup_cpython.index('cp -f "$CPYTHON_SRC/$LIBPYTHON_ARCHIVE"'))
 
     if _failed:
         print(f"\n{_failed} failed, {_passed} passed")

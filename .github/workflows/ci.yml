@@ -63,6 +63,12 @@ jobs:
           docker --version
           ${{ matrix.qemu_bin }} --version
 
+      # Exercise the documented first-install entry point before the broader
+      # release gate.  validate-release.sh uses explicit build-gui targets, so
+      # it cannot by itself catch regressions in bare `make` dispatch.
+      - name: Test documented installation
+        run: make
+
       - name: Validate release gate
         run: ./scripts/validate-release.sh
 
