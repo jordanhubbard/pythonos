@@ -6,6 +6,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- CI builds, smokes, and uploads the x86_64 ISO as well as the arm64 ELF;
+  `make release` attaches both images from those artifacts.
+
 ## [0.3.0] - 2026-09-08
 
 ### Other

@@ -9,11 +9,33 @@ on:
 
 jobs:
   validate:
-    name: Validate Sources
-    runs-on: ubuntu-24.04-arm
-    timeout-minutes: 90
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
     permissions:
       contents: read
+      actions: write
+    env:
+      SDL_VIDEODRIVER: dummy
+      SDL_AUDIODRIVER: dummy
+      PYTHONOS_GUI_BOOT_TIMEOUT: "90"
+      PYTHONOS_AUDIO_BOOT_TIMEOUT: "90"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64
+            runner: ubuntu-24.04
+            qemu_pkg: qemu-system-x86
+            qemu_bin: qemu-system-x86_64
+            artifact: pythonos-x86_64
+            artifact_path: build/pythonos.iso
+          - name: arm64
+            runner: ubuntu-24.04-arm
+            qemu_pkg: qemu-system-arm
+            qemu_bin: qemu-system-aarch64
+            artifact: pythonos-arm64
+            artifact_path: build-arm64/pythonos-arm64.elf
 
     steps:
       - name: Checkout
@@ -26,7 +48,8 @@ jobs:
             build-essential \
             make \
             python3 \
-            qemu-system-arm \
+            pkg-config \
+            ${{ matrix.qemu_pkg }} \
             qemu-utils \
             libsdl2-dev \
             libsdl2-image-dev \
@@ -37,7 +60,32 @@ jobs:
         run: |
           uname -a
           docker --version
-          qemu-system-aarch64 --version
+          ${{ matrix.qemu_bin }} --version
 
       - name: Validate release gate
         run: ./scripts/validate-release.sh
+
+      - name: Upload bootable image
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact_path }}
+          if-no-files-found: error
+          retention-days: 14
+
+  # One named check that is red unless every matrix cell passed. Branch
+  # protection and `gh run watch --exit-status` can key off this.
+  ci-ok:
+    name: all-arches
+    needs: validate
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Require every architecture job
+        run: |
+          if [ "${{ needs.validate.result }}" != "success" ]; then
+            echo "architecture matrix failed: ${{ needs.validate.result }}"
+            exit 1
+          fi

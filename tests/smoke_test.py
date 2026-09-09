@@ -43,6 +43,8 @@ def _qemu_accel_for(target_arch: str) -> list:
     if target_arch == "arm64":
         return ["-cpu", "cortex-a57"]
     accel = "hvf" if host_os == "Darwin" else ("kvm" if host_os == "Linux" else None)
+    if accel == "kvm" and not os.path.exists("/dev/kvm"):
+        accel = None
     if accel:
         return ["-cpu", "host", "-accel", accel]
     return ["-cpu", "qemu64"]

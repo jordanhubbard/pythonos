@@ -173,8 +173,8 @@ release_notes() {
     {
         printf '## PythonOS v%s\n\n' "$version"
         printf '### Validation\n'
-        printf -- '- Local validation: `scripts/validate-release.sh`\n'
-        printf -- '- CI: green for `%s`\n\n' "$(git rev-parse --short HEAD)"
+        printf -- '- Local validation: `scripts/validate-release.sh` (host arch)\n'
+        printf -- '- CI: x86_64 ISO + arm64 ELF gates green for `%s`\n\n' "$(git rev-parse --short HEAD)"
         printf '### Statistics\n'
         printf -- '- Commits since v%s: %s\n\n' "$previous" "$commit_count"
         # Use the categorized changelog body for the GitHub release notes
@@ -191,6 +191,7 @@ wait_for_ci() {
     info "waiting for CI run for $head_sha"
     for _ in $(seq 1 60); do
         run_id=$(gh run list \
+            --workflow CI \
             --branch main \
             --limit 20 \
             --json databaseId,headSha,status,conclusion \
@@ -198,11 +199,35 @@ wait_for_ci() {
             | head -1)
         if [ -n "$run_id" ]; then
             gh run watch "$run_id" --exit-status
+            RELEASE_CI_RUN_ID="$run_id"
             return
         fi
         sleep 10
     done
     fail "no CI run appeared for $head_sha"
+}
+
+# Pull the bootable images CI uploaded (pythonos-x86_64 / pythonos-arm64).
+# Both must exist — a release that only ships one arch is a gap, not a success.
+collect_ci_images() {
+    local run_id="$1"
+    local dest="$2"
+    local iso elf
+
+    mkdir -p "$dest"
+    info "downloading CI images from run $run_id"
+    gh run download "$run_id" --name pythonos-x86_64 --dir "$dest"
+    gh run download "$run_id" --name pythonos-arm64 --dir "$dest"
+
+    iso="$(find "$dest" -name pythonos.iso -print | head -1)"
+    elf="$(find "$dest" -name pythonos-arm64.elf -print | head -1)"
+    [ -n "$iso" ] && [ -f "$iso" ] || fail "CI run $run_id did not upload pythonos.iso"
+    [ -n "$elf" ] && [ -f "$elf" ] || fail "CI run $run_id did not upload pythonos-arm64.elf"
+
+    RELEASE_ISO="$iso"
+    RELEASE_ELF="$elf"
+    info "x86_64 ISO: $RELEASE_ISO"
+    info "arm64 ELF:  $RELEASE_ELF"
 }
 
 main() {
@@ -246,10 +271,11 @@ main() {
     head_sha="$(git rev-parse HEAD)"
     wait_for_ci "$head_sha"
 
-    # Use a global so the EXIT trap (which runs after main returns) can see
-    # the path under `set -u`. local-scoped vars go out of scope before EXIT.
+    ASSET_DIR="$(mktemp -d)"
     NOTES_FILE="$(mktemp)"
-    trap 'rm -f "${NOTES_FILE:-}"' EXIT
+    trap 'rm -f "${NOTES_FILE:-}"; rm -rf "${ASSET_DIR:-}"' EXIT
+    collect_ci_images "$RELEASE_CI_RUN_ID" "$ASSET_DIR"
+
     local notes_file="$NOTES_FILE"
     release_notes "$previous" "$version" "$notes_file"
 
@@ -258,20 +284,10 @@ main() {
     git push origin "$tag"
 
     info "creating GitHub release $tag"
-    # Attach the bootable artifacts when present. Both are large binaries;
-    # we don't gate the release on their existence, so a CI-only release
-    # (no local make run) still works. validate-release.sh and CI together
-    # cover correctness; this is just convenience for downloaders.
-    local -a assets=()
-    [ -f build/pythonos.iso ]       && assets+=("build/pythonos.iso#pythonos.iso")
-    [ -f build-arm64/pythonos-arm64.elf ] && assets+=("build-arm64/pythonos-arm64.elf#pythonos-arm64.elf")
-    if [ "${#assets[@]}" -gt 0 ]; then
-        info "attaching ${#assets[@]} artifact(s): ${assets[*]}"
-        gh release create "$tag" --title "$tag" --notes-file "$notes_file" \
-            "${assets[@]}"
-    else
-        gh release create "$tag" --title "$tag" --notes-file "$notes_file"
-    fi
+    info "attaching CI images: $RELEASE_ISO $RELEASE_ELF"
+    gh release create "$tag" --title "$tag" --notes-file "$notes_file" \
+        "$RELEASE_ISO#pythonos.iso" \
+        "$RELEASE_ELF#pythonos-arm64.elf"
 
     info "release complete: $tag"
 }

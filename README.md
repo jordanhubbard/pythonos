@@ -317,6 +317,8 @@ make test-gui       # GUI subsystem smoke (headless screendump + audio capture)
 
 Counts at HEAD: 41 / 28 / 23 / 5 / 6 / 8 across the six suites (default x86, default arm64, x86 gui, x86 desktop, x86 audio, arm64 gui) — **111 tests** total.
 
+GitHub Actions runs that gate on **both** architectures: `ubuntu-24.04` builds `build/pythonos.iso` and runs the x86 serial + GUI smokes; `ubuntu-24.04-arm` builds `build-arm64/pythonos-arm64.elf` and runs the arm64 smokes. Each job uploads its bootable image. `make release` waits for that workflow, then attaches **both** files to the GitHub release.
+
 For the no-GIL path, run `PYTHONOS_FREE_THREADING=1 SMP_CPUS=4 make test`.
 That smoke covers the boot-time SMP self-tests, `_hal.pthread_selftest()`, and
 `/examples/thread_demo.py`, including multiple Python worker threads and timed

@@ -58,7 +58,12 @@ HOST_ACCEL := hvf
 QEMU_DISPLAY  ?= cocoa
 QEMU_AUDIODEV ?= coreaudio
 else ifeq ($(HOST_OS),Linux)
+# GitHub-hosted runners often lack /dev/kvm; do not pass -accel kvm then.
+ifneq ($(wildcard /dev/kvm),)
 HOST_ACCEL := kvm
+else
+HOST_ACCEL :=
+endif
 QEMU_DISPLAY  ?= sdl
 QEMU_AUDIODEV ?= sdl
 else
@@ -215,11 +220,12 @@ help:
 	@echo "                            kernel pushes pixels to ramfb directly"
 	@echo ""
 	@echo "Test:"
-	@echo "  make test-chipset         Host-side chipset, arcade, dock, and layout tests (no QEMU)"
+	@echo "  make test-chipset         Host-side chipset, arcade, dock, layout, and CI-gate tests (no QEMU)"
 	@echo "  make test                 Boot in QEMU, run TCP-REPL smoke tests"
 	@echo "                            (x86: 41 tests, arm64: 28 tests)"
 	@echo "  make test-gui             Run headless GUI smoke tests"
 	@echo "                            (x86: 23+5+6 tests; arm64: 8 tests)"
+	@echo "  make validate-release     Host-arch build + smoke (CI runs each arch)"
 	@echo ""
 	@echo "Per-arch explicit forms (run-x86_64, run-arm64, run-gui-x86_64, etc.)"
 	@echo "exist for every dispatched target above — useful when both archs are"
@@ -335,14 +341,14 @@ test-chipset:
 	python3 tests/arcade_test.py
 	python3 tests/dock_test.py
 	python3 tests/layout_test.py
+	python3 tests/ci_gate_test.py
 
-test-x86_64: test-chipset $(ISO_OUT)
+test-x86_64: test-chipset $(ISO_OUT) $(DISK_IMG)
 	PYTHONOS_HOST_PORT=$(REPL_HOST_PORT) PYTHONOS_FILE_PORT=$(FILE_HOST_PORT) PYTHONOS_SMP_CPUS=$(SMP_CPUS) PYTHONOS_FREE_THREADING=$(PYTHONOS_FREE_THREADING) python3 tests/smoke_test.py $(ISO_OUT)
 
 # GUI smoke test — boots with -display none -vga std (headless GUI mode)
 # and exercises the sdl2 shim, compositor import, and serial markers.
-# `make test-gui` dispatches per host arch; for now only x86_64 is
-# wired (arm64 GUI smoke arrives with the virtio-input follow-up).
+# `make test-gui` dispatches per host arch (x86: gui+desktop+audio; arm64: gui).
 test-gui-x86_64: $(ISO_OUT)
 	python3 tests/gui_smoke_test.py $(ISO_OUT)
 	python3 tests/desktop_smoke_test.py $(ISO_OUT)
