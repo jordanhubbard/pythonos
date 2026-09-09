@@ -62,7 +62,9 @@ four Paula audio channels — all pure Python. LoadView games:
 `make test-chipset` runs the host-side chipset, arcade, and dock tests without QEMU.
 
 ```bash
-# Boot and auto-launch the desktop in one step.
+# Boot and auto-launch the visible host desktop in one step.
+# `interactive` is the default; run it from the user's visible desktop
+# terminal when they need to watch or control the SDL/Cocoa window.
 make run-gui
 PYTHONOS_GUI_APP=terminal     make run-gui
 PYTHONOS_GUI_APP=editor       make run-gui
@@ -104,7 +106,11 @@ For kernel, HAL, CPython, interrupt, or networking failures, start an
 agent-debug session rather than relying on the guest REPL alone:
 
 ```bash
-PYTHONOS_DEBUG=1 make run-gui
+# Visible user-facing debug desktop.
+PYTHONOS_DEBUG=1 PYTHONOS_DESKTOP_MODE=interactive make run-gui
+
+# Hidden/offscreen desktop for agent automation, captures, and benchmarks.
+PYTHONOS_DEBUG=1 PYTHONOS_DESKTOP_MODE=headless make run-gui
 python3 tools/pythonos_debug.py serial
 python3 tools/pythonos_debug.py qmp status
 python3 tools/pythonos_debug.py native -- "bt" "info registers"
@@ -121,6 +127,13 @@ log. `PYTHONOS_DEBUG_PAUSE=1` halts before execution for early-boot debugging.
 For example, repeated `net: rx error` warnings can be inspected with
 `python3 tools/pythonos_debug.py serial` even if the guest network stack or
 REPL is unavailable. See `skills/PYTHONOS_DEBUG.md` for the agent workflow.
+
+`PYTHONOS_DESKTOP_MODE` is explicit: `interactive` opens and raises the host
+SDL/Cocoa window for a person, while `headless` creates a hidden SDL surface.
+Headless mode supports screenshots and injected input but is not a visible
+desktop. Use `python3 tools/pythonos_debug.py capture build/frame.bmp` to
+inspect it, and `desktop metrics` to find co-process operations that block the
+SDL main thread.
 
 The no-GIL build is currently supported on x86_64 QEMU with SMP enabled. It
 boots CPython with `PY_GIL_DISABLED=1`, starts AP-backed pthread workers through

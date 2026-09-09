@@ -531,6 +531,8 @@ static int op_display_open(BridgeState *st, int id, cJSON *params) {
     }
     int w = jw->valueint, h = jh->valueint;
     const char *title = cJSON_IsString(jt) ? jt->valuestring : "PythonOS";
+    const char *desktop_mode = getenv("PYTHONOS_DESKTOP_MODE");
+    int headless = desktop_mode && strcmp(desktop_mode, "headless") == 0;
 
     if (g_window.open) {
         if (g_window.fb_handle) handle_free(g_window.fb_handle);
@@ -543,24 +545,33 @@ static int op_display_open(BridgeState *st, int id, cJSON *params) {
             return send_err(st->fd, id, 5, SDL_GetError());
         }
     }
+    Uint32 flags = headless ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN;
     SDL_Window *win = SDL_CreateWindow(title,
                                        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                       w, h, SDL_WINDOW_SHOWN);
+                                       w, h, flags);
     if (!win) return send_err(st->fd, id, 6, SDL_GetError());
+    if (!headless) {
+        SDL_ShowWindow(win);
+        SDL_RaiseWindow(win);
+        SDL_SetWindowInputFocus(win);
+    }
     g_window.win  = win;
     g_window.fb   = SDL_GetWindowSurface(win);
     g_window.w    = w;
     g_window.h    = h;
     g_window.open = 1;
     g_window.fb_handle = handle_alloc(g_window.fb, /*owned=*/0);
-    LOG_INFO("display.open: %dx%d (%s) fb_handle=%d",
-             w, h, title, g_window.fb_handle);
+    LOG_INFO("display.open: %dx%d (%s) mode=%s fb_handle=%d",
+             w, h, title, headless ? "headless" : "interactive",
+             g_window.fb_handle);
 
     cJSON *r = cJSON_CreateObject();
     cJSON_AddNumberToObject(r, "handle", 1);
     cJSON_AddNumberToObject(r, "fb_handle", g_window.fb_handle);
     cJSON_AddNumberToObject(r, "w", w);
     cJSON_AddNumberToObject(r, "h", h);
+    cJSON_AddStringToObject(r, "mode", headless ? "headless" : "interactive");
+    cJSON_AddBoolToObject(r, "visible", !headless);
     return send_ok(st->fd, id, r);
 }
 

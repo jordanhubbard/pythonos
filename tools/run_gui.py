@@ -125,6 +125,13 @@ def _bridge_transport() -> str:
     return mode
 
 
+def _desktop_mode() -> str:
+    mode = os.environ.get("PYTHONOS_DESKTOP_MODE", "interactive").strip().lower()
+    if mode not in ("interactive", "headless"):
+        raise ValueError("PYTHONOS_DESKTOP_MODE must be interactive or headless")
+    return mode
+
+
 def _qemu_connect_host(listen_host: str) -> str:
     return os.environ.get(
         "PYTHONOS_BRIDGE_CONNECT_HOST",
@@ -294,7 +301,8 @@ def _wait_tcp_listener(host: str, port: int, proc: subprocess.Popen,
 
 
 def _spawn_bridge_listen(listen_host: str, port: int,
-                         log_path: str | None = None) -> subprocess.Popen:
+                         log_path: str | None = None,
+                         desktop_mode: str = "interactive") -> subprocess.Popen:
     """Spawn pythonos_bridge --listen-tcp and wait for the listener."""
     bridge_bin = _bridge_bin()
     if not os.path.isfile(bridge_bin):
@@ -304,7 +312,8 @@ def _spawn_bridge_listen(listen_host: str, port: int,
     print(f"[run-gui] spawning {bridge_bin} on tcp {endpoint}",
           file=sys.stderr)
     stream = open(log_path, "ab", buffering=0) if log_path else None
-    proc = subprocess.Popen([bridge_bin, "--listen-tcp", endpoint],
+    env = dict(os.environ, PYTHONOS_DESKTOP_MODE=desktop_mode)
+    proc = subprocess.Popen([bridge_bin, "--listen-tcp", endpoint], env=env,
                             stdout=stream, stderr=subprocess.STDOUT)
     try:
         _wait_tcp_listener(_qemu_connect_host(listen_host), port, proc)
@@ -319,7 +328,8 @@ def _spawn_bridge_listen(listen_host: str, port: int,
 
 
 def _spawn_bridge_connect(host: str, port: int,
-                          log_path: str | None = None) -> subprocess.Popen:
+                          log_path: str | None = None,
+                          desktop_mode: str = "interactive") -> subprocess.Popen:
     bridge_bin = _bridge_bin()
     if not os.path.isfile(bridge_bin):
         raise RuntimeError(f"pythonos_bridge binary not found at {bridge_bin} "
@@ -329,11 +339,12 @@ def _spawn_bridge_connect(host: str, port: int,
     print(f"[run-gui] spawning {bridge_bin} connecting to tcp {endpoint}",
           file=sys.stderr)
     stream = open(log_path, "ab", buffering=0) if log_path else None
+    env = dict(os.environ, PYTHONOS_DESKTOP_MODE=desktop_mode)
     return subprocess.Popen([
         bridge_bin,
         "--connect-tcp", endpoint,
         "--connect-timeout-ms", timeout_ms,
-    ], stdout=stream, stderr=subprocess.STDOUT)
+    ], env=env, stdout=stream, stderr=subprocess.STDOUT)
 
 
 def _launch_qemu(cmd: list) -> int:
@@ -370,6 +381,7 @@ def _debug_session(image: str, arch: str, repl_port: int) -> dict | None:
         "version": 1, "arch": arch, "repl": {"host": "127.0.0.1", "port": repl_port},
         "native_remote": paths["native_remote"], "qmp": paths["qmp"], "serial_log": paths["serial_log"],
         "symbols": os.path.abspath(symbols), "image": os.path.abspath(image),
+        "desktop_mode": _desktop_mode(),
         "desktop_co_process": {"pid": None, "log": prefix + ".desktop.log"},
     }
     session["manifest"] = paths["manifest"]
@@ -422,6 +434,7 @@ def main() -> int:
     default_port = "5560" if arch == "x86_64" else "5561"
     port = int(os.environ.get("PYTHONOS_GUI_PORT", default_port))
     gui_app = os.environ.get("PYTHONOS_GUI_APP", "").strip() or None
+    desktop_mode = _desktop_mode()
 
     display  = os.environ.get("QEMU_DISPLAY",  "cocoa" if _macos() else "sdl")
     audiodev = os.environ.get("QEMU_AUDIODEV", "coreaudio" if _macos() else "sdl")
@@ -458,12 +471,13 @@ def main() -> int:
                 bridge_proc = _spawn_bridge_connect(bridge_endpoint[0],
                                                     bridge_endpoint[1],
                                                     debug_session["desktop_co_process"]["log"]
-                                                    if debug_session else None)
+                                                    if debug_session else None,
+                                                    desktop_mode)
             else:
                 bridge_proc = _spawn_bridge_listen(
                     listen_host, listen_port,
                     debug_session["desktop_co_process"]["log"]
-                    if debug_session else None)
+                    if debug_session else None, desktop_mode)
             if debug_session:
                 debug_session["desktop_co_process"]["pid"] = bridge_proc.pid
                 _write_debug_manifest(debug_session)
@@ -476,6 +490,7 @@ def main() -> int:
           + (f", bridge={bridge_transport}://{bridge_endpoint[0]}:{bridge_endpoint[1]}"
              if bridge_endpoint else ", bridge=off")
           + (f", app={gui_app}" if gui_app else "")
+          + f", desktop={desktop_mode}"
           + (f"; guest listens on :{guest_bridge_port}"
              if bridge_endpoint and bridge_transport == "native-tcp" else "")
           + ("; guest auto-starts desktop via fw_cfg"

@@ -8,7 +8,7 @@ Everything below is implemented in Python on top of the same `_hal` extension an
 
 | Command | What it does |
 |---|---|
-| `make run-gui` | Boot **and** auto-launch the desktop with the full app dock. Host-side `tools/run_gui.py` supervises QEMU and `pythonos_bridge`; the guest starts the desktop when the bridge connects. |
+| `make run-gui` | Boot **and** auto-launch the desktop with the full app dock. Host-side `tools/run_gui.py` supervises QEMU and `pythonos_bridge`; the guest starts the desktop when the bridge connects. `PYTHONOS_DESKTOP_MODE=interactive` (default) requests a visible host SDL window; `headless` uses a hidden surface for agent capture and automation. |
 | `make run-gui PYTHONOS_GUI_APP=<name>` | Same, but pre-launch a specific full app, demo, or game. Use `desktop('help')` inside the REPL for the live catalog. |
 | `make run-gui-x86_64` / `make run-gui-arm64` | Explicit per-arch forms. |
 

@@ -248,6 +248,8 @@ help:
 	@echo "                                  audio_tone | starfield | rainfall | plasma | paint |"
 	@echo "                                  life | keyboard | mandelbrot | spirograph |"
 	@echo "                                  sprites | defender | pacmaze | raiders)"
+	@echo "  PYTHONOS_DESKTOP_MODE=<mode>   interactive (visible, default) or headless"
+	@echo "                                 (hidden SDL surface for agent capture/tests)"
 	@echo "  PYTHONOS_BRIDGE_HOST=<addr>    bridge listen address (default: 127.0.0.1)"
 	@echo "  PYTHONOS_BRIDGE_PORT=<port>    bridge TCP port (default: 17010)"
 	@echo "  PYTHONOS_BRIDGE_GUEST_PORT=<p> native guest bridge port (default: 5001)"
