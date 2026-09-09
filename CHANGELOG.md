@@ -6,6 +6,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-09-08
+
+### Other
+- Teach the Makefiles GNU make conventions so incremental builds work.
+- Keep generated images under build/ and move boot files into src/.
+- Pin only bundled apps in the dock and add a desktop launch menu.
+
+
 ### Changed
 - Keep generated ISO/ELF images under `build/` and `build-arm64/`; linker
   scripts and GRUB config live with the C sources in `src/`.
