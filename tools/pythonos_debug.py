@@ -233,10 +233,15 @@ def main() -> int:
                 dbg.execute("from kernel.bridge import bridge; bridge.performance_snapshot(reset=True)")
                 dbg.execute("desktop(" + repr(args.app) + ")")
                 time.sleep(max(0.1, args.seconds))
-                # Paint's body starts at (140,142); these desktop-relative
-                # strokes also validate the compositor local-coordinate path.
-                for kind, x, y, code in (("MOUSE_MOVE", 180, 180, 0),
-                                         ("MOUSE_DOWN", 180, 180, 1),
+                # Paint starts at (140,120): first drag its title bar, then
+                # draw into its moved body. This validates compositor drag,
+                # coordinate translation, and application input in one pass.
+                for kind, x, y, code in (("MOUSE_MOVE", 170, 130, 0),
+                                         ("MOUSE_DOWN", 170, 130, 1),
+                                         ("MOUSE_MOVE", 210, 155, 0),
+                                         ("MOUSE_UP", 210, 155, 1),
+                                         ("MOUSE_MOVE", 190, 190, 0),
+                                         ("MOUSE_DOWN", 190, 190, 1),
                                          ("MOUSE_MOVE", 260, 220, 0),
                                          ("MOUSE_UP", 260, 220, 1)):
                     dbg.execute(
