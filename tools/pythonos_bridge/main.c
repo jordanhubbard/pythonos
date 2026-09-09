@@ -429,6 +429,24 @@ static int op_debug_metrics(BridgeState *st, int id, cJSON *params) {
     return send_ok(st->fd, id, result);
 }
 
+static int op_debug_capture(BridgeState *st, int id, cJSON *params) {
+    cJSON *jpath = cJSON_GetObjectItemCaseSensitive(params, "path");
+    if (!cJSON_IsString(jpath) || !jpath->valuestring || !jpath->valuestring[0]) {
+        return send_err(st->fd, id, 4, "debug.capture: path required");
+    }
+    if (!g_window.open || !g_window.fb) {
+        return send_err(st->fd, id, 7, "debug.capture: display not open");
+    }
+    if (SDL_SaveBMP(g_window.fb, jpath->valuestring) != 0) {
+        return send_err(st->fd, id, 8, SDL_GetError());
+    }
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddStringToObject(result, "path", jpath->valuestring);
+    cJSON_AddNumberToObject(result, "w", g_window.w);
+    cJSON_AddNumberToObject(result, "h", g_window.h);
+    return send_ok(st->fd, id, result);
+}
+
 static int op_hello(BridgeState *st, int id, cJSON *params) {
     int peer_proto = 0;
     cJSON *p = cJSON_GetObjectItemCaseSensitive(params, "protocol");
@@ -1157,6 +1175,7 @@ static const struct {
     { "text.draw",          op_text_draw          },
     { "event.poll",         op_event_poll         },
     { "debug.metrics",      op_debug_metrics      },
+    { "debug.capture",      op_debug_capture      },
 };
 
 #define OP_TABLE_LEN ((int)(sizeof(OP_TABLE) / sizeof(OP_TABLE[0])))

@@ -131,6 +131,8 @@ def main() -> int:
     p_mouse.add_argument("--button", type=int, default=1)
     p_perf = commands.add_parser("perf", help="fetch guest RTT and host bridge service metrics")
     p_perf.add_argument("--reset", action="store_true")
+    p_capture = commands.add_parser("capture", help="save the host SDL desktop as a BMP")
+    p_capture.add_argument("path", nargs="?", default="build/pythonos-debug.bmp")
     p_exercise = commands.add_parser("exercise", help="launch and drive an app without human input")
     p_exercise.add_argument("app", help="registry app/demo/game name")
     p_exercise.add_argument("--seconds", type=float, default=1.0,
@@ -189,6 +191,10 @@ def main() -> int:
                 reply = dbg.execute(
                     "from kernel.bridge import bridge; print(bridge.performance_snapshot(reset=%s))"
                     % bool(args.reset))
+            elif args.command == "capture":
+                reply = dbg.execute(
+                    "from kernel.bridge import bridge; print(bridge.call('debug.capture', {'path': %r}))"
+                    % os.path.abspath(args.path))
             elif args.command == "exercise":
                 # A deterministic smoke workload suitable for an agent loop:
                 # open, exercise both pointer and keyboard routing, sample

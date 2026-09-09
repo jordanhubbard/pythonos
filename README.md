@@ -110,6 +110,7 @@ python3 tools/pythonos_debug.py qmp status
 python3 tools/pythonos_debug.py native -- "bt" "info registers"
 python3 tools/pythonos_debug.py exercise paint
 python3 tools/pythonos_debug.py perf
+python3 tools/pythonos_debug.py capture build/pythonos-debug.bmp
 ```
 
 This creates `build/pythonos-debug.json` with loopback-only TCP REPL details,

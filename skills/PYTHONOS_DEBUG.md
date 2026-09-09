@@ -21,6 +21,7 @@ python3 tools/pythonos_debug.py qmp stop
 python3 tools/pythonos_debug.py native -- "bt" "info registers"
 python3 tools/pythonos_debug.py exercise paint
 python3 tools/pythonos_debug.py perf
+python3 tools/pythonos_debug.py capture build/pythonos-debug.bmp
 ```
 
 Debug mode writes `build/pythonos-debug.json`, which records the local TCP
@@ -61,6 +62,10 @@ two distinct measurements: guest-observed RPC round trips (including guest
 transport/scheduling) and host bridge service time per operation. Compare
 these before and after a change; stop via QMP and inspect native stacks when a
 latency spike coincides with a stall or warning in `serial`.
+
+Use `capture PATH` to save the actual host SDL desktop as a BMP. Inspect that
+image directly after every visual workload; QEMU screendumps do not see bridge
+mode because the host companion, not QEMU, owns the visible window.
 
 ## Input invariants
 
