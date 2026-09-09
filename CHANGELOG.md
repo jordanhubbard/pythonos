@@ -6,6 +6,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-08
+
+### Fixed
+- Fix macOS Docker installation and test bare make in CI
+
+### Other
+- Fall back to TCG when /dev/kvm exists but is not writable.
+- CI build, smoke, and publish the x86_64 ISO as well as the arm64 ELF.
+- Revert "Adopt pythonos into literate-ai via litai init --convert"
+- Adopt pythonos into literate-ai via litai init --convert
+
+
 ### Fixed
 - CI builds, smokes, and uploads the x86_64 ISO as well as the arm64 ELF;
   `make release` attaches both images from those artifacts.
