@@ -1,6 +1,0 @@
-{
-  "schema": "urn:literate-ai:schema:v2:standard-build-system-command-profile",
-  "target": "make",
-  "toolchain": "make",
-  "target_label": "all"
-}

@@ -114,5 +114,3 @@ When ending a work session:
 3. Close or update mac tasks to match reality
 4. Commit and push only when the user asks
 <!-- END MAC INTEGRATION -->
-
-<!-- literate-ai: See SKILL.md for project-specific agent guidance. -->

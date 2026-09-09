@@ -39,15 +39,3 @@ deps-arm64/
 .dolt/
 *.db
 .beads-credential-key
-
-# literate-ai additions
-generated/*
-!generated/committed-source-cache/
-.litai-cache-locks/
-.component*.write.lock
-/literate.test.json
-.venv/
-*.py[cod]
-*.egg-info/
-_build/
-dist/

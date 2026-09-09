@@ -1,5 +1,0 @@
-{
-  "schema": "urn:literate-ai:schema:v2:toolchain-constraint",
-  "toolchain": "python",
-  "minimum_version": [3, 11]
-}
