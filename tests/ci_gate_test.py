@@ -97,6 +97,13 @@ def main() -> int:
 
     check("test-x86_64 waits for the disk image",
           "test-x86_64: test-chipset $(ISO_OUT) $(DISK_IMG)" in makefile)
+    check("makefile KVM requires /dev/kvm is writable",
+          "test -r /dev/kvm -a -w /dev/kvm" in makefile)
+    smoke = _read("tests/smoke_test.py")
+    check("serial smoke skips KVM without write access",
+          'os.access("/dev/kvm"' in smoke)
+    check("CI forces TCG so KVM permission cannot abort QEMU",
+          "PYTHONOS_QEMU_ACCEL: tcg" in ci)
 
     if _failed:
         print(f"\n{_failed} failed, {_passed} passed")

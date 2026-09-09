@@ -42,9 +42,23 @@ def _qemu_accel_for(target_arch: str) -> list:
         return ["-cpu", "qemu64" if target_arch == "x86_64" else "cortex-a57"]
     if target_arch == "arm64":
         return ["-cpu", "cortex-a57"]
-    accel = "hvf" if host_os == "Darwin" else ("kvm" if host_os == "Linux" else None)
-    if accel == "kvm" and not os.path.exists("/dev/kvm"):
-        accel = None
+    mode = os.environ.get("PYTHONOS_QEMU_ACCEL", "auto").strip().lower() or "auto"
+    if mode not in ("auto", "kvm", "tcg"):
+        raise ValueError("PYTHONOS_QEMU_ACCEL must be auto, kvm, or tcg")
+    if mode == "tcg":
+        return ["-cpu", "qemu64"]
+
+    kvm_ok = (host_os == "Linux"
+              and os.path.exists("/dev/kvm")
+              and os.access("/dev/kvm", os.R_OK | os.W_OK))
+    if mode == "kvm" and (host_os != "Linux" or not kvm_ok):
+        raise ValueError(
+            "PYTHONOS_QEMU_ACCEL=kvm requested, but KVM is not usable")
+    accel = None
+    if host_os == "Darwin":
+        accel = "hvf"
+    elif host_os == "Linux" and kvm_ok:
+        accel = "kvm"
     if accel:
         return ["-cpu", "host", "-accel", accel]
     return ["-cpu", "qemu64"]

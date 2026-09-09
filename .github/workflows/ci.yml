@@ -18,6 +18,7 @@ jobs:
     env:
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy
+      PYTHONOS_QEMU_ACCEL: tcg
       PYTHONOS_GUI_BOOT_TIMEOUT: "90"
       PYTHONOS_AUDIO_BOOT_TIMEOUT: "90"
     strategy:

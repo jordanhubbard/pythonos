@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - CI builds, smokes, and uploads the x86_64 ISO as well as the arm64 ELF;
   `make release` attaches both images from those artifacts.
+- Serial smoke and the makefile fall back to TCG when `/dev/kvm` exists
+  but is not writable (GitHub-hosted x86 runners).
 
 ## [0.3.0] - 2026-09-08
 

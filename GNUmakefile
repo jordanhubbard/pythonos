@@ -58,8 +58,9 @@ HOST_ACCEL := hvf
 QEMU_DISPLAY  ?= cocoa
 QEMU_AUDIODEV ?= coreaudio
 else ifeq ($(HOST_OS),Linux)
-# GitHub-hosted runners often lack /dev/kvm; do not pass -accel kvm then.
-ifneq ($(wildcard /dev/kvm),)
+# Need read+write, not just a node. GitHub-hosted runners often have
+# /dev/kvm with mode that denies the runner user (Permission denied).
+ifeq ($(shell test -r /dev/kvm -a -w /dev/kvm && echo yes),yes)
 HOST_ACCEL := kvm
 else
 HOST_ACCEL :=
