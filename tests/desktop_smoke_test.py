@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-End-to-end desktop smoke: boot the kernel, send `pythonos_gui
-bouncing_ball` over the TCP REPL, screendump, and verify the
+End-to-end desktop smoke: boot the kernel, send `desktop('bouncing_ball')`
+over the TCP REPL, screendump, and verify the
 compositor-rendered desktop is visible with three signature pixels:
 
     desktop background  (11, 17, 35)   = bundled background at (30, 30)
     title-bar chrome    (34, 68, 136)  = 0x224488 (focused)
     bouncing_ball body  (16, 24, 32)   = 0x101820
 
-This is the pythonos_gui happy path — the same flow `make run-gui`
-exercises for users, just with `-display none` and a monitor socket so
+This is the public desktop() happy path — the same guest launcher users can
+call after boot, just with `-display none` and a monitor socket so
 we can screendump for assertions.
 """
 
@@ -89,9 +89,9 @@ def main() -> int:
             except (TimeoutError, BlockingIOError, OSError):
                 continue
 
-        # Auto-launch the desktop.
-        s.sendall(b"pythonos_gui bouncing_ball\n")
-        print("[desktop-smoke] sent: pythonos_gui bouncing_ball")
+        # Auto-launch the desktop through the public REPL helper.
+        s.sendall(b"desktop('bouncing_ball')\n")
+        print("[desktop-smoke] sent: desktop('bouncing_ball')")
 
         mon = QemuMonitor(MON, connect_timeout=5)
         try:

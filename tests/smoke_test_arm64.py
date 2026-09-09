@@ -221,6 +221,11 @@ def run() -> int:
             # ef6.4: /home is mounted from ext2 (arm64) — round-trip a small
             # file via /examples/check_home.py.
             ("run('/examples/check_home.py')\n", "EF64_HOME_OK"),
+            ("help\n", "desktop('pacmaze')"),
+            ("desktop('help')\n", "Games: defender, pacmaze, raiders, sprites"),
+            ("examples()\n", "Frozen examples in /examples:"),
+            ("halt\n", "PythonOS has no guest halt command"),
+            ("exit()\n", "The native kernel console stays active."),
         ]:
             response = _send_and_wait(expr)
             if not response:
@@ -240,10 +245,24 @@ def run() -> int:
             print("[FAIL] sh() did not enter shell mode")
             failed += 1
         else:
+            if "help | examples | desktop [APP] | exit" in entered_sh:
+                print("[PASS] sh() banner advertises help and examples")
+                passed += 1
+            else:
+                print("[FAIL] sh() banner does not advertise help and examples")
+                failed += 1
+            help_response = _send_and_wait("help\n", end="$ ")
             cd_response = _send_and_wait("cd /bin\n", end="$ ")
             tab_response = _send_and_wait("sys\t\n", end="cwd: /bin")
             prompt_response = _send_and_wait("", end="$ ")
             exit_response = _send_and_wait("exit\n", end=">>> ")
+            if (not help_response or
+                    "Bundled examples:" not in help_response):
+                print("[FAIL] sh() help does not show examples")
+                failed += 1
+            else:
+                print("[PASS] sh() help shows desktop and examples")
+                passed += 1
             if (not cd_response or not tab_response or
                     not prompt_response or not exit_response):
                 print("[FAIL] sh() tab-completion flow did not return prompts")

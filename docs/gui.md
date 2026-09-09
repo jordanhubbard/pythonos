@@ -1,6 +1,6 @@
 # PythonOS GUI subsystem
 
-The GUI is an opt-in layer over the bare-metal kernel — the default boot path is unchanged (`make run` / `make test` still go to a serial-only `>>>` prompt with no SDL window). When you opt in via `make run-gui`, the kernel comes up with a framebuffer, a stacking compositor, mouse + keyboard input, and audio output, and the desktop auto-launches with a full app dock.
+The GUI is an opt-in layer over the bare-metal kernel — the default boot path is unchanged (`make run` / `make test` still go to a serial-only `>>>` prompt with no SDL window). When you opt in via `make run-gui`, the host bridge opens the display and the guest's stacking compositor auto-launches with mouse, keyboard, audio, and a full app dock.
 
 Everything below is implemented in Python on top of the same `_hal` extension and asyncio scheduler the rest of the kernel uses; there is no libSDL2 inside the guest. The `sdl2` Python package mimics PySDL2's surface so unmodified PySDL2 sample code can be copied in unchanged.
 
@@ -8,9 +8,22 @@ Everything below is implemented in Python on top of the same `_hal` extension an
 
 | Command | What it does |
 |---|---|
-| `make run-gui` | Boot **and** auto-launch the desktop with the full app dock. Host-side `tools/run_gui.py` spawns `pythonos_bridge`, brings up an SDL window, and sends the kickoff command over the TCP REPL once the kernel is up. |
-| `make run-gui PYTHONOS_GUI_APP=<name>` | Same, but pre-launch a specific app: `terminal` / `editor` / `files` / `image_viewer` / `sysmon` / `about` / `clock` / `toaster` for full apps; `bouncing_ball` / `audio_tone` / `starfield` / `rainfall` / `plasma` / `paint` / `life` / `sprites` / `defender` / `pacmaze` / `raiders` for demos. |
+| `make run-gui` | Boot **and** auto-launch the desktop with the full app dock. Host-side `tools/run_gui.py` supervises QEMU and `pythonos_bridge`; the guest starts the desktop when the bridge connects. |
+| `make run-gui PYTHONOS_GUI_APP=<name>` | Same, but pre-launch a specific full app, demo, or game. Use `desktop('help')` inside the REPL for the live catalog. |
 | `make run-gui-x86_64` / `make run-gui-arm64` | Explicit per-arch forms. |
+
+From the native Python prompt, a TCP REPL, or the desktop terminal itself,
+use the public launcher and its built-in catalog:
+
+```python
+>>> desktop()
+>>> desktop('pacmaze')
+>>> desktop('help')
+```
+
+The Unix-like `$` sub-shell accepts `desktop`, `desktop pacmaze`, and
+`desktop --list`. `pythonos_gui` remains available for compatibility with
+the older direct-framebuffer launch path.
 
 Inside the compositor:
 
@@ -24,7 +37,7 @@ Inside the compositor:
 ```
                 ┌──────────── REPL (serial, always available) ───────────┐
                 │                                                         │
-       pythonos_gui          apps/{terminal, editor, files, …}            │
+          desktop()          apps/{terminal, editor, files, …}            │
                 │                          ▲                              │
                 ▼                          │                              │
        kernel.gui.compositor ───── damage rects ──→ kernel.display.fb      │
@@ -119,14 +132,16 @@ Color theme: desktop background `0x202840`, focused-window chrome `0x224488`, un
 
 ## Apps
 
-Apps live under `apps/` and self-register at import time via `apps.registry`. The `pythonos_gui` REPL command imports every app package and then either lists them or launches the requested one.
+Apps live under `apps/` and self-register at import time via `apps.registry`.
+The `desktop()` REPL helper imports every app package and then opens the
+desktop or launches the requested one; `desktop('help')` prints the registry.
 
 | App | Source | Description |
 |---|---|---|
 | `terminal` | `apps/terminal/term.py` | Embeds `kernel.shell.Shell` in a 640×400 windowed text grid. Cursor blink + ANSI escape consumer + true scrollback (no content loss on overflow). |
 | `editor` | `apps/editor/edwin.py` | Drives `kernel.ed.run` line editor in a 720×480 text grid. |
 | `files` | `apps/files/browser.py` | Arrow-key file browser with TCP send/recv. |
-| `image_viewer` | `apps/image_viewer/viewer.py` | `pythonos_gui image_viewer <path>`; loads BMP / PPM / PNG / JPEG. |
+| `image_viewer` | `apps/image_viewer/viewer.py` | `desktop('image_viewer')`; loads BMP / PPM / PNG / JPEG. |
 | `sysmon` | `apps/sysmon/sysmon.py` | Live kernel state — uptime, free RAM (with mini history graph), scheduler process list. Refreshes at 2 Hz. |
 | `about` | `apps/about/about.py` | "About PythonOS" — version, arch, SMP CPUs, free RAM, project goals. |
 | `clock` | `apps/clock/clock.py` | Big-digit uptime clock with bespoke 5×7 pixel font scaled 5×. Reference for "render text without using the bitmap font path". |
@@ -166,10 +181,10 @@ v.copper.instructions = [Wait(0), Move("COLOR00", 0x102040)]
 chipset.load_view(v)
 ```
 
-Demos: `pythonos_gui sprites` (sprites + copper + Paula; arrows move,
+Demos: `desktop('sprites')` (sprites + copper + Paula; arrows move,
 space fires), `defender` (scrolling hills + landers), `pacmaze`
 (pellets and ghosts), `raiders` (Galaxian-style formation), and
-`pythonos_gui toaster` (dual playfields + wipe). ESC
+`desktop('toaster')` (dual playfields + wipe). ESC
 returns to Workbench. While the chipset clock runs, the compositor
 paints Workbench playfields (windows, dock, menubar) and does not call
 `fb.present` — the raster is the only present path. Host tests:
@@ -181,17 +196,17 @@ See `docs/superpowers/specs/2026-09-08-chipset-multimedia-os-design.md`.
 
 | Suite | Covers | At HEAD |
 |---|---|---|
-| `tests/smoke_test.py` | x86 default boot + TCP REPL (incl. dynamic compile, vfs_import, multi-line def) | 46 PASS |
-| `tests/smoke_test_arm64.py` | arm64 default boot + PL011 | 30 PASS |
-| `tests/gui_smoke_test.py` | x86 GUI: sdl2 corpus, compositor render, mouse pipeline, pointer round-trip, serial markers | 23 PASS |
-| `tests/desktop_smoke_test.py` | x86 end-to-end: `pythonos_gui bouncing_ball` auto-launch + pixel-perfect checks + tile-hash golden | 5 PASS |
+| `tests/smoke_test.py` | x86 default boot + TCP REPL (incl. dynamic compile, vfs_import, multi-line def) | 55 PASS |
+| `tests/smoke_test_arm64.py` | arm64 default boot + PL011 | 37 PASS |
+| `tests/gui_smoke_test.py` | x86 GUI: sdl2 corpus, compositor render, mouse pipeline, pointer round-trip, serial markers | 26 PASS |
+| `tests/desktop_smoke_test.py` | x86 end-to-end: `desktop('bouncing_ball')` launch + pixel-perfect checks + tile-hash golden | 5 PASS |
 | `tests/audio_smoke_test.py` | x86 audio pipeline: `-audiodev wav,id=a`, runs `examples/tone.py`, parses captured WAV | 6 PASS |
 | `tests/gui_smoke_test_arm64.py` | arm64 GUI: ramfb + virtio-input + screendump + sendkey | 8 PASS |
 
 Two pieces of test infrastructure are reusable on their own:
 
 - **`tests/qmp_helper.py`** — `QemuMonitor` wraps QEMU's HMP unix socket (`screendump`, `sendkey`, `mouse_move`, `mouse_button`); `parse_ppm` + `sample_pixel` + `color_close` for pixel checks; `tile_hashes` + `golden_check_or_refresh` for tile-hash goldens (`PYTHONOS_GOLDEN_REFRESH=1` to regenerate).
-- **`tests/goldens/x86_64/desktop.tilehashes`** — 3072-tile sha256 baseline of the `pythonos_gui bouncing_ball` desktop. Compared with `max_diffs=200` to tolerate the bouncing animation + minor jitter.
+- **`tests/goldens/x86_64/desktop.tilehashes`** — 3072-tile sha256 baseline of the `desktop('bouncing_ball')` desktop. Compared with `max_diffs=200` to tolerate the bouncing animation + minor jitter.
 
 ## What's not in the GUI subsystem
 

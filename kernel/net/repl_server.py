@@ -77,7 +77,8 @@ async def _session(conn) -> None:
 
     try:
         shell = Shell(read_char=read_char, write=write,
-                      read_byte=read_byte, write_raw=write_raw)
+                      read_byte=read_byte, write_raw=write_raw,
+                      can_exit=True)
         shell._ns["chat"] = chat_obj
         await shell.run()
     except EOFError:

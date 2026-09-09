@@ -55,6 +55,14 @@ SCRIPTS = {
         "from kernel import commands\n"
         "await commands.ed(argv, cwd, _write)\n"
     ),
+    "desktop.py": (
+        "from kernel import commands\n"
+        "await commands.desktop(argv, cwd, _write)\n"
+    ),
+    "examples.py": (
+        "from kernel import commands\n"
+        "await commands.examples(argv, cwd, _write)\n"
+    ),
     "pythonos_gui.py": (
         "from kernel import commands\n"
         "await commands.pythonos_gui(argv, cwd, _write)\n"
@@ -340,14 +348,96 @@ async def ed(argv: list[str], cwd: str, write, read_char=None) -> None:
     await _ed_run(argv, cwd, write, read_char)
 
 
+def _load_desktop_registry():
+    """Import every bundled app and return the populated registry."""
+    import apps                             # noqa: F401
+    import apps.demos                       # noqa: F401
+    import apps.terminal                    # noqa: F401
+    import apps.editor                      # noqa: F401
+    import apps.image_viewer                # noqa: F401
+    import apps.files                       # noqa: F401
+    import apps.sysmon                      # noqa: F401
+    import apps.about                       # noqa: F401
+    import apps.clock                       # noqa: F401
+    import apps.toaster                     # noqa: F401
+    from apps import registry
+    return registry
+
+
+def _desktop_listing(write, registry) -> None:
+    groups = {"app": [], "demo": [], "game": []}
+    for info in registry.list_apps():
+        groups.setdefault(info.category, []).append(info.name)
+    for names in groups.values():
+        names.sort()
+
+    _line(write, "Desktop apps: " + ", ".join(groups["app"]))
+    _line(write, "Demos: " + ", ".join(groups["demo"]))
+    _line(write, "Games: " + ", ".join(groups["game"]))
+    _line(write, "Start: desktop() or desktop('pacmaze')")
+    _line(write, "Shell: desktop or desktop pacmaze")
+
+
+async def desktop(argv: list[str], cwd: str, write) -> None:
+    """Public desktop launcher for both bridge and framebuffer boots."""
+    if len(argv) > 1:
+        _line(write, "usage: desktop [APP]")
+        _line(write, "       desktop --list")
+        return
+
+    registry = _load_desktop_registry()
+    requested = argv[0] if argv else None
+    if requested in ("help", "-h", "--help", "list", "--list"):
+        _desktop_listing(write, registry)
+        return
+
+    if requested and registry.get(requested) is None:
+        _line(write, "desktop: unknown app: " + requested)
+        _desktop_listing(write, registry)
+        return
+
+    # The legacy framebuffer path has a guest framebuffer and input queue.
+    # Normal `make run-gui` uses the host bridge and deliberately has no
+    # guest framebuffer, so hand that path to py_desktop().
+    from kernel.display.framebuffer import fb
+    if fb is not None:
+        from kernel.gui import input as _gui_input
+        if _gui_input.queue:
+            await pythonos_gui([requested] if requested else [], cwd, write)
+            return
+
+    from kernel.bridge import py_desktop
+    compositor = py_desktop(requested)
+    if compositor is None:
+        _line(write, "desktop: unavailable (boot from the host with `make run-gui`)")
+        return
+    if requested:
+        _line(write, "desktop: started + " + requested)
+    else:
+        _line(write, "desktop: started")
+
+
+async def examples(argv: list[str], cwd: str, write) -> None:
+    """List the readable programs frozen into /examples."""
+    if argv:
+        _line(write, "usage: examples")
+        return
+    names = [name for name in await vfs.readdir("/examples")
+             if name not in (".", "..")]
+    names.sort()
+    _line(write, "Frozen examples in /examples:")
+    _line(write, "  " + "  ".join(names))
+    _line(write, "Run: run('/examples/hello_kernel.py')")
+    _line(write, "More: cat /examples/README.txt")
+
+
 async def pythonos_gui(argv: list[str], cwd: str, write) -> None:
     """Start the GUI desktop. Refuses to run without a framebuffer +
-    GUI input bound. Lists registered apps; ``pythonos_gui <name>``
-    launches one directly. With no argument, launches the first app
-    (or a banner if there are none)."""
+    GUI input bound. ``pythonos_gui <name>`` launches one app directly;
+    with no argument it opens the desktop and returns to the REPL."""
     from kernel.display.framebuffer import fb
     if not fb:
-        _line(write, "pythonos_gui: no framebuffer (boot in GUI mode: make run-gui)")
+        _line(write, "pythonos_gui: no framebuffer (use desktop() in make run-gui)")
         return
 
     from kernel.gui import input as _gui_input
@@ -356,17 +446,7 @@ async def pythonos_gui(argv: list[str], cwd: str, write) -> None:
         return
 
     # Importing apps triggers each app module's registry.register() call.
-    import apps                             # noqa: F401
-    import apps.demos                        # noqa: F401
-    import apps.terminal                     # noqa: F401
-    import apps.editor                       # noqa: F401
-    import apps.image_viewer                 # noqa: F401
-    import apps.files                        # noqa: F401
-    import apps.sysmon                       # noqa: F401
-    import apps.about                        # noqa: F401
-    import apps.clock                        # noqa: F401
-    import apps.toaster                      # noqa: F401
-    from apps import registry
+    registry = _load_desktop_registry()
     from kernel.gui.compositor import compositor
     from kernel.gui.desktop import seed_desktop
 
@@ -376,6 +456,7 @@ async def pythonos_gui(argv: list[str], cwd: str, write) -> None:
         return
 
     requested = argv[0] if argv else None
+    target = None
     if requested:
         info = registry.get(requested)
         if info is None:
@@ -383,10 +464,9 @@ async def pythonos_gui(argv: list[str], cwd: str, write) -> None:
             _line(write, "available: " + ", ".join(a.name for a in apps_list))
             return
         target = info
-    else:
-        target = apps_list[0]
 
-    _line(write, f"pythonos_gui: starting compositor + {target.name}")
+    suffix = " + " + target.name if target is not None else ""
+    _line(write, "pythonos_gui: starting compositor" + suffix)
     try:
         from kernel.chipset import start_for_gui
         start_for_gui()
@@ -397,6 +477,9 @@ async def pythonos_gui(argv: list[str], cwd: str, write) -> None:
     except Exception as e:
         _line(write, f"pythonos_gui: desktop seed skipped: {e}")
     compositor.start()
+    if target is None:
+        _line(write, "pythonos_gui: desktop started")
+        return
     compositor._dock.ensure(target.name, target.entry, target.icon_factory)
     try:
         await compositor._launch_dock_app(target.name, target.entry)

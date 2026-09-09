@@ -57,18 +57,12 @@ Opt-in graphical desktop with a stacking compositor, macOS-style menu bar (Pytho
 A software **chipset** (`kernel.chipset`) owns the scan while the GUI
 clock runs: copper lists, dual playfields, eight sprites, a blitter, and
 four Paula audio channels — all pure Python. LoadView games:
-`pythonos_gui sprites`, `defender`, `pacmaze`, `raiders`, and
-`pythonos_gui toaster`. ESC returns to Workbench.
+`desktop('sprites')`, `desktop('defender')`, `desktop('pacmaze')`,
+`desktop('raiders')`, and `desktop('toaster')`. ESC returns to Workbench.
 `make test-chipset` runs the host-side chipset, arcade, and dock tests without QEMU.
 
 ```bash
-# Boot to framebuffer REPL inside an SDL window;
-# type `pythonos_gui` at >>> to open the compositor + an app.
-make run-gui
-
-# Boot AND auto-launch the desktop in one step (host runs a small
-# launcher that sends `pythonos_gui <app>` over the TCP REPL once
-# the kernel comes up).
+# Boot and auto-launch the desktop in one step.
 make run-gui
 PYTHONOS_GUI_APP=terminal     make run-gui
 PYTHONOS_GUI_APP=editor       make run-gui
@@ -81,6 +75,20 @@ PYTHONOS_GUI_APP=pacmaze      make run-gui
 PYTHONOS_GUI_APP=raiders      make run-gui
 PYTHONOS_GUI_APP=toaster      make run-gui
 ```
+
+The same launcher is available inside every PythonOS REPL. `desktop()`
+opens the desktop, an optional name launches one bundled program, and
+`desktop('help')` lists everything frozen into the interpreter:
+
+```python
+>>> desktop()
+>>> desktop('pacmaze')
+>>> desktop('help')
+```
+
+In the `$` sub-shell, use `desktop`, `desktop pacmaze`, or
+`desktop --list`. The older `pythonos_gui` command remains as a compatibility
+name for the direct framebuffer backend.
 
 Inside the compositor:
 - **Tab** / **Shift-Tab** cycles focus between windows.
@@ -114,8 +122,10 @@ Each connection gets an independent kernel shell with access to all live kernel 
 ```
 PythonOS kernel shell
 Python 3.14.0a0
-Type 'help' for help.
+Type help or help() for commands, demos, and examples.
 Commands: ls ps pwd cd cat cp mv ftp ed sysinfo netstat
+Desktop: desktop()  desktop('pacmaze')  desktop('help')
+Examples: examples()  run('/examples/hello_kernel.py')
 Helpers: sh()  sh('cmd args')  run('/path')  clear()
 
 >>> 1 + 1
@@ -125,11 +135,12 @@ PythonOS
 Scheduler: 3 tasks
 cwd: /
 >>> ls /bin
-.  ..  ls.py  ps.py  pwd.py  cd.py  cat.py  cp.py  mv.py  ftp.py  ed.py  sysinfo.py  netstat.py
+.  ..  ls.py  ps.py  pwd.py  cd.py  cat.py  cp.py  mv.py  ftp.py  ed.py  sysinfo.py  netstat.py  desktop.py  examples.py
 >>> cd /tmp
 >>> pwd
 /tmp
 >>> sh()
+PythonOS shell: help | examples | desktop [APP] | exit
 $ sysinfo
 PythonOS
 Scheduler: 3 tasks
@@ -185,6 +196,8 @@ Arguments are split on whitespace and passed to the script as `argv`:
 | `ed [path]` | ed-style line editor |
 | `sysinfo` | System overview |
 | `netstat` | Network interface status |
+| `desktop [APP]` | Open the desktop, optionally launching a bundled app, demo, or game |
+| `examples` | List the readable programs frozen into `/examples` |
 
 #### Shell sub-REPL: `sh()`
 
@@ -192,11 +205,15 @@ Calling `sh()` with no arguments drops into an interactive shell with a `$ ` pro
 
 ```
 >>> sh()
+PythonOS shell: help | examples | desktop [APP] | exit
 $ ls /bin
-.  ..  ls.py  ps.py  pwd.py  cd.py  cat.py  cp.py  mv.py  ftp.py  ed.py  sysinfo.py  netstat.py
+.  ..  ls.py  ps.py  pwd.py  cd.py  cat.py  cp.py  mv.py  ftp.py  ed.py  sysinfo.py  netstat.py  desktop.py  examples.py
 $ cd /tmp
 $ pwd
 /tmp
+$ help
+$ examples
+$ desktop --list
 $ /examples/tone.py
 $ exit
 >>> cwd        # cwd change is visible back in Python
@@ -312,10 +329,10 @@ make test-gui       # GUI subsystem smoke (headless screendump + audio capture)
 
 `make test-gui` runs three additional suites on x86_64 (or one on arm64):
 - **gui smoke** — sdl2 corpus (`hello`/`renderer`/`text`/`image`/`jpeg`), compositor render, mouse pipeline, pointer round-trip, serial markers
-- **desktop smoke** — boots, auto-launches `pythonos_gui bouncing_ball`, screendumps, asserts pixel-exact desktop bg + title bar + window body + tile-hash golden
+- **desktop smoke** — boots, launches `desktop('bouncing_ball')`, screendumps, asserts pixel-exact desktop bg + title bar + window body + tile-hash golden
 - **audio smoke** — boots with `-audiodev wav,id=a`, runs `examples/tone.py`, verifies the captured WAV header (48 kHz / 2ch / 16-bit)
 
-Counts at HEAD: 41 / 28 / 23 / 5 / 6 / 8 across the six suites (default x86, default arm64, x86 gui, x86 desktop, x86 audio, arm64 gui) — **111 tests** total.
+Counts at HEAD: 55 / 37 / 26 / 5 / 6 / 8 across the six suites (default x86, default arm64, x86 gui, x86 desktop, x86 audio, arm64 gui) — **137 tests** total.
 
 GitHub Actions runs that gate on **both** architectures: `ubuntu-24.04` builds `build/pythonos.iso` and runs the x86 serial + GUI smokes; `ubuntu-24.04-arm` builds `build-arm64/pythonos-arm64.elf` and runs the arm64 smokes. Each job uploads its bootable image. `make release` waits for that workflow, then attaches **both** files to the GitHub release.
 
@@ -391,7 +408,9 @@ U-Boot / QEMU direct kernel load
 
 PythonOS kernel shell
 Python 3.14.0
-Type 'help' for kernel commands.
+Type help or help() for commands, demos, and examples.
+Desktop: desktop()  desktop('pacmaze')  desktop('help')
+Examples: examples()  run('/examples/hello_kernel.py')
 
 >>>
 ```
@@ -483,7 +502,8 @@ apps/                  built-in GUI applications (frozen, registered via apps.re
   about/             "About PythonOS" version + system info window
   clock/             big-digit uptime clock with bespoke 5x7 font
   demos/             bouncing_ball, audio_tone, starfield, rainfall,
-                     plasma, paint (mouse-driven), life (Conway's CA)
+                     plasma, paint, life, keyboard, mandelbrot, spirograph,
+                     sprites, defender, pacmaze, raiders
   _textwin.py        shared text-grid view used by terminal + editor
   _icons.py          dock icon factories (48x48 SDL_Surface generators)
   registry.py        AppInfo / register / list_apps used by dock + menus
@@ -491,7 +511,8 @@ apps/                  built-in GUI applications (frozen, registered via apps.re
 bin/  (seeded in tmpfs at boot — add .py files here to create new shell commands)
   ls.py, ps.py, pwd.py, cd.py, cat.py, cp.py, mv.py, ftp.py, ed.py — filesystem / transfer utilities
   sysinfo.py, netstat.py                                  — system / network status
-  pythonos_gui.py                                          — desktop launcher
+  desktop.py, examples.py                                  — public catalogs / launchers
+  pythonos_gui.py                                          — legacy framebuffer launcher
 
 examples/          frozen runnable demos, also seeded as readable source in /examples
   hello_kernel.py, vfs_demo.py, async_tasks.py, primes.py, tone.py,
@@ -507,14 +528,14 @@ tests/
   smoke_test_arm64.py      arm64 default smoke (PL011 serial)
   gui_smoke_test.py        x86 GUI smoke (sdl2 corpus + compositor + pixel checks)
   gui_smoke_test_arm64.py  arm64 GUI smoke (ramfb + virtio-input + screendump)
-  desktop_smoke_test.py    end-to-end pythonos_gui auto-launch + tile-hash golden
+  desktop_smoke_test.py    end-to-end desktop() launch + tile-hash golden
   audio_smoke_test.py      WAV-capture audio pipeline check
   qmp_helper.py            QEMU monitor wrapper (screendump, sendkey, mouse_*)
   goldens/x86_64/          checked-in tile-hash goldens (refresh: PYTHONOS_GOLDEN_REFRESH=1)
 
 tools/
   freeze_kernel.py   compiles kernel + apps + examples → frozen C bytecode in the ELF
-  run_gui.py     boots QEMU then auto-sends `pythonos_gui` to the TCP REPL
+  run_gui.py     supervises QEMU + bridge and requests desktop auto-start
   stdlib_stubs/      bare-metal replacements for stdlib modules that assume
                      a POSIX host (dataclasses, functools, os, ctypes, sdl2, …)
   Dockerfile         Ubuntu 24.04 cross-compilation environment

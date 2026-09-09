@@ -11,8 +11,8 @@ host SDL window opens. Connects to the kernel's TCP REPL and exercises:
        and "GUI input ready (PS/2)".
     2. `import sdl2` resolves without ImportError.
     3. `examples/sdl_hello.py` runs and prints "sdl_hello: ok".
-    4. The `pythonos_gui` command is reachable (validated by listing
-       /bin which now contains pythonos_gui.py).
+    4. The public `desktop` command is reachable (validated by listing
+       /bin, which also retains the legacy pythonos_gui.py alias).
 
 The default `tests/smoke_test.py` is unchanged and remains the gate
 for `make test`. This new test runs under `make test-gui-x86_64`.
@@ -197,8 +197,11 @@ def main() -> int:
               "sdl_jpeg: ok" in out,
               detail=out.splitlines()[-1] if out.strip() else "(empty)")
 
-        # 2. /bin/pythonos_gui.py is registered.
+        # 2. /bin/desktop.py and the legacy pythonos_gui.py are registered.
         out = _send(s, "sh('ls /bin')", wait=3.0)
+        check("/bin/desktop.py present",
+              "desktop" in out,
+              detail="present" if "desktop" in out else "missing")
         check("/bin/pythonos_gui.py present",
               "pythonos_gui" in out,
               detail="present" if "pythonos_gui" in out else "missing")

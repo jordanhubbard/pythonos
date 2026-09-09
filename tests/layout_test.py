@@ -107,6 +107,11 @@ def main() -> int:
           re.search(r"^\.docker-image:.*FORCE", makefile, re.M) is None)
     check("frozen_kernel.c is a real target",
           "$(BUILD)/frozen_kernel.c:" in makefile)
+    freezer = _read("tools/freeze_kernel.py")
+    check("freezer fails instead of silently omitting invalid modules",
+          "ERROR: cannot freeze" in freezer
+          and "raise SystemExit(1) from e" in freezer
+          and "WARNING: skipping" not in freezer)
     check("C compiles emit -MMD dependencies",
           "DEPFLAGS = -MMD" in makefile)
 

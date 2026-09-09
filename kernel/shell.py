@@ -51,11 +51,14 @@ class Shell:
                  read_char: Callable[[], Awaitable[str]],
                  write: Callable[[str], None],
                  read_byte=None,
-                 write_raw=None) -> None:
+                 write_raw=None,
+                 can_exit: bool = False) -> None:
         self._read       = read_char
         self._write      = write
         self._read_byte  = read_byte
         self._write_raw  = write_raw
+        self._can_exit   = can_exit
+        self._exit_requested = False
         self._block      = ""         # accumulated multi-line block
         self._cwd        = "/"        # current working directory
         self._ns         = self._build_namespace()
@@ -98,8 +101,13 @@ class Shell:
             "scheduler": scheduler,
             "display":   display,
             "py_desktop": py_desktop,
+            "desktop":   lambda app=None: self._desktop(app),
+            "examples":  lambda: self._examples(),
             "virtio_blk": virtio_blk,
             "help":      lambda: self._help(),
+            "exit":      lambda: self._request_exit(),
+            "quit":      lambda: self._request_exit(),
+            "halt":      lambda: self._halt_help(),
             "clear":     lambda: self._clear(),
             "sh":        lambda cmd=None: self._sh(cmd),
             "run":       lambda path: self._run(path),
@@ -346,8 +354,10 @@ class Shell:
     async def run(self) -> None:
         self._write("\nPythonOS kernel shell\n")
         self._write("Python " + __import__('sys').version + "\n")
-        self._write("Type 'help' for help.\n")
+        self._write("Type help or help() for commands, demos, and examples.\n")
         self._write("Commands: ls ps pwd cd cat cp mv ftp ed sysinfo netstat\n")
+        self._write("Desktop: desktop()  desktop('pacmaze')  desktop('help')\n")
+        self._write("Examples: examples()  run('/examples/hello_kernel.py')\n")
         self._write("Helpers: sh()  sh('cmd args')  run('/path')  clear()\n\n")
 
         await self._history_load()
@@ -357,10 +367,16 @@ class Shell:
             line = await self._read_line(prompt)
             if line is None:
                 # EOF / closed: exit the REPL loop cleanly.
-                return
+                if self._can_exit:
+                    return
+                self._write("\nThe native kernel console stays active. "
+                            "Press Ctrl-A X in the QEMU terminal to stop the VM.\n")
+                continue
             self._history_add(line)
             await self._history_persist(line)
             await self._process_line(line)
+            if self._exit_requested:
+                return
 
     async def _process_line(self, line: str) -> None:
         if not line.strip() and not self._block:
@@ -404,7 +420,7 @@ class Shell:
                 if asyncio.iscoroutine(result):
                     await result
         except SystemExit:
-            self._write("Use kernel halt to stop the system.\n")
+            self._request_exit()
         except Exception:
             self._write(traceback.format_exc())
 
@@ -423,6 +439,14 @@ class Shell:
             return False
         if name == "help" and len(parts) == 1:
             self._help()
+            return True
+        if name in ("desktop", "examples"):
+            return await self._run_script("/bin/" + name + ".py", parts[1:])
+        if name in ("exit", "quit") and len(parts) == 1:
+            self._request_exit()
+            return True
+        if name == "halt" and len(parts) == 1:
+            self._halt_help()
             return True
         # Skip Python keywords
         try:
@@ -556,6 +580,7 @@ class Shell:
         recallable in the parent REPL).
         """
         SH = "$ "
+        self._write("PythonOS shell: help | examples | desktop [APP] | exit\n")
         while True:
             line = await self._read_line(SH)
             if line is None:
@@ -571,6 +596,10 @@ class Shell:
     async def _run_sh_parts(self, parts: list[str]) -> None:
         name = parts[0]
         args = parts[1:]
+
+        if name in ("help", "?") and not args:
+            self._help()
+            return
 
         path = self._sh_script_path(name)
         if path is not None:
@@ -615,6 +644,32 @@ class Shell:
         """run('/full/path/to/script.py') — execute any VFS file by absolute path."""
         if not await self._run_script(path, []):
             self._write("run: " + path + ": not found\n")
+
+    async def _desktop(self, app_name=None) -> None:
+        """desktop([app]) — open the GUI through the active display backend."""
+        from kernel import commands
+        args = [] if app_name is None else [str(app_name)]
+        await commands.desktop(args, self._cwd, self._write)
+
+    async def _examples(self) -> None:
+        """examples() — list programs frozen into the /examples directory."""
+        from kernel import commands
+        await commands.examples([], self._cwd, self._write)
+
+    def _request_exit(self) -> None:
+        if self._can_exit:
+            self._exit_requested = True
+            return
+        self._write(
+            "The native kernel console stays active. "
+            "Press Ctrl-A X in the QEMU terminal to stop the VM.\n"
+        )
+
+    def _halt_help(self) -> None:
+        self._write(
+            "PythonOS has no guest halt command. "
+            "Press Ctrl-A X in the QEMU terminal (or stop QEMU from the host).\n"
+        )
 
     # ── Source fixups for frozen Python 3.14 ─────────────────────────────────
 
@@ -665,12 +720,27 @@ class Shell:
             "  ed [path]      — ed-style line editor\n"
             "  sysinfo        — system overview\n"
             "  netstat        — network status\n"
+            "  desktop [APP]  — open the GUI desktop; optionally launch APP\n"
+            "  desktop --list — list bundled desktop apps, demos, and games\n"
+            "  examples       — list readable programs frozen into /examples\n"
             "  clear()        — clear framebuffer console\n"
             "  run('/path')   — run script by absolute path\n"
             "  sh()           — enter shell sub-REPL\n"
             "  sh('cmd args') — same, with shell-style argument splitting\n"
             "  foo.py         — in sh(), run a Python file from cwd\n"
             "  /path/file.py  — in sh(), run a Python file directly\n"
+            "\nDesktop from Python:\n"
+            "  desktop()            — open the desktop\n"
+            "  desktop('pacmaze')   — open it and launch a bundled game\n"
+            "  desktop('help')      — list all apps, demos, and games\n"
+            "\nBundled examples:\n"
+            "  examples()                         — list /examples\n"
+            "  run('/examples/hello_kernel.py')   — run one\n"
+            "  cat /examples/README.txt           — usage and descriptions\n"
+            "\nLeaving the shell:\n"
+            "  exit() / quit() — close a TCP or desktop terminal session\n"
+            "                    (the native kernel console stays active)\n"
+            "  halt / halt()   — show how to stop the VM from the host\n"
             "\nLive kernel objects:\n"
             "  pci        — PCI bus: list(pci), pci.find_by_class(0x0200)\n"
             "  scheduler  — task scheduler: scheduler.ps()\n"

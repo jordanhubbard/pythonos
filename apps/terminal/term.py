@@ -17,7 +17,8 @@ async def main(*args, **kwargs) -> None:
     win.set_event_handler(view.on_event)
 
     shell = Shell(read_char=view.read_char, write=view.write,
-                   read_byte=view.read_byte, write_raw=view.write_raw)
+                   read_byte=view.read_byte, write_raw=view.write_raw,
+                   can_exit=True)
     try:
         await shell.run()
     finally:

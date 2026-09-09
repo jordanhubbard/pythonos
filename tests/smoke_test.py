@@ -96,6 +96,13 @@ TEST_CASES = [
     ("sh('/bin/sysinfo.py')\n",          "PythonOS"),
     ("ls /bin\n",                       "ed.py"),
     ("cat /examples/README.txt\n",      "PythonOS examples"),
+    ("help\n",                          "desktop('pacmaze')"),
+    ("sh('help')\n",                    "Bundled examples:"),
+    ("sh('desktop --list')\n",          "Demos: audio_tone"),
+    ("sh('examples')\n",                "Frozen examples in /examples:"),
+    ("desktop('help')\n",               "Games: defender, pacmaze, raiders, sprites"),
+    ("examples()\n",                    "Frozen examples in /examples:"),
+    ("halt\n",                          "PythonOS has no guest halt command"),
     ("ftp\n",                           "usage: ftp get DST"),
     ("ftp get /tmp/repl-port.txt 5000\n", "ftp: port already in use: 5000"),
     ("ls /examples\n",                  "hello_kernel.py"),
@@ -258,6 +265,8 @@ def run() -> int:
             failed = 0
             for label, expected in [
                 ("banner lists cat", "Commands: ls ps pwd cd cat"),
+                ("banner advertises desktop()", "Desktop: desktop()"),
+                ("banner advertises examples()", "Examples: examples()"),
                 ("banner lists sh()", "Helpers: sh()"),
             ]:
                 if expected in banner:

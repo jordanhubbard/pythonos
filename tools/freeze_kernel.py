@@ -57,8 +57,8 @@ def freeze_dir(src_dir: Path) -> dict[str, tuple[bytes, bool]]:
         try:
             code = compile(source, str(py_file), "exec", optimize=0)
         except SyntaxError as e:
-            print(f"WARNING: skipping {py_file}: {e}", file=sys.stderr)
-            continue
+            print(f"ERROR: cannot freeze {py_file}: {e}", file=sys.stderr)
+            raise SystemExit(1) from e
 
         bytecode = marshal.dumps(code)
         frozen[module_name] = (bytecode, is_package)
