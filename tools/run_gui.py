@@ -234,7 +234,10 @@ def _qemu_cmd_arm64(elf: str, repl_port: int, display: str, audiodev: str,
                      bridge_guest_port: int = 5001) -> list:
     disk = _disk_path()
     qdisp = "none" if bridge_endpoint else display
-    netdev = "user,id=net1"
+    # Keep the agent TCP REPL available in GUI mode too.  Bridge traffic has
+    # its own forwarding below; without this arm64 GUI sessions had no
+    # high-level debugger endpoint at all.
+    netdev = f"user,id=net1,hostfwd=tcp::{repl_port}-:5000"
     if bridge_endpoint and bridge_transport == "native-tcp":
         netdev += "," + _hostfwd(bridge_listen_host,
                                  bridge_endpoint[1],

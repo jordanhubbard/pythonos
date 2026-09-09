@@ -378,6 +378,57 @@ typedef struct {
  * or non-zero to indicate a transport error (caller tears down). */
 typedef int (*op_handler)(BridgeState *, int id, cJSON *params);
 
+/* Per-operation host service time. This deliberately measures after a full
+ * request has arrived and before its response is written: guest metrics add
+ * transport/guest scheduling time, while these isolate the SDL co-process. */
+#define METRIC_CAP 32
+typedef struct {
+    char name[48];
+    uint64_t count, total_ticks, max_ticks;
+} OpMetric;
+static OpMetric g_metrics[METRIC_CAP];
+static int g_metric_count = 0;
+
+static void metric_record(const char *name, uint64_t elapsed) {
+    OpMetric *m = NULL;
+    for (int i = 0; i < g_metric_count; i++) {
+        if (strcmp(g_metrics[i].name, name) == 0) { m = &g_metrics[i]; break; }
+    }
+    if (!m && g_metric_count < METRIC_CAP) {
+        m = &g_metrics[g_metric_count++];
+        snprintf(m->name, sizeof(m->name), "%s", name);
+    }
+    if (!m) return;
+    m->count++;
+    m->total_ticks += elapsed;
+    if (elapsed > m->max_ticks) m->max_ticks = elapsed;
+}
+
+static int op_debug_metrics(BridgeState *st, int id, cJSON *params) {
+    int reset = 0;
+    cJSON *jreset = cJSON_GetObjectItemCaseSensitive(params, "reset");
+    if (cJSON_IsTrue(jreset)) reset = 1;
+    uint64_t frequency = SDL_GetPerformanceFrequency();
+    cJSON *result = cJSON_CreateObject();
+    cJSON_AddNumberToObject(result, "frequency_hz", (double)frequency);
+    cJSON *rows = cJSON_CreateObject();
+    for (int i = 0; i < g_metric_count; i++) {
+        OpMetric *m = &g_metrics[i];
+        cJSON *row = cJSON_CreateObject();
+        cJSON_AddNumberToObject(row, "count", (double)m->count);
+        cJSON_AddNumberToObject(row, "total_ticks", (double)m->total_ticks);
+        cJSON_AddNumberToObject(row, "max_ticks", (double)m->max_ticks);
+        cJSON_AddNumberToObject(row, "mean_us", m->count ?
+            (double)(m->total_ticks * 1000000ULL / m->count) / (double)frequency : 0);
+        cJSON_AddNumberToObject(row, "max_us",
+            (double)(m->max_ticks * 1000000ULL) / (double)frequency);
+        cJSON_AddItemToObject(rows, m->name, row);
+    }
+    cJSON_AddItemToObject(result, "ops", rows);
+    if (reset) { memset(g_metrics, 0, sizeof(g_metrics)); g_metric_count = 0; }
+    return send_ok(st->fd, id, result);
+}
+
 static int op_hello(BridgeState *st, int id, cJSON *params) {
     int peer_proto = 0;
     cJSON *p = cJSON_GetObjectItemCaseSensitive(params, "protocol");
@@ -1105,6 +1156,7 @@ static const struct {
     { "surface.upload",     op_surface_upload     },
     { "text.draw",          op_text_draw          },
     { "event.poll",         op_event_poll         },
+    { "debug.metrics",      op_debug_metrics      },
 };
 
 #define OP_TABLE_LEN ((int)(sizeof(OP_TABLE) / sizeof(OP_TABLE[0])))
@@ -1138,12 +1190,14 @@ static int handle_one_frame(BridgeState *st, const char *payload, size_t len) {
 
     op_handler fn = lookup_op(op->valuestring);
     LOG_DEBUG("dispatch op=%s id=%d", op->valuestring, id);
+    uint64_t started = SDL_GetPerformanceCounter();
     int rc;
     if (!fn) {
         rc = send_err(st->fd, id, 3, "unknown op");
     } else {
         rc = fn(st, id, params);
     }
+    metric_record(op->valuestring, SDL_GetPerformanceCounter() - started);
     cJSON_Delete(root);
     return rc;
 }

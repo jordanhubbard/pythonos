@@ -19,6 +19,8 @@ python3 tools/pythonos_debug.py key esc
 python3 tools/pythonos_debug.py serial
 python3 tools/pythonos_debug.py qmp stop
 python3 tools/pythonos_debug.py native -- "bt" "info registers"
+python3 tools/pythonos_debug.py exercise paint
+python3 tools/pythonos_debug.py perf
 ```
 
 Debug mode writes `build/pythonos-debug.json`, which records the local TCP
@@ -49,6 +51,16 @@ use `qmp cont` or `native` to inspect early boot before continuing.
 5. Reproduce with a host-side test where possible. Run `make test-chipset` for
    chipset, arcade, dock, layout, and gate coverage; run `make test-gui` when
    QEMU is available.
+
+## Autonomous E2E loop
+
+Use `exercise NAME` for a deterministic agent-owned GUI pass: it resets bridge
+metrics, launches the named registry entry, drives mouse and keyboard events,
+returns with ESC, and prints a combined performance snapshot. `perf` reports
+two distinct measurements: guest-observed RPC round trips (including guest
+transport/scheduling) and host bridge service time per operation. Compare
+these before and after a change; stop via QMP and inspect native stacks when a
+latency spike coincides with a stall or warning in `serial`.
 
 ## Input invariants
 

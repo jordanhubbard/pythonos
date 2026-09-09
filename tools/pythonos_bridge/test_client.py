@@ -107,6 +107,17 @@ def main():
         check("ping echo tag",       r.get("result", {}).get("tag") == "abc")
         check("ping.pong == ok",     r.get("result", {}).get("pong") == "ok")
 
+        # Performance introspection is part of the agent-debug contract:
+        # it separates co-process service time from guest-observed RTT.
+        _send(s, 4, "debug.metrics", {"reset": False})
+        r = _recv(s)
+        metrics = r.get("result", {})
+        check("debug.metrics.ok", r.get("ok") is True)
+        check("debug.metrics frequency", isinstance(metrics.get("frequency_hz"), int)
+              and metrics["frequency_hz"] > 0)
+        check("debug.metrics records ping", metrics.get("ops", {}).get("ping", {})
+              .get("count", 0) >= 1)
+
         # unknown op error
         _send(s, 3, "this_op_does_not_exist", {})
         r = _recv(s)

@@ -129,6 +129,12 @@ def main() -> int:
     p_mouse.add_argument("x", type=int)
     p_mouse.add_argument("y", type=int)
     p_mouse.add_argument("--button", type=int, default=1)
+    p_perf = commands.add_parser("perf", help="fetch guest RTT and host bridge service metrics")
+    p_perf.add_argument("--reset", action="store_true")
+    p_exercise = commands.add_parser("exercise", help="launch and drive an app without human input")
+    p_exercise.add_argument("app", help="registry app/demo/game name")
+    p_exercise.add_argument("--seconds", type=float, default=1.0,
+                            help="time to let the workload run before capture")
     args = parser.parse_args()
 
     # Native-control commands deliberately work even if the guest TCP stack
@@ -179,6 +185,33 @@ def main() -> int:
             elif args.command == "launch":
                 # repr prevents a registry name from becoming guest code.
                 reply = dbg.execute("desktop(" + repr(args.app) + ")")
+            elif args.command == "perf":
+                reply = dbg.execute(
+                    "from kernel.bridge import bridge; print(bridge.performance_snapshot(reset=%s))"
+                    % bool(args.reset))
+            elif args.command == "exercise":
+                # A deterministic smoke workload suitable for an agent loop:
+                # open, exercise both pointer and keyboard routing, sample
+                # metrics, then ESC back to a clean desktop.
+                dbg.execute("from kernel.bridge import bridge; bridge.performance_snapshot(reset=True)")
+                dbg.execute("desktop(" + repr(args.app) + ")")
+                time.sleep(max(0.1, args.seconds))
+                # Paint's body starts at (140,142); these desktop-relative
+                # strokes also validate the compositor local-coordinate path.
+                for kind, x, y, code in (("MOUSE_MOVE", 180, 180, 0),
+                                         ("MOUSE_DOWN", 180, 180, 1),
+                                         ("MOUSE_MOVE", 260, 220, 0),
+                                         ("MOUSE_UP", 260, 220, 1)):
+                    dbg.execute(
+                        "import kernel.gui.input as i; i.queue.post(i.Event(kind=i.%s, x=%d, y=%d, code=%d))"
+                        % (kind, x, y, code))
+                for key in ("KEY_RIGHT", "KEY_SPACE", "KEY_ESC"):
+                    dbg.execute(
+                        "import kernel.gui.input as i; i.queue.post(i.Event(kind=i.EVENT_KEY_DOWN, code=i.%s))"
+                        % key)
+                time.sleep(0.25)
+                reply = dbg.execute(
+                    "from kernel.bridge import bridge; print(bridge.performance_snapshot())")
             elif args.command == "key":
                 aliases = {"esc": "KEY_ESC", "space": "KEY_SPACE", "tab": "KEY_TAB",
                            "left": "KEY_LEFT", "right": "KEY_RIGHT",

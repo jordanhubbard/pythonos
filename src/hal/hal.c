@@ -342,6 +342,38 @@ static PyObject *py_buf_fill32_at(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
+// ── High-resolution performance counter ───────────────────────────────────
+
+static uint64_t perf_counter_read(void) {
+#ifdef ARCH_ARM64
+    uint64_t value;
+    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(value));
+    return value;
+#else
+    uint32_t lo, hi;
+    __asm__ volatile("lfence; rdtsc" : "=a"(lo), "=d"(hi) :: "memory");
+    return ((uint64_t)hi << 32) | lo;
+#endif
+}
+
+static PyObject *py_perf_counter(PyObject *self, PyObject *args) {
+    (void)self; (void)args;
+    return PyLong_FromUnsignedLongLong(perf_counter_read());
+}
+
+static PyObject *py_perf_frequency(PyObject *self, PyObject *args) {
+    (void)self; (void)args;
+#ifdef ARCH_ARM64
+    uint64_t value;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(value));
+    return PyLong_FromUnsignedLongLong(value);
+#else
+    // TSC frequency is platform-specific. Consumers retain raw cycles rather
+    // than reporting a misleading conversion to time.
+    return PyLong_FromLong(0);
+#endif
+}
+
 // ── PIT tick counter (incremented on every timer interrupt before Python dispatch)
 extern void pit_tick(void);   // defined in src/libc/time.c (or main_arm64.c on arm64)
 
@@ -1019,6 +1051,10 @@ static PyObject *py_smp_run_selftest(PyObject *self, PyObject *args) {
 // ── Module definition ─────────────────────────────────────────────────────────
 
 static PyMethodDef hal_methods[] = {
+    {"perf_counter", py_perf_counter, METH_NOARGS,
+     "Return a monotonic hardware performance-counter value."},
+    {"perf_frequency", py_perf_frequency, METH_NOARGS,
+     "Return counter ticks/second when architecturally known, else 0."},
     {"inb",                  HAL_INB,                 METH_VARARGS, "Read byte from I/O port"},
     {"inw",                  HAL_INW,                 METH_VARARGS, "Read word from I/O port"},
     {"inl",                  HAL_INL,                 METH_VARARGS, "Read dword from I/O port"},

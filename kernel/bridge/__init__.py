@@ -41,6 +41,16 @@ def _json():
 PROTOCOL_VERSION = 1
 
 
+def _counter() -> tuple[int, int]:
+    """Return (counter, frequency). Frequency is 0 for uncalibrated TSC."""
+    try:
+        import _hal
+        return int(_hal.perf_counter()), int(_hal.perf_frequency())
+    except Exception:
+        from kernel.scheduler import scheduler
+        return scheduler.uptime_ms, 1000
+
+
 class BridgeError(Exception):
     """Raised when the host returns ``ok:false``."""
     def __init__(self, code: int, msg: str) -> None:
@@ -69,6 +79,44 @@ class Bridge:
         # Queue of fire-and-forget ops accumulated by cast(). A subsequent
         # call() or explicit flush() drains it as one batch.
         self._pending: list = []
+        self._metrics: dict[str, dict] = {}
+
+    def _record_metric(self, op: str, elapsed: int, frequency: int,
+                       tx_bytes: int, rx_bytes: int) -> None:
+        row = self._metrics.setdefault(op, {
+            "count": 0, "total_ticks": 0, "max_ticks": 0,
+            "tx_bytes": 0, "rx_bytes": 0, "frequency_hz": frequency,
+        })
+        row["count"] += 1
+        row["total_ticks"] += max(0, elapsed)
+        row["max_ticks"] = max(row["max_ticks"], max(0, elapsed))
+        row["tx_bytes"] += tx_bytes
+        row["rx_bytes"] += rx_bytes
+        if frequency:
+            row["frequency_hz"] = frequency
+
+    def metrics(self, *, reset: bool = False) -> dict:
+        """Guest-observed per-RPC round-trip timings and byte counts."""
+        rows = {name: dict(values) for name, values in self._metrics.items()}
+        for values in rows.values():
+            count = values["count"] or 1
+            values["mean_ticks"] = values["total_ticks"] // count
+            freq = values.get("frequency_hz", 0)
+            if freq:
+                values["mean_us"] = (values["mean_ticks"] * 1_000_000) // freq
+                values["max_us"] = (values["max_ticks"] * 1_000_000) // freq
+        if reset:
+            self._metrics.clear()
+        return rows
+
+    def performance_snapshot(self, *, reset: bool = False) -> dict:
+        """Combine guest round-trip and host service metrics in one sample."""
+        guest = self.metrics(reset=reset)
+        try:
+            host = self.call("debug.metrics", {"reset": bool(reset)})
+        except Exception as e:
+            host = {"error": str(e)}
+        return {"guest": guest, "host": host}
 
     def hello(self, timeout_ms: int | None = 2000) -> dict:
         """Handshake. Returns the host's hello result."""
@@ -123,33 +171,42 @@ class Bridge:
             "op": op, "params": env_params,
         }).encode("utf-8")
 
-        _uart.write_bytes(struct.pack(">I", len(body)) + body)
-        if payload:
-            _uart.write_bytes(payload)
+        started, frequency = _counter()
+        tx_bytes = 4 + len(body) + len(payload)
+        rx_bytes = 0
+        try:
+            _uart.write_bytes(struct.pack(">I", len(body)) + body)
+            if payload:
+                _uart.write_bytes(payload)
 
-        if timeout_ms is None:
-            hdr = _uart.read_bytes(4)
-        else:
-            hdr = _uart.read_bytes_timeout(4, timeout_ms)
-            if hdr is None:
-                raise BridgeError(-4, "timeout waiting for bridge response")
-        (length,) = struct.unpack(">I", hdr)
-        if length == 0 or length > 16 * 1024 * 1024:
-            raise BridgeError(-1, f"absurd response length {length}")
-        if timeout_ms is None:
-            body = _uart.read_bytes(length)
-        else:
-            body = _uart.read_bytes_timeout(length, timeout_ms)
-            if body is None:
-                raise BridgeError(-4, "timeout waiting for bridge response body")
-        env = json.loads(body.decode("utf-8"))
+            if timeout_ms is None:
+                hdr = _uart.read_bytes(4)
+            else:
+                hdr = _uart.read_bytes_timeout(4, timeout_ms)
+                if hdr is None:
+                    raise BridgeError(-4, "timeout waiting for bridge response")
+            (length,) = struct.unpack(">I", hdr)
+            if length == 0 or length > 16 * 1024 * 1024:
+                raise BridgeError(-1, f"absurd response length {length}")
+            if timeout_ms is None:
+                body = _uart.read_bytes(length)
+            else:
+                body = _uart.read_bytes_timeout(length, timeout_ms)
+                if body is None:
+                    raise BridgeError(-4, "timeout waiting for bridge response body")
+            rx_bytes = 4 + length
+            env = json.loads(body.decode("utf-8"))
 
-        if env.get("id") != frame_id:
-            raise BridgeError(-2, f"id mismatch (sent {frame_id}, got {env.get('id')})")
-        if not env.get("ok"):
-            err = env.get("error") or {}
-            raise BridgeError(err.get("code", -3), err.get("msg", "unknown error"))
-        return env.get("result") or {}
+            if env.get("id") != frame_id:
+                raise BridgeError(-2, f"id mismatch (sent {frame_id}, got {env.get('id')})")
+            if not env.get("ok"):
+                err = env.get("error") or {}
+                raise BridgeError(err.get("code", -3), err.get("msg", "unknown error"))
+            return env.get("result") or {}
+        finally:
+            ended, end_frequency = _counter()
+            self._record_metric(op, ended - started, end_frequency or frequency,
+                                tx_bytes, rx_bytes)
 
 
 # Module-level singleton — apps call kernel.bridge.bridge.call(...)
