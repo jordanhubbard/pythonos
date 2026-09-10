@@ -16,6 +16,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Route compositor fills and blits through the generic `sdl.call` dispatcher;
   legacy bridge operations remain protocol-compatibility shims only.
 
+### Fixed
+- Automatically reap completed TCP REPL and one-shot boot tasks so repeated
+  monitoring connections do not accumulate zombie scheduler entries.
+
 ## [0.3.3] - 2026-09-09
 
 ### Added

@@ -251,7 +251,8 @@ async def _kernel_main(
     gui_mode = _fwcfg_text("opt/pythonos/gui")
     if nic:
         from kernel.net.stack import net_init
-        scheduler.spawn(net_init(nic, "10.0.2.15", "10.0.2.2"), name="net-init")
+        scheduler.spawn(net_init(nic, "10.0.2.15", "10.0.2.2"),
+                        name="net-init", auto_reap=True)
         log.info("kernel: network stack starting")
         from kernel.net import repl_server
         scheduler.spawn(repl_server.start(), name="repl-server")
@@ -356,7 +357,7 @@ async def _kernel_main(
     if gui_mode == "bridge":
         app_name = _fwcfg_text("opt/pythonos/gui-app")
         scheduler.spawn(_auto_start_bridge_desktop(app_name or None),
-                        name="bridge-desktop")
+                        name="bridge-desktop", auto_reap=True)
         log.info("kernel: bridge desktop auto-start requested")
     elif gui_mode == "bridge-tcp":
         log.info("kernel: bridge TCP desktop waits for host connection")

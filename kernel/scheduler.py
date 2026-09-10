@@ -48,12 +48,20 @@ class Scheduler:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def spawn(self, coro: Coroutine, name: str | None = None) -> int:
+    def spawn(self, coro: Coroutine, name: str | None = None, *,
+              auto_reap: bool = False) -> int:
+        """Start a cooperative process and return its PID.
+
+        Normal processes retain a ``ZOMBIE`` record after exit so teaching
+        code can inspect lifecycle state and explicitly reap it. Short-lived
+        service requests should pass ``auto_reap=True`` so completed sessions
+        do not accumulate forever.
+        """
         pid  = self._next_pid
         self._next_pid += 1
         name = name or f"proc-{pid}"
         task = asyncio.ensure_future(coro, loop=self._loop)
-        task.add_done_callback(lambda t: self._reap(pid, t))
+        task.add_done_callback(lambda t: self._finish(pid, t, auto_reap))
         self._processes[pid] = Process(pid=pid, name=name, task=task)
         return pid
 
@@ -64,6 +72,17 @@ class Scheduler:
 
     def ps(self) -> list[Process]:
         return list(self._processes.values())
+
+    def reap(self, pid: int) -> Process | None:
+        """Remove and return an exited process, like a minimal ``waitpid``.
+
+        Running processes are never removed: callers must wait for or kill
+        them first. Returning ``None`` keeps the API convenient at the REPL.
+        """
+        proc = self._processes.get(pid)
+        if proc is None or not proc.task.done():
+            return None
+        return self._processes.pop(pid, None)
 
     # ── Timer tick (called by IRQ 0x20 handler) ───────────────────────────────
 
@@ -81,13 +100,17 @@ class Scheduler:
 
     # ── Internals ─────────────────────────────────────────────────────────────
 
-    def _reap(self, pid: int, task: asyncio.Task) -> None:
+    def _finish(self, pid: int, task: asyncio.Task,
+                auto_reap: bool = False) -> None:
         proc = self._processes.get(pid)
         if proc:
             proc.state = ProcessState.ZOMBIE
-            if task.exception():
+            error = None if task.cancelled() else task.exception()
+            if error:
                 import kernel.log as log
-                log.error(f"process {proc.name} (pid={pid}) raised: {task.exception()}")
+                log.error(f"process {proc.name} (pid={pid}) raised: {error}")
+            if auto_reap:
+                self._processes.pop(pid, None)
 
 
 # Module-level singleton

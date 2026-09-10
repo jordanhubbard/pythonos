@@ -377,6 +377,7 @@ test-chipset:
 	python3 tests/editor_navigation_test.py
 	python3 tests/timekeeper_test.py
 	python3 tests/keybindings_test.py
+	python3 tests/scheduler_test.py
 	python3 tests/layout_test.py
 	python3 tests/ci_gate_test.py
 

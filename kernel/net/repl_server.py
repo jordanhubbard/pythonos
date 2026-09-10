@@ -30,7 +30,8 @@ async def start(port: int = _PORT) -> None:
     while True:
         conn = await listener.accept()
         log.info(f"repl: new session from remote port {conn.remote_port}")
-        scheduler.spawn(_session(conn), name=f"repl:{conn.remote_port}")
+        scheduler.spawn(_session(conn), name=f"repl:{conn.remote_port}",
+                        auto_reap=True)
 
 
 async def _session(conn) -> None:
