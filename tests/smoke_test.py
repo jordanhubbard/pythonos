@@ -186,7 +186,11 @@ def recv_until_prompt(sock: socket.socket, prompt: bytes = b">>> ") -> str:
         if not chunk:
             break
         buf += chunk
-        if prompt in buf:
+        # Help and teaching text may contain literal prompt examples such as
+        # ``>>> sh('examples')``.  Only the trailing shell prompt completes a
+        # response; stopping at an embedded example leaves every subsequent
+        # assertion one command behind.
+        if buf.endswith(prompt):
             break
     return buf.decode("utf-8", errors="replace")
 
@@ -646,7 +650,7 @@ def run_send_file_example(sock: socket.socket) -> bool:
         listener.close()
 
     response = recv_until_prompt(sock)
-    if b"PythonOS examples" not in received:
+    if b"PythonOS learning examples" not in received:
         print(f"[FAIL] {expr.strip()!r:45s} → received unexpected bytes")
         print(f"       got: {received!r}")
         return False
