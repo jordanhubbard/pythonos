@@ -119,7 +119,7 @@ only number our shim recognizes; everything else returns 1.
 
 For comparison, the supported critical-path surface is documented in
 `docs/pthread-attr-coverage.md` and exercised by
-`examples/pthread_coverage.py`. In short:
+`examples/internals/pthread_coverage.py`. In short:
 
 - `pthread_create` / `pthread_join` / `pthread_detach` / `pthread_self` /
   `pthread_equal` / `pthread_exit` (worker entry only).
@@ -137,5 +137,5 @@ Adding any of the out-of-scope features requires:
 1. A new beads issue under epic `pythonos-xa7` (or its successor) naming the
    in-tree caller that depends on the feature.
 2. An updated entry in this file moving the feature out of "Out of scope".
-3. Test coverage in `examples/pthread_coverage.py` (or a sibling) before
+3. Test coverage in `examples/internals/pthread_coverage.py` (or a sibling) before
    merge, plus the corresponding assertions in `tests/smoke_test.py`.

@@ -26,7 +26,7 @@ when changing the module list.
 
 | Module      | Source                                | Notes |
 |-------------|----------------------------------------|-------|
-| `_thread`   | `Modules/_threadmodule.c`              | Direct consumer of `PyThread_start_joinable_thread`, `PyThread_join_thread`, `PyThread_detach_thread`, `PyThread_get_thread_ident_ex`, `PyThread_allocate_lock` (mutex+condvar emulation), and `Py_tss_*`. **This module is the entire reason the substrate exists.** Covered by `examples/thread_demo.py` and `examples/pthread_coverage.py`. |
+| `_thread`   | `Modules/_threadmodule.c`              | Direct consumer of `PyThread_start_joinable_thread`, `PyThread_join_thread`, `PyThread_detach_thread`, `PyThread_get_thread_ident_ex`, `PyThread_allocate_lock` (mutex+condvar emulation), and `Py_tss_*`. **This module is the entire reason the substrate exists.** Covered by `examples/concurrency/thread_demo.py` and `examples/internals/pthread_coverage.py`. |
 | `_asyncio`  | `Modules/_asynciomodule.c`             | Allocates per-loop `PyMutex` (lightweight CPython mutex, *not* `PyThread_type_lock`) and reads `PyThread_get_thread_ident_ex` to enforce the loop's owning-thread invariant. Critical because `asyncio.run_coroutine_threadsafe` from a `_thread` worker must see a stable ident. |
 | `_hal`      | `src/hal/hal.c`                        | PythonOS-local module. Calls `pthread_create` / `pthread_join` directly via `pthread_selftest()` for boot-time validation, and exports `SMP_*` constants. Already exercised by `tests/smoke_test.py` (`__import__('_hal').pthread_selftest()`). |
 

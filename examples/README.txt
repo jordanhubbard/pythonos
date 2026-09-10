@@ -1,45 +1,53 @@
-PythonOS examples
+PythonOS learning examples
+==========================
 
-Run these from the kernel shell:
+This tree is a curriculum, not a miscellaneous program dump. Start with the
+short programs below, then follow the subject that interests you.
 
-  run('/examples/hello_kernel.py')
-  sh('/examples/hello_kernel.py visitor')
-  run('/examples/vfs_demo.py')
-  sh('/examples/vfs_demo.py /tmp/custom-vfs-demo.txt')
-  run('/examples/async_tasks.py')
-  run('/examples/thread_demo.py')
-  sh('/examples/primes.py 100')
-  run('/examples/tone.py')
-  cat /examples/README.txt
+Suggested learning path
+-----------------------
 
-What they show:
+  1. run('/examples/start_here/hello_kernel.py')
+  2. sh('/examples/start_here/primes.py 100')
+  3. run('/examples/storage/vfs_demo.py')
+  4. run('/examples/concurrency/async_tasks.py')
+  5. run('/examples/concurrency/thread_demo.py')
+  6. run('/examples/graphics/fb_test.py')
+  7. run('/examples/audio/tone.py')
 
-  hello_kernel.py  Inspect cwd, root TmpFS entries, and scheduler tasks
-  vfs_demo.py      Write and read a TmpFS file through the VFS API
-  async_tasks.py   Pass values between cooperative asyncio tasks
-  thread_demo.py   Start AP-backed CPython workers and timed lock waits
-  primes.py        Run a small pure-Python computation
-  tone.py          Build a tiny PCM tone buffer for HDA when available
+Tracks
+------
 
-File transfer:
+  start_here/   First shell program and a small pure-Python algorithm
+  storage/      Files, paths, metadata, and the virtual filesystem
+  concurrency/  Cooperative asyncio tasks, queues, and CPU worker threads
+  graphics/     Framebuffer drawing and the PySDL2-compatible API
+  images/       Ready-to-view snake artwork in several visual styles
+  audio/        PCM synthesis and audio-device output
+  networking/   TCP clients, servers, and file transfer
+  demos/        Interactive desktop demonstrations and teaching programs
+  games/        Complete games built on the virtual Amiga chipset
+  internals/    Test fixtures for kernel contributors, not beginner lessons
 
-  Inbound to PythonOS:
-    ftp get /tmp/inbox.txt
-    host: nc localhost 17000 < local-file.txt
+Every subject directory contains its own README.txt with an ordered path and
+the important concepts demonstrated there. Use the Files app or Editor's
+File > Open command to browse and edit the source.
 
-  Outbound from PythonOS:
-    host: nc -l 7001 > from-pythonos.txt
-    ftp put /tmp/inbox.txt
+Running examples
+----------------
 
-Lower-level TCP examples:
+  run('/examples/path/program.py')
 
-  Inbound to PythonOS:
-    sh('/examples/recv_file.py 7000 /tmp/inbox.bin')
-    host: nc localhost 17000 < local-file.txt
+calls the program's async main() function. Use sh() when passing arguments:
 
-  Outbound from PythonOS:
-    host: nc -l 7001 > pythonos-example.txt
-    sh('/examples/send_file.py 10.0.2.2 7001 /examples/README.txt')
+  sh('/examples/start_here/primes.py 200')
+  sh('/examples/storage/vfs_demo.py /tmp/my-note.txt')
 
-The examples are frozen as Python modules and their source is seeded into
-TmpFS so they remain readable at /examples.
+Bundled application modules are loaded from readable Python source and
+compiled on first import. The demos/ and games/ directories expose those same
+application sources for study. Saving a source pane creates a writable
+override under /apps; Reload starts a fresh instance with the edited code.
+
+The internals/ track deliberately separates validation programs from lessons.
+They remain readable and runnable for contributors, but are not presented as
+part of the learning progression.

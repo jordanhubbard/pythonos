@@ -1,5 +1,5 @@
 """
-PythonOS pthread substrate coverage test.
+PythonOS pthread substrate coverage fixture.
 
 Exercises the no-GIL critical-path surface defined in beads epic
 pythonos-xa7. Each section emits a short status line that the host-side

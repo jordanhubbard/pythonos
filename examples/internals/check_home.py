@@ -1,4 +1,4 @@
-# Round-trip a small write/read against /home to confirm the ext2 mount
+# Internal round-trip write/read fixture for the ext2-backed /home mount.
 # wired up by ef6.4 is actually live. Prints a fixed marker on success
 # (matched by tests/smoke_test.py); anything else is a failure.
 

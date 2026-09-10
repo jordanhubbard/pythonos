@@ -126,6 +126,12 @@ def formation_xy(i: int, t: int, origin_x: int, origin_y: int,
     return origin_x + col * spacing + bob, origin_y + row * 16
 
 
+def invader_formation_position(col: int, row: int, offset_x: int,
+                               offset_y: int) -> tuple[int, int]:
+    """Classic 11-by-5 fixed-screen formation cell."""
+    return 54 + offset_x + col * 19, 34 + offset_y + row * 15
+
+
 def default_pacmaze(tile: int = 8, cols: int = 40, rows: int = 25) -> Maze:
     grid = [[" "] * cols for _ in range(rows)]
     for c in range(cols):

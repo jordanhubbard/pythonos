@@ -1,8 +1,8 @@
-"""apps.clock.clock — Big-digit kernel-uptime clock.
+"""apps.clock.clock — Big-digit session clock and kernel uptime display.
 
-Until we have wall-clock time on the guest, this counts elapsed
-seconds since boot and shows them as HH:MM:SS plus the current
-PIT tick count. Every digit is rendered as a 5x7 glyph scaled up
+PythonOS has no persistent RTC yet. Press S (or use the Clock menu) to set a
+24-hour session time; it advances from the monotonic kernel clock until reboot.
+Press U to return to uptime. Every digit is rendered as a 5x7 glyph scaled up
 3x using fill_rect — exercises the bridge's drawing path with no
 text dependency, useful as a reference for how to do bespoke
 glyph rendering on top of the SDL bridge.
@@ -15,7 +15,7 @@ import asyncio
 from kernel.gui.compositor import compositor, CompositorWindow
 from kernel.gui import input as _gui_input
 from kernel.gui.sdl2.surface import SDL_FillRect, SDL_Rect
-from kernel.scheduler import scheduler
+from kernel import timekeeper
 from apps import registry
 from apps._icons import _new_icon, _border, ICON_SIZE
 
@@ -83,12 +83,49 @@ def clock_icon():
     return s
 
 
-async def _run(win: CompositorWindow) -> None:
-    state = {"closed": False, "show_h": True}
+def _parse_time(value: str) -> tuple[int, int, int]:
+    parts = value.strip().split(":")
+    if len(parts) not in (2, 3) or any(not part.isdigit() for part in parts):
+        raise ValueError("use HH:MM or HH:MM:SS")
+    hour, minute = int(parts[0]), int(parts[1])
+    second = int(parts[2]) if len(parts) == 3 else 0
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59 or not 0 <= second <= 59:
+        raise ValueError("time must be 00:00:00..23:59:59")
+    return hour, minute, second
+
+
+async def _run(win: CompositorWindow, state: dict) -> None:
 
     def on_event(ev) -> None:
         if ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code == _gui_input.KEY_ESC:
-            state["closed"] = True
+            if state["editing"]:
+                state["editing"] = False
+                state["input"] = ""
+                state["message"] = "Set cancelled"
+            else:
+                state["closed"] = True
+        elif ev.kind == _gui_input.EVENT_KEY_DOWN and state["editing"]:
+            if ev.code == _gui_input.KEY_ENTER:
+                try:
+                    timekeeper.set_hms(*_parse_time(state["input"]))
+                    state["message"] = "Session time set; U restores uptime"
+                    state["editing"] = False
+                    state["input"] = ""
+                except ValueError as exc:
+                    state["message"] = str(exc)
+            elif ev.code == _gui_input.KEY_BACKSPACE:
+                state["input"] = state["input"][:-1]
+            elif ev.text:
+                for char in ev.text:
+                    if (char.isdigit() or char == ":") and len(state["input"]) < 8:
+                        state["input"] += char
+        elif ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code in (ord("s"), ord("S")):
+            state["editing"] = True
+            state["input"] = ""
+            state["message"] = ""
+        elif ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code in (ord("u"), ord("U")):
+            timekeeper.clear()
+            state["message"] = "Showing uptime"
         elif ev.kind == _gui_input.MOUSE_DOWN:
             state["show_h"] = not state["show_h"]
 
@@ -98,7 +135,7 @@ async def _run(win: CompositorWindow) -> None:
     while not state["closed"] and not win._closed:
         SDL_FillRect(s, None, _BG)
 
-        secs = scheduler.uptime_ms // 1000
+        secs = timekeeper.seconds()
         hh = secs // 3600
         mm = (secs % 3600) // 60
         ss = secs % 60
@@ -113,8 +150,15 @@ async def _run(win: CompositorWindow) -> None:
         _draw_text(s, x + 2, y + 2, text, _DIM)
         _draw_text(s, x, y, text, _FG)
         # Caption
-        s.draw_text(_W // 2 - 32, _H - 24,
-                    "uptime  (click toggles)", fg=0x808898, bg=_BG)
+        if state["editing"]:
+            caption = "Set HH:MM[:SS]: " + state["input"] + "_"
+        elif state["message"]:
+            caption = state["message"]
+        elif timekeeper.is_set():
+            caption = "session time  S:set U:uptime"
+        else:
+            caption = "uptime  S:set time"
+        s.draw_text(8, _H - 24, caption[:43], fg=0x808898, bg=_BG)
 
         win.dirty = True
         await asyncio.sleep(0.5)
@@ -124,13 +168,35 @@ async def _run(win: CompositorWindow) -> None:
 
 async def main(*args, **kwargs) -> None:
     win = CompositorWindow("Clock", x=240, y=200, w=_W, h=_H)
+    state = {"closed": False, "show_h": True, "editing": False,
+             "input": "", "message": ""}
+
+    def set_time() -> None:
+        state["editing"] = True
+        state["input"] = ""
+        state["message"] = ""
+        win.dirty = True
+
+    def use_uptime() -> None:
+        timekeeper.clear()
+        state["editing"] = False
+        state["message"] = "Showing uptime"
+        win.dirty = True
+
+    from kernel.gui.menubar import Menu, MenuItem
+    win.menus = [Menu("Clock", [
+        MenuItem("Set Time… (S)", action=set_time),
+        MenuItem("Use Uptime (U)", action=use_uptime),
+        MenuItem.sep(),
+        MenuItem("Close (Esc)", action=win.close),
+    ])]
     compositor.add_window(win)
-    await _run(win)
+    await _run(win, state)
 
 
 registry.register(
     name="clock",
-    description="Live uptime clock (click toggles HH:MM:SS / MM:SS)",
+    description="Settable session clock and live kernel uptime",
     entry=main,
     icon_factory=clock_icon,
 )

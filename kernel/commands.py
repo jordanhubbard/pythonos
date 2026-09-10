@@ -359,6 +359,7 @@ def _load_desktop_registry():
     import apps.sysmon                      # noqa: F401
     import apps.about                       # noqa: F401
     import apps.clock                       # noqa: F401
+    import apps.keybindings                 # noqa: F401
     import apps.toaster                     # noqa: F401
     from apps import registry
     return registry
@@ -418,17 +419,34 @@ async def desktop(argv: list[str], cwd: str, write) -> None:
 
 
 async def examples(argv: list[str], cwd: str, write) -> None:
-    """List the readable programs frozen into /examples."""
-    if argv:
-        _line(write, "usage: examples")
+    """Show the teaching tracks, or list one track's readable sources."""
+    if len(argv) > 1:
+        _line(write, "usage: examples [track]")
         return
-    names = [name for name in await vfs.readdir("/examples")
-             if name not in (".", "..")]
-    names.sort()
-    _line(write, "Frozen examples in /examples:")
+    if not argv:
+        _line(write, "PythonOS learning tracks in /examples:")
+        _line(write, "  start_here   storage       concurrency")
+        _line(write, "  graphics     images        audio")
+        _line(write, "  networking   demos         games")
+        _line(write, "  internals")
+        _line(write, "Start: run('/examples/start_here/hello_kernel.py')")
+        _line(write, "Browse: examples graphics  or  cat /examples/README.txt")
+        return
+
+    track = argv[0].strip("/")
+    if not track or ".." in track.split("/"):
+        _line(write, "examples: invalid track")
+        return
+    path = "/examples/" + track
+    try:
+        names = sorted(name for name in await vfs.readdir(path)
+                       if name not in (".", "..", "__init__.py"))
+    except (FileNotFoundError, NotADirectoryError):
+        _line(write, "examples: no such track: " + track)
+        return
+    _line(write, "Examples in " + path + ":")
     _line(write, "  " + "  ".join(names))
-    _line(write, "Run: run('/examples/hello_kernel.py')")
-    _line(write, "More: cat /examples/README.txt")
+    _line(write, "Guide: cat " + path + "/README.txt")
 
 
 async def pythonos_gui(argv: list[str], cwd: str, write) -> None:

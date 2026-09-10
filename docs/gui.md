@@ -11,6 +11,8 @@ Everything below is implemented in Python on top of the same `_hal` extension an
 | `make run-gui` | Boot **and** auto-launch the desktop with the full app dock. Host-side `tools/run_gui.py` supervises QEMU and `pythonos_bridge`; the guest starts the desktop when the bridge connects. `PYTHONOS_DESKTOP_MODE=interactive` (default) requests a visible host SDL window; `headless` uses a hidden surface for agent capture and automation. |
 | `make run-gui PYTHONOS_GUI_APP=<name>` | Same, but pre-launch a specific full app, demo, or game. Use `desktop('help')` inside the REPL for the live catalog. |
 | `make run-gui-x86_64` / `make run-gui-arm64` | Explicit per-arch forms. |
+| `make run-display-server` | Boot PythonOS on machine X and expose its display endpoint on TCP port 17010. |
+| `PYTHONOS_DISPLAY_SERVER=<X-address> make connect-display` | Run only the SDL desktop on machine Y and connect it to X. |
 
 From the native Python prompt, a TCP REPL, or the desktop terminal itself,
 use the public launcher and its built-in catalog:
@@ -31,8 +33,36 @@ Inside the compositor:
 - `F2` opens the focused application's source in a live editor pane. The
   same action is available as **PythonOS → View Source**.
 - Click on a window's title bar to drag it; click in the body to focus + raise it.
+- Drop a desktop-host file into Files (or anywhere for `/home`) to import it.
+  Drag a PythonOS file row to the Files **Export** target to stream it to the
+  display host. Transfers use bounded chunks rather than one giant RPC.
 - Two-finger click, right-click, or control-click on empty wallpaper opens a **Demos** / **Games** launch menu. The same gesture on a dock icon offers **Keep in Dock** / **Remove from Dock**.
 - `ESC` always exits a full-screen chipset app and returns to Workbench.
+
+### Remote display and file transfer
+
+The guest's native TCP bridge listener is the display endpoint. In the normal
+single-machine launcher, QEMU forwards it to loopback and supervises a sibling
+`pythonos_bridge`. Remote mode separates those roles:
+
+```bash
+# Machine X: kernel/QEMU
+PYTHONOS_DISPLAY_BIND=0.0.0.0 make run-display-server
+
+# Machine Y: SDL display, keyboard, mouse, audio, and host file boundary
+PYTHONOS_DISPLAY_SERVER=192.0.2.10 make connect-display
+```
+
+`PYTHONOS_DISPLAY_PORT` changes the default 17010 port on both commands.
+`PYTHONOS_EXPORT_DIR` on Y controls where guest files are exported (default:
+Y's `~/Downloads`). Host drops are represented inside the protocol by opaque,
+short-lived tokens; the guest never receives an arbitrary host pathname.
+Imports and exports are streamed in 32 KiB pieces and yield between chunks.
+
+The connection direction differs from classic X: PythonOS listens, while the
+display process connects. Semantically, X still advertises an IP address and
+port and Y attaches to it. There is currently no authentication or encryption,
+so use a trusted/private interface or an SSH tunnel, never a public bind.
 
 ### Live source panes
 
@@ -43,18 +73,27 @@ that produced it. Its shared **File** and **Edit** menus provide **Save**,
 **Cancel Changes**, and **Close**; **Run → Reload Running App** applies the
 edited code. `Ctrl-S` is the save shortcut.
 
-Built-in source text travels with the frozen module and opens as an editable
-copy. Save writes its override to `/apps/<app-name>.py`; Reload compiles the
-current buffer, atomically replaces the module, closes the old window, and
-starts a fresh instance. A syntax/runtime error leaves the old module registered
-and reports the error in the pane instead. On x86's current tmpfs fallback these
+Built-in applications are source-first teaching programs. Their `.py` text is
+seeded under `/lib/apps`, compiled on first import, and cached only while its
+source bytes remain unchanged; application bytecode is not pre-frozen into the
+kernel. Copies are easy to discover under `/examples/demos` and
+`/examples/games`.
+
+Save writes an override to `/apps/<app-name>.py`; Reload compiles the current
+buffer, atomically replaces the module, closes the old window, and starts a
+fresh instance. A syntax/runtime error leaves the old module registered and
+reports the error in the pane instead. On x86's current tmpfs fallback these
 overrides last for the boot session; where `/apps` is backed by the ext2 disk,
 they persist across boots.
 
 The source pane and the standalone Editor (including files opened from Files)
 host the same `EditorView`, menu builder, persistence code, arrow navigation,
-and small Emacs key set: `C-a/e` line start/end, `C-b/f` left/right, `C-p/n`
-up/down, `C-d` delete, `C-k` kill to end of line, `C-s` save, and `C-q` close.
+and Emacs movement keys: `C-a/e` line start/end, `C-b/f` left/right, `C-p/n`
+up/down, `C-v`/`M-v` page forward/back, `M-b/f` by word, `M-a/e` by
+sentence, `M-{`/`M-}` by paragraph, `M-<`/`M->` to the buffer edges, and
+`C-l` to recenter. Both Alt/Option and Meta/Command supply `M-` bindings.
+Editing bindings include `C-d` delete, `C-k` kill to end of line, `C-s` save,
+and `C-q` close.
 `F2` was deliberately chosen for View Source so `C-e` keeps its conventional
 editor meaning.
 
@@ -64,6 +103,11 @@ For teaching applications, `kernel.gui.ui` provides the hierarchy
 terminal, and file browser use the specialized views. A lesson can therefore
 start with ordinary Python classes and only drop to `kernel.gui.sdl2` for
 pixel-level work.
+
+`FileChooserView` is likewise shared. The Files app only supplies its app
+identity and icon around that view; Editor Open and Save As use the identical
+chooser. It supports arrow/page keys, mouse selection, double-click to enter a
+directory or accept a file, a typed filename in Save mode, and footer actions.
 
 ## Architecture
 
@@ -150,7 +194,7 @@ Surface implemented:
 | `sdlmixer` | `Mix_OpenAudio`, `Mix_CloseAudio`, `Mix_LoadWAV`, `Mix_PlayChannel`, `Mix_HaltChannel`, `Mix_FreeChunk`, `MIX_DEFAULT_*` |
 | `sdlttf` | `TTF_Init` / `TTF_Quit`, `TTF_OpenFont`, `TTF_CloseFont`, `TTF_RenderText_Blended` / `_Solid`, `TTF_SizeText` (backed by the bundled bitmap font) |
 
-Compatibility is defined by the corpus tests in `examples/sdl_*.py` running unchanged: `sdl_hello.py`, `sdl_renderer.py`, `sdl_text.py`, `sdl_image.py` (PNG), `sdl_jpeg.py`.
+Compatibility is defined by the corpus tests in `examples/graphics/sdl/sdl_*.py` running unchanged: `sdl_hello.py`, `sdl_renderer.py`, `sdl_text.py`, `sdl_image.py` (PNG), `sdl_jpeg.py`.
 
 What's deliberately not covered (raise `NotImplementedError` or do nothing): GPU-accelerated rendering, threaded audio with multiple channels, font rendering beyond the bundled 8×16 bitmap, anything that pokes ctypes-specific layout.
 
@@ -189,11 +233,12 @@ desktop or launches the requested one; `desktop('help')` prints the registry.
 |---|---|---|
 | `terminal` | `apps/terminal/term.py` | Embeds `kernel.shell.Shell` in a 640×400 windowed text grid. Cursor blink + ANSI escape consumer + true scrollback (no content loss on overflow). |
 | `editor` | `apps/editor/edwin.py` | Drives `kernel.ed.run` line editor in a 720×480 text grid. |
-| `files` | `apps/files/browser.py` | Arrow-key file browser with TCP send/recv. |
-| `image_viewer` | `apps/image_viewer/viewer.py` | `desktop('image_viewer')`; loads BMP / PPM / PNG / JPEG. |
-| `sysmon` | `apps/sysmon/sysmon.py` | Live kernel state — uptime, free RAM (with mini history graph), scheduler process list. Refreshes at 2 Hz. |
+| `files` | `apps/files/browser.py` | App/icon wrapper around the shared graphical `FileChooserView`. |
+| `image_viewer` | `apps/image_viewer/viewer.py` | `desktop('image_viewer')`; starts in `/examples/images` with bundled snake artwork and loads BMP / PPM / PNG / JPEG. |
+| `top` | `apps/sysmon/sysmon.py` | Live tasks, ticks, RAM, and guest/host bridge RPC statistics. Draws at 2 Hz while sampling the host only every two seconds; `P` pauses and `R` resets counters. `sysmon` remains a shell/API alias. |
+| `keybindings` | `apps/keybindings/keybindings.py` | Docked control panel for desktop-wide shortcuts. F1 opens it; choose a row and press Enter to capture any replacement combination. Changes persist under `/home`; Esc remains the locked full-screen safety exit. |
 | `about` | `apps/about/about.py` | "About PythonOS" — version, arch, SMP CPUs, free RAM, project goals. |
-| `clock` | `apps/clock/clock.py` | Big-digit uptime clock with bespoke 5×7 pixel font scaled 5×. Reference for "render text without using the bitmap font path". |
+| `clock` | `apps/clock/clock.py` | Big-digit uptime/session clock with **Clock → Set Time…**, `S` to enter `HH:MM[:SS]`, and `U` to restore uptime. The setting lasts for the current boot because PythonOS has no RTC driver yet. |
 | `bouncing_ball` | `apps/demos/bouncing_ball.py` | A 24×24 rect bouncing in a 320×200 window. ESC closes. |
 | `audio_tone` | `apps/demos/audio_tone.py` | Plays 0.5 s of 440 Hz square wave through `Mixer.play_pcm`. |
 | `starfield` / `rainfall` / `plasma` | `apps/demos/*.py` | Classic graphics demos — point-cloud animations using fill_rect. |
@@ -232,7 +277,8 @@ chipset.load_view(v)
 
 Demos: `desktop('sprites')` (sprites + copper + Paula; arrows move,
 space fires), `defender` (scrolling hills + landers), `pacmaze`
-(pellets and ghosts), `raiders` (Galaxian-style formation), and
+(pellets and ghosts), `raiders` (Galaxian-style formation), `invaders`
+(fixed-screen ranks, shields, UFO, all chipset units), and
 `desktop('toaster')` (dual playfields + wipe). Every game shows its active
 controls along the bottom: `D` toggles continuous self-playing demo mode and
 `ESC` (or `Q`) returns to Workbench. Demo mode drives the same input, gameplay,
@@ -241,6 +287,12 @@ performance tests. While the chipset clock runs, the compositor
 paints Workbench playfields (windows, dock, menubar) and does not call
 `fb.present` — the raster is the only present path. Host tests:
 `make test-chipset` (no QEMU).
+
+For first-principles study, `/examples/graphics/chipset/` separates the system
+into seven runnable lessons: indexed playfields and scrolling, Copper scanline
+lists, Blitter fills/copies, sprites, dual playfields, four-channel Paula, and
+the raster display window. Each source is intentionally short and uses Esc as
+the universal return-to-Workbench binding.
 
 See `docs/superpowers/specs/2026-09-08-chipset-multimedia-os-design.md`.
 
@@ -252,7 +304,7 @@ See `docs/superpowers/specs/2026-09-08-chipset-multimedia-os-design.md`.
 | `tests/smoke_test_arm64.py` | arm64 default boot + PL011 | 37 PASS |
 | `tests/gui_smoke_test.py` | x86 GUI: sdl2 corpus, compositor render, mouse pipeline, pointer round-trip, serial markers | 26 PASS |
 | `tests/desktop_smoke_test.py` | x86 end-to-end: `desktop('bouncing_ball')` launch + pixel-perfect checks + tile-hash golden | 5 PASS |
-| `tests/audio_smoke_test.py` | x86 audio pipeline: `-audiodev wav,id=a`, runs `examples/tone.py`, parses captured WAV | 6 PASS |
+| `tests/audio_smoke_test.py` | x86 audio pipeline: `-audiodev wav,id=a`, runs `examples/audio/tone.py`, parses captured WAV | 6 PASS |
 | `tests/gui_smoke_test_arm64.py` | arm64 GUI: ramfb + virtio-input + screendump + sendkey | 8 PASS |
 
 Two pieces of test infrastructure are reusable on their own:

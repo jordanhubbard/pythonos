@@ -38,6 +38,7 @@ def main() -> int:
         aabb,
         eat_tile,
         formation_xy,
+        invader_formation_position,
         ghost_step,
         mountain_height,
         orient_square_art,
@@ -94,6 +95,8 @@ def main() -> int:
     check("default maze has pellets", maze2.pellets > 10, str(maze2.pellets))
     check("default maze has four ghosts", len(maze2.ghosts) == 4, str(len(maze2.ghosts)))
     check("mountain height in range", 12 <= mountain_height(0) <= 40)
+    check("invader formation spacing",
+          invader_formation_position(1, 1, 0, 0) == (73, 49))
 
     open_right = bytes((
         0, 0, 2, 2, 2, 2, 0, 0,

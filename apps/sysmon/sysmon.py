@@ -1,9 +1,7 @@
-"""apps.sysmon.sysmon — Live kernel state in a window.
+"""apps.sysmon.sysmon — ``top``-style live kernel state and performance.
 
-Refreshes every 500 ms. Top panel shows uptime + free RAM + a small
-animated history graph for the latter; bottom panel lists current
-scheduler tasks. Useful both as a demo of the SDL bridge text path
-and as a quick visual confirmation that the kernel is healthy.
+Refreshes the display twice per second but samples host-side bridge metrics
+only every two seconds, keeping observation overhead bounded.
 
 ESC closes the window.
 """
@@ -14,17 +12,18 @@ from kernel.gui.compositor import compositor, CompositorWindow
 from kernel.gui import input as _gui_input
 from kernel.gui.sdl2.surface import SDL_FillRect, SDL_Rect
 from kernel.scheduler import scheduler
+from kernel.bridge import bridge
 from apps import registry
 from apps._icons import _new_icon, _border, ICON_SIZE
 
 
-_W = 480
-_H = 320
+_W = 760
+_H = 500
 _BG = 0x101820
 _FG = 0xE0E0E0
+_DIM = 0x8090A0
 _PANEL = 0x182030
 _ACCENT = 0x60D0FF
-_GRAPH_H = 48
 _REFRESH_HZ = 2
 
 
@@ -57,60 +56,85 @@ def _free_mib() -> int:
 
 async def _run(win: CompositorWindow) -> None:
     closed = False
+    paused = False
+    reset_requested = False
 
     def on_event(ev):
-        nonlocal closed
+        nonlocal closed, paused, reset_requested
         if ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code == _gui_input.KEY_ESC:
             closed = True
+        elif ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code in (ord("p"), ord("P")):
+            paused = not paused
+        elif ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code in (ord("r"), ord("R")):
+            reset_requested = True
 
     win.set_event_handler(on_event)
 
-    history: list[int] = []
     surface = win.surface
+    snapshot = {"guest": {}, "host": {}}
+    sample_number = 0
 
     while not closed and not win._closed:
+        if not paused:
+            if sample_number % 4 == 0 or reset_requested:
+                snapshot = bridge.performance_snapshot(reset=reset_requested)
+                reset_requested = False
+            else:
+                snapshot["guest"] = bridge.metrics()
+            sample_number += 1
         SDL_FillRect(surface, None, _BG)
 
-        # ── Header panel ────────────────────────────────────────────────
-        SDL_FillRect(surface, SDL_Rect(0, 0, _W, _GRAPH_H + 32), _PANEL)
+        SDL_FillRect(surface, SDL_Rect(0, 0, _W, 64), _PANEL)
 
         uptime_s = scheduler.uptime_ms // 1000
         h = uptime_s // 3600
         m = (uptime_s % 3600) // 60
         s = uptime_s % 60
         free = _free_mib()
-        history.append(free)
-        if len(history) > _W // 2:
-            history = history[-(_W // 2):]
-
-        surface.draw_text(8, 8,
-                          f"uptime  {h:02d}:{m:02d}:{s:02d}",
+        tasks = list(scheduler.ps())
+        surface.draw_text(8, 8, "PYTHONOS TOP" + ("  [PAUSED]" if paused else ""),
                           fg=_FG, bg=_PANEL)
-        surface.draw_text(8, 18,
-                          f"free RAM  {free} MiB",
+        surface.draw_text(8, 25,
+                          f"uptime {h:02d}:{m:02d}:{s:02d}   free {free} MiB"
+                          f"   tasks {len(tasks)}   refresh {_REFRESH_HZ} Hz",
                           fg=_ACCENT, bg=_PANEL)
+        surface.draw_text(8, 42,
+                          "P pause   R reset counters   Esc close",
+                          fg=_FG, bg=_PANEL)
 
-        # Mini graph of free RAM over time — just colored vertical bars.
-        if history:
-            peak = max(max(history), 1)
-            base_y = _GRAPH_H + 28
-            for i, v in enumerate(history):
-                bar_h = max(1, (v * (_GRAPH_H - 4)) // peak)
-                bar_x = 8 + i * 2
-                SDL_FillRect(surface,
-                             SDL_Rect(bar_x, base_y - bar_h, 2, bar_h),
-                             _ACCENT)
+        y = 76
+        surface.draw_text(8, y, "BRIDGE RPC       CALLS   MEAN us   MAX us    TX/RX bytes",
+                          fg=_FG, bg=_BG)
+        y += 16
+        guest = snapshot.get("guest", {})
+        rows = sorted(guest.items(),
+                      key=lambda item: item[1].get("total_ticks", 0), reverse=True)
+        for name, values in rows[:8]:
+            line = (f"{name[:15]:<15} {values.get('count', 0):>6}"
+                    f" {values.get('mean_us', 0):>9} {values.get('max_us', 0):>8}"
+                    f" {values.get('tx_bytes', 0):>7}/{values.get('rx_bytes', 0):<7}")
+            surface.draw_text(8, y, line, fg=_ACCENT, bg=_BG)
+            y += 14
 
-        # ── Process panel ───────────────────────────────────────────────
-        pid_y = _GRAPH_H + 40
+        host = snapshot.get("host", {})
+        host_ops = host.get("ops", {}) if isinstance(host, dict) else {}
+        slow = sorted(host_ops.items(),
+                      key=lambda item: item[1].get("total_ticks", 0), reverse=True)
+        if slow:
+            summary = "host service: " + "  ".join(
+                name + " " + str(int(values.get("mean_us", 0))) + "us"
+                for name, values in slow[:3])
+            surface.draw_text(8, y + 2, summary[:90], fg=_DIM, bg=_BG)
+
+        pid_y = 236
         surface.draw_text(8, pid_y,
-                          " PID  STATE     NAME",
+                          " PID  STATE       TICKS  NAME",
                           fg=_FG, bg=_BG)
         pid_y += 14
-        for proc in list(scheduler.ps())[:14]:
+        for proc in tasks[:18]:
             state = proc.state.name[:7] if hasattr(proc.state, "name") \
                 else str(proc.state)[:7]
-            line = f"{proc.pid:>4}  {state:<8}  {proc.name[:48]}"
+            line = f"{proc.pid:>4}  {state:<8} {proc.ticks:>8}  {proc.name[:56]}"
             surface.draw_text(8, pid_y, line, fg=_FG, bg=_BG)
             pid_y += 12
 
@@ -121,15 +145,18 @@ async def _run(win: CompositorWindow) -> None:
 
 
 async def main(*args, **kwargs) -> None:
-    win = CompositorWindow("System Monitor",
-                            x=200, y=140, w=_W, h=_H)
+    win = CompositorWindow("Top", x=120, y=90, w=_W, h=_H)
     compositor.add_window(win)
     await _run(win)
 
 
 registry.register(
-    name="sysmon",
-    description="Live kernel state — uptime, free RAM, processes",
+    name="top",
+    description="Top — live tasks and performance statistics",
     entry=main,
     icon_factory=sysmon_icon,
 )
+
+# Shell/API compatibility without a duplicate dock icon or Apps-menu row.
+registry.register(name="sysmon", description="", entry=main,
+                  icon_factory=sysmon_icon, category="compat")

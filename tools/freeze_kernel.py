@@ -19,6 +19,7 @@ runtime in install_frozen_kernel(), which must be called BEFORE Py_Initialize().
 """
 
 import marshal
+import re
 import sys
 from pathlib import Path
 
@@ -66,23 +67,35 @@ def freeze_dir(src_dir: Path) -> dict[str, tuple[bytes, bool]]:
     return frozen
 
 
-def collect_seed_sources(src_dir: Path) -> dict[str, str]:
-    """Collect teaching/runtime sources alongside their frozen bytecode."""
+def collect_seed_sources(src_dir: Path) -> dict[str, str | bytes]:
+    """Collect teaching sources and small binary assets for the boot VFS."""
     if src_dir.name not in ("examples", "apps"):
         return {}
 
-    sources: dict[str, str] = {}
+    sources: dict[str, str | bytes] = {}
     for source_file in sorted(src_dir.rglob("*")):
         if not source_file.is_file():
             continue
         if src_dir.name == "examples" and source_file.name == "__init__.py":
             continue
-        suffixes = (".py", ".txt") if src_dir.name == "examples" else (".py",)
+        suffixes = ((".py", ".txt", ".png", ".jpg", ".jpeg", ".bmp", ".ppm")
+                    if src_dir.name == "examples" else (".py",))
         if source_file.suffix not in suffixes:
             continue
         rel = source_file.relative_to(src_dir).as_posix()
+        is_text = source_file.suffix in (".py", ".txt")
+        content = (source_file.read_text(encoding="utf-8") if is_text
+                   else source_file.read_bytes())
         prefix = "/examples/" if src_dir.name == "examples" else "/src/apps/"
-        sources[prefix + rel] = source_file.read_text(encoding="utf-8")
+        sources[prefix + rel] = content
+        # Application sources are also teaching material. Surface registered
+        # games and demos where a learner naturally looks for them, while
+        # retaining /src/apps keys for focused-window source lookup.
+        if src_dir.name == "apps" and rel.startswith("demos/") \
+                and source_file.name != "__init__.py":
+            category = "games" if re.search(
+                r"category\s*=\s*['\"]game['\"]", content) else "demos"
+            sources[f"/examples/{category}/{source_file.name}"] = content
     return sources
 
 
@@ -142,10 +155,14 @@ def main() -> None:
             sys.exit(1)
 
     frozen: dict[str, tuple[bytes, bool]] = {}
-    seed_sources: dict[str, str] = {}
+    seed_sources: dict[str, str | bytes] = {}
     for src_dir in src_dirs:
-        frozen.update(freeze_dir(src_dir))
         seed_sources.update(collect_seed_sources(src_dir))
+        # Applications are source-first teaching programs. Their text is
+        # seeded into /lib/apps and compiled by the VFS importer on demand;
+        # only kernel/stdlib modules need precompiled frozen bytecode.
+        if src_dir.name != "apps":
+            frozen.update(freeze_dir(src_dir))
 
     if seed_sources:
         source = "SOURCES = " + repr(seed_sources) + "\n"

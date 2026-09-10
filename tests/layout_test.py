@@ -115,12 +115,18 @@ def main() -> int:
     check("freezer embeds application source for live teaching panes",
           'src_dir.name not in ("examples", "apps")' in freezer
           and '"/src/apps/"' in freezer)
+    check("applications are source-first and compiled by the VFS importer",
+          'if src_dir.name != "apps"' in freezer
+          and 'add_search_dir("/lib")' in _read("kernel/vfs_import.py")
+          and 'relative = fullname.replace(".", "/")'
+              in _read("kernel/vfs_import.py")
+          and '"lib": {"apps": _lib_apps}' in _read("kernel/__init__.py"))
     compositor = _read("kernel/gui/compositor.py")
     desktop = _read("kernel/gui/desktop.py")
     editor = _read("apps/editor/edwin.py")
     check("focused app source has shortcut and menubar entry",
           "open_focused_source" in compositor
-          and "KEY_F2" in compositor
+          and "KEY_F2" in _read("kernel/gui/keybindings.py")
           and "View Source (F2)" in desktop)
     check("source pane supports save cancel and runtime reload",
           'MenuItem("Save (Ctrl-S)"' in editor
@@ -133,10 +139,79 @@ def main() -> int:
           and "class Container(View)" in ui and "class Panel(Container)" in ui
           and "class Button(Label)" in ui and "class TextView(View)" in ui
           and "class ListView(TextView)" in ui)
+    filechooser = _read("kernel/gui/filechooser.py")
     check("editor terminal and files share high-level view classes",
           "class EditorView(TextView)" in editor
           and "class TextWin(TextView)" in _read("apps/_textwin.py")
-          and "class _Browser(ListView)" in _read("apps/files/browser.py"))
+          and "class FileChooserView(ListView)" in filechooser
+          and "choose_file" in _read("apps/files/browser.py"))
+    check("editor open and save-as use the shared graphical chooser",
+          'choose_file(title="Open File"' in editor
+          and 'choose_file(title="Save File"' in editor)
+    check("image viewer uses the shared graphical chooser",
+          'choose_file(title="Open Image"'
+              in _read("apps/image_viewer/viewer.py")
+          and "await _image.load_vfs(path)" in _read("apps/image_viewer/viewer.py"))
+    check("shared editor implements basic Emacs travel keys",
+          "def _word_forward" in editor
+          and "def _sentence_backward" in editor
+          and "def _paragraph_forward" in editor
+          and "MOD_ALT | _gui_input.MOD_META" in editor
+          and 'letter == "v"' in editor
+          and 'letter == "l"' in editor
+          and 'ev.text == "<"' in editor
+          and 'ev.text == ">"' in editor)
+    check("file chooser supports mouse selection and double-click activation",
+          "MOUSE_DOWN" in filechooser and "_DOUBLE_CLICK_SECONDS" in filechooser
+          and "activate_selected" in filechooser)
+    check("frozen game and demo sources are browsable under examples",
+          'f"/examples/{category}/{source_file.name}"' in freezer
+          and '_node.setdefault(_part, {})' in _read("kernel/__init__.py"))
+    check("examples form documented teaching tracks with recursive rebuilds",
+          "start_here/" in _read("examples/README.txt")
+          and "internals/" in _read("examples/README.txt")
+          and "$(call rwildcard,examples/,*.py)" in makefile
+          and not os.path.exists(os.path.join(ROOT, "examples", "primes.py")))
+    check("image viewer opens a seeded binary teaching gallery",
+          'path="/examples/images/"' in _read("apps/image_viewer/viewer.py")
+          and "extensions=(" in _read("apps/image_viewer/viewer.py")
+          and '".png"' in freezer
+          and "SDL_Surface.from_image_bytes(encoded)" in _read("kernel/gui/image/__init__.py")
+          and "green-tree-python.png" in _read("examples/images/README.txt"))
+    bridge_input = _read("kernel/bridge/input.py")
+    check("bridge keyboard events preserve modifiers for Emacs bindings",
+          "_translate_modifiers" in bridge_input
+          and 'ev.get("mod", 0)' in bridge_input)
+    check("remote display has explicit kernel-server and display-client targets",
+          "run-display-server:" in makefile
+          and "connect-display:" in makefile
+          and "PYTHONOS_DISPLAY_SERVER" in makefile)
+    check("desktop file drops use bounded tokenized bridge transfers",
+          "HOST_FILE_DROP" in _read("kernel/gui/input.py")
+          and 'bridge.call("host.file.read"' in _read("kernel/gui/filetransfer.py")
+          and 'bridge.call("host.export.chunk"' in _read("kernel/gui/filetransfer.py")
+          and "FILE_CHUNK_MAX" in _read("tools/pythonos_bridge/main.c"))
+    about = _read("apps/about/about.py")
+    check("About derives Python version from version_info",
+          "sys.version_info" in about and "sys.version.split()" not in about)
+    clock = _read("apps/clock/clock.py")
+    check("Clock exposes a discoverable validated session-time control",
+          'MenuItem("Set Time… (S)"' in clock
+          and "timekeeper.set_hms" in clock
+          and os.path.isfile(os.path.join(ROOT, "kernel", "timekeeper.py")))
+    check("desktop shortcuts use a configurable common registry",
+          "action_for(ev)" in _read("kernel/gui/compositor.py")
+          and "set_binding" in _read("apps/keybindings/keybindings.py")
+          and "Esc always exits full-screen" in _read("apps/keybindings/keybindings.py"))
+    check("Top shows tasks and bounded bridge performance samples",
+          'name="top"' in _read("apps/sysmon/sysmon.py")
+          and "performance_snapshot" in _read("apps/sysmon/sysmon.py")
+          and "sample_number % 4" in _read("apps/sysmon/sysmon.py"))
+    check("chipset has an ordered one-feature-at-a-time curriculum",
+          os.path.isfile(os.path.join(ROOT, "examples", "graphics", "chipset",
+                                      "07_display_window.py"))
+          and "01_playfield.py" in _read("examples/graphics/chipset/README.txt")
+          and "06_paula.py" in _read("examples/graphics/chipset/README.txt"))
     run_gui = _read("tools/run_gui.py")
     check("interactive x86 GUI binds HDA output to the host audiodev",
           '"-audiodev", f"{audiodev},id=a"' in run_gui

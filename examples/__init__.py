@@ -1,2 +1,1 @@
-"""Frozen example programs whose source is also seeded into /examples."""
-
+"""Teaching tracks and contributor fixtures seeded into ``/examples``."""

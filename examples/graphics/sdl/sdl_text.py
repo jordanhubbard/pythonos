@@ -1,4 +1,4 @@
-"""sdl_text — TTF text-render corpus item.
+"""sdl_text — bitmap-font rendering example through the TTF-shaped API.
 
 Verifies the sdl2.sdlttf surface: open a font, render "PythonOS" to a
 surface, blit it into a window via the renderer, present, exit.

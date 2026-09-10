@@ -24,6 +24,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <getopt.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -189,6 +190,7 @@ static int send_err(int fd, int id, int code, const char *msg) {
 #define EVT_MOUSE_DOWN  4
 #define EVT_MOUSE_UP    5
 #define EVT_QUIT        6
+#define EVT_FILE_DROP   7
 
 typedef struct {
     int kind;
@@ -197,11 +199,48 @@ typedef struct {
     int code;       /* keyboard: SDL_Keycode */
     int mod;        /* keyboard: SDL_Keymod bits */
     char text[8];   /* keyboard: typed character (UTF-8) */
+    int token;      /* opaque host-file token for EVT_FILE_DROP */
+    long long size;
+    char name[256]; /* safe basename for EVT_FILE_DROP */
 } BridgeEvent;
 
 #define EVENT_QUEUE_CAP 256
 static BridgeEvent g_events[EVENT_QUEUE_CAP];
 static int g_evt_head = 0, g_evt_tail = 0;
+
+#define DROP_FILE_CAP 32
+typedef struct {
+    int token;
+    long long size;
+    char path[PATH_MAX];
+    char name[256];
+} HostDropFile;
+static HostDropFile g_drop_files[DROP_FILE_CAP];
+static int g_next_drop_token = 1;
+
+static const char *safe_basename(const char *path) {
+    const char *slash = strrchr(path, '/');
+    return slash ? slash + 1 : path;
+}
+
+static HostDropFile *remember_drop_file(const char *path) {
+    struct stat sb;
+    if (!path || stat(path, &sb) != 0 || !S_ISREG(sb.st_mode)) return NULL;
+    int token = g_next_drop_token++;
+    if (g_next_drop_token <= 0) g_next_drop_token = 1;
+    HostDropFile *slot = &g_drop_files[token % DROP_FILE_CAP];
+    memset(slot, 0, sizeof(*slot));
+    slot->token = token;
+    slot->size = (long long)sb.st_size;
+    snprintf(slot->path, sizeof(slot->path), "%s", path);
+    snprintf(slot->name, sizeof(slot->name), "%s", safe_basename(path));
+    return slot;
+}
+
+static HostDropFile *find_drop_file(int token) {
+    HostDropFile *slot = &g_drop_files[token % DROP_FILE_CAP];
+    return slot->token == token ? slot : NULL;
+}
 
 static void evt_enqueue(const BridgeEvent *e) {
     int next = (g_evt_head + 1) % EVENT_QUEUE_CAP;
@@ -267,6 +306,23 @@ static void drain_sdl_events(void) {
                     }
                 }
                 break;
+            case SDL_DROPFILE: {
+                HostDropFile *drop = remember_drop_file(e.drop.file);
+                if (drop) {
+                    be.kind = EVT_FILE_DROP;
+                    SDL_GetMouseState(&be.x, &be.y);
+                    be.token = drop->token;
+                    be.size = drop->size;
+                    snprintf(be.name, sizeof(be.name), "%s", drop->name);
+                    evt_enqueue(&be);
+                    LOG_INFO("host file dropped: %s (%lld bytes)",
+                             drop->name, drop->size);
+                } else {
+                    LOG_WARN("ignored non-file drop: %s", e.drop.file);
+                }
+                SDL_free(e.drop.file);
+                break;
+            }
             case SDL_QUIT:
                 be.kind = EVT_QUIT;
                 evt_enqueue(&be);
@@ -638,6 +694,8 @@ static int op_hello(BridgeState *st, int id, cJSON *params) {
     cJSON_AddItemToArray(features, cJSON_CreateString("image.decode"));
     cJSON_AddItemToArray(features, cJSON_CreateString("frame.rle32"));
     cJSON_AddItemToArray(features, cJSON_CreateString("oneway"));
+    cJSON_AddItemToArray(features, cJSON_CreateString("file.drop"));
+    cJSON_AddItemToArray(features, cJSON_CreateString("file.export"));
     cJSON_AddItemToObject(r, "features", features);
     if (peer_proto != 0 && peer_proto != BRIDGE_PROTOCOL_VERSION) {
         LOG_WARN("peer requested protocol v%d, we are v%d",
@@ -689,6 +747,7 @@ static int op_display_open(BridgeState *st, int id, cJSON *params) {
             return send_err(st->fd, id, 5, SDL_GetError());
         }
     }
+    SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     Uint32 flags = headless ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN;
     SDL_Window *win = SDL_CreateWindow(title,
                                        SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
@@ -789,11 +848,201 @@ static int op_event_poll(BridgeState *st, int id, cJSON *params) {
         cJSON_AddNumberToObject(e, "code",   be.code);
         cJSON_AddNumberToObject(e, "mod",    be.mod);
         if (be.text[0]) cJSON_AddStringToObject(e, "text", be.text);
+        if (be.kind == EVT_FILE_DROP) {
+            cJSON_AddNumberToObject(e, "token", be.token);
+            cJSON_AddNumberToObject(e, "size", (double)be.size);
+            cJSON_AddStringToObject(e, "name", be.name);
+        }
         cJSON_AddItemToArray(arr, e);
     }
     cJSON *r = cJSON_CreateObject();
     cJSON_AddItemToObject(r, "events", arr);
     return send_ok(st->fd, id, r);
+}
+
+/* ─── Bounded host file transfer ─────────────────────────────────────── */
+
+#define FILE_CHUNK_MAX (32 * 1024)
+#define EXPORT_CAP 16
+typedef struct {
+    int token;
+    FILE *file;
+    char temp_path[PATH_MAX];
+    char final_path[PATH_MAX];
+} ExportFile;
+static ExportFile g_exports[EXPORT_CAP];
+static int g_next_export_token = 1;
+
+static int valid_export_name(const char *name) {
+    return name && name[0] && strcmp(name, ".") != 0 && strcmp(name, "..") != 0
+        && !strchr(name, '/') && !strchr(name, '\\');
+}
+
+static const char *export_directory(void) {
+    static char path[PATH_MAX];
+    if (path[0]) return path;
+    const char *configured = getenv("PYTHONOS_EXPORT_DIR");
+    if (configured && configured[0]) {
+        snprintf(path, sizeof(path), "%s", configured);
+    } else {
+        const char *home = getenv("HOME");
+        snprintf(path, sizeof(path), "%s/Downloads", home ? home : ".");
+    }
+    return path;
+}
+
+static int ensure_export_directory(void) {
+    const char *path = export_directory();
+    struct stat sb;
+    if (stat(path, &sb) == 0) return S_ISDIR(sb.st_mode) ? 0 : -1;
+    if (errno != ENOENT) return -1;
+    return mkdir(path, 0700);
+}
+
+static void choose_export_path(const char *name, char *out, size_t out_len) {
+    snprintf(out, out_len, "%s/%s", export_directory(), name);
+    if (access(out, F_OK) != 0) return;
+    for (int suffix = 1; suffix < 10000; suffix++) {
+        snprintf(out, out_len, "%s/%s.%d", export_directory(), name, suffix);
+        if (access(out, F_OK) != 0) return;
+    }
+}
+
+static ExportFile *find_export(int token) {
+    ExportFile *slot = &g_exports[token % EXPORT_CAP];
+    return slot->token == token ? slot : NULL;
+}
+
+static void discard_export(ExportFile *slot) {
+    if (!slot) return;
+    if (slot->file) fclose(slot->file);
+    if (slot->temp_path[0]) unlink(slot->temp_path);
+    memset(slot, 0, sizeof(*slot));
+}
+
+static void discard_all_exports(void) {
+    for (int i = 0; i < EXPORT_CAP; i++) discard_export(&g_exports[i]);
+}
+
+static int op_host_file_read(BridgeState *st, int id, cJSON *params) {
+    cJSON *jt = cJSON_GetObjectItemCaseSensitive(params, "token");
+    cJSON *jo = cJSON_GetObjectItemCaseSensitive(params, "offset");
+    cJSON *jl = cJSON_GetObjectItemCaseSensitive(params, "length");
+    if (!cJSON_IsNumber(jt) || !cJSON_IsNumber(jo) || !cJSON_IsNumber(jl))
+        return send_err(st->fd, id, 4, "token/offset/length required");
+    int length = jl->valueint;
+    long long offset = (long long)jo->valuedouble;
+    if (length < 1 || length > FILE_CHUNK_MAX || offset < 0)
+        return send_err(st->fd, id, 4, "invalid file chunk range");
+    HostDropFile *drop = find_drop_file(jt->valueint);
+    if (!drop) return send_err(st->fd, id, 7, "expired host file token");
+    FILE *file = fopen(drop->path, "rb");
+    if (!file) return send_err(st->fd, id, errno, strerror(errno));
+    if (fseek(file, (long)offset, SEEK_SET) != 0) {
+        fclose(file);
+        return send_err(st->fd, id, errno, "host file seek failed");
+    }
+    unsigned char *bytes = malloc((size_t)length);
+    char *hex = malloc((size_t)length * 2 + 1);
+    if (!bytes || !hex) {
+        free(bytes); free(hex); fclose(file);
+        return send_err(st->fd, id, 12, "OOM");
+    }
+    size_t got = fread(bytes, 1, (size_t)length, file);
+    fclose(file);
+    static const char digits[] = "0123456789abcdef";
+    for (size_t i = 0; i < got; i++) {
+        hex[i * 2] = digits[bytes[i] >> 4];
+        hex[i * 2 + 1] = digits[bytes[i] & 15];
+    }
+    hex[got * 2] = '\0';
+    free(bytes);
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddStringToObject(r, "data", hex);
+    cJSON_AddNumberToObject(r, "bytes", (double)got);
+    cJSON_AddBoolToObject(r, "eof", offset + (long long)got >= drop->size);
+    free(hex);
+    return send_ok(st->fd, id, r);
+}
+
+static int op_host_export_begin(BridgeState *st, int id, cJSON *params) {
+    cJSON *jn = cJSON_GetObjectItemCaseSensitive(params, "name");
+    if (!cJSON_IsString(jn) || !valid_export_name(jn->valuestring))
+        return send_err(st->fd, id, 4, "safe basename required");
+    if (ensure_export_directory() != 0)
+        return send_err(st->fd, id, errno, "export directory unavailable");
+    int token = g_next_export_token++;
+    if (g_next_export_token <= 0) g_next_export_token = 1;
+    ExportFile *slot = &g_exports[token % EXPORT_CAP];
+    if (slot->file) { fclose(slot->file); unlink(slot->temp_path); }
+    memset(slot, 0, sizeof(*slot));
+    slot->token = token;
+    choose_export_path(jn->valuestring, slot->final_path,
+                       sizeof(slot->final_path));
+    snprintf(slot->temp_path, sizeof(slot->temp_path), "%s.part-%d-%d",
+             slot->final_path, (int)getpid(), token);
+    slot->file = fopen(slot->temp_path, "wb");
+    if (!slot->file) {
+        slot->token = 0;
+        return send_err(st->fd, id, errno, strerror(errno));
+    }
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "token", token);
+    cJSON_AddStringToObject(r, "path", slot->final_path);
+    return send_ok(st->fd, id, r);
+}
+
+static int op_host_export_chunk(BridgeState *st, int id, cJSON *params) {
+    cJSON *jt = cJSON_GetObjectItemCaseSensitive(params, "token");
+    cJSON *jp = cJSON_GetObjectItemCaseSensitive(params, "payload_len");
+    if (!cJSON_IsNumber(jp) || jp->valueint < 0 ||
+        jp->valueint > FILE_CHUNK_MAX)
+        return send_err(st->fd, id, 4, "valid payload_len required");
+    size_t length = (size_t)jp->valueint;
+    unsigned char *bytes = length ? malloc(length) : NULL;
+    if (length && !bytes) return send_err(st->fd, id, 12, "OOM");
+    if (length && read_exact(st->fd, bytes, length) != 0) {
+        free(bytes);
+        return -1;
+    }
+    ExportFile *slot = cJSON_IsNumber(jt) ? find_export(jt->valueint) : NULL;
+    if (!slot || !slot->file) {
+        free(bytes);
+        return send_err(st->fd, id, 7, "expired export token");
+    }
+    size_t wrote = length ? fwrite(bytes, 1, length, slot->file) : 0;
+    free(bytes);
+    if (wrote != length) return send_err(st->fd, id, errno, "host write failed");
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "bytes", (double)wrote);
+    return send_ok(st->fd, id, r);
+}
+
+static int op_host_export_finish(BridgeState *st, int id, cJSON *params) {
+    cJSON *jt = cJSON_GetObjectItemCaseSensitive(params, "token");
+    ExportFile *slot = cJSON_IsNumber(jt) ? find_export(jt->valueint) : NULL;
+    if (!slot || !slot->file)
+        return send_err(st->fd, id, 7, "expired export token");
+    if (fclose(slot->file) != 0) {
+        slot->file = NULL;
+        return send_err(st->fd, id, errno, "host close failed");
+    }
+    slot->file = NULL;
+    if (rename(slot->temp_path, slot->final_path) != 0)
+        return send_err(st->fd, id, errno, "host rename failed");
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddStringToObject(r, "path", slot->final_path);
+    LOG_INFO("exported PythonOS file to %s", slot->final_path);
+    slot->token = 0;
+    return send_ok(st->fd, id, r);
+}
+
+static int op_host_export_abort(BridgeState *st, int id, cJSON *params) {
+    cJSON *jt = cJSON_GetObjectItemCaseSensitive(params, "token");
+    ExportFile *slot = cJSON_IsNumber(jt) ? find_export(jt->valueint) : NULL;
+    if (!slot) return send_err(st->fd, id, 7, "expired export token");
+    discard_export(slot);
+    return send_ok(st->fd, id, NULL);
 }
 
 static int op_surface_create(BridgeState *st, int id, cJSON *params) {
@@ -1540,6 +1789,11 @@ static const struct {
     { "surface.upload_scaled", op_surface_upload_scaled },
     { "text.draw",          op_text_draw          },
     { "event.poll",         op_event_poll         },
+    { "host.file.read",     op_host_file_read     },
+    { "host.export.begin",  op_host_export_begin  },
+    { "host.export.chunk",  op_host_export_chunk  },
+    { "host.export.finish", op_host_export_finish },
+    { "host.export.abort",  op_host_export_abort  },
     { "debug.metrics",      op_debug_metrics      },
     { "debug.capture",      op_debug_capture      },
 };
@@ -1607,6 +1861,7 @@ static int serve_fd(int fd) {
             break;
         }
     }
+    discard_all_exports();
     return st.should_exit ? 0 : 1;
 }
 

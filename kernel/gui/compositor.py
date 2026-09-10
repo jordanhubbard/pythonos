@@ -118,12 +118,14 @@ class CompositorWindow(Container):
             # body-relative. Give raw handlers and View children the same
             # simple coordinate system.
             if ev.kind in (_gui_input.MOUSE_MOVE, _gui_input.MOUSE_DOWN,
-                           _gui_input.MOUSE_UP, _gui_input.MOUSE_WHEEL):
+                           _gui_input.MOUSE_UP, _gui_input.MOUSE_WHEEL,
+                           _gui_input.HOST_FILE_DROP):
                 from kernel.gui.input import Event
                 ev = Event(kind=ev.kind, code=ev.code, text=ev.text,
                            mods=ev.mods, x=ev.x - self.x,
                            y=ev.y - self.y - (TITLE_BAR_H if self.chrome else 0),
-                           dx=ev.dx, dy=ev.dy)
+                           dx=ev.dx, dy=ev.dy, name=ev.name,
+                           token=ev.token, size=ev.size)
             if self._on_event:
                 self._on_event(ev)
             else:
@@ -422,9 +424,13 @@ class Compositor:
             self._redraw_local()
 
     def _uptime_str(self) -> str:
-        """HH:MM:SS since compositor.start(). Wall-clock time would
-        need an RTC; kernel doesn't have one yet, so uptime is what we
-        can honestly show."""
+        """Session wall time when set, otherwise honest kernel uptime."""
+        try:
+            from kernel import timekeeper
+            if timekeeper.is_set():
+                return timekeeper.format_hms()
+        except Exception:
+            pass
         try:
             import _hal
             ticks = int(getattr(_hal, "_pit_ticks", 0) or 0)
@@ -821,17 +827,16 @@ class Compositor:
             asyncio.get_event_loop().create_task(self.stop())
             return
 
-        # F2 is the global educational affordance. Ctrl-E stays available for
-        # the editor's standard Emacs "end of line" binding.
-        if (ev.kind == _gui_input.EVENT_KEY_DOWN
-                and ev.code == _gui_input.KEY_F2):
+        from kernel.gui import keybindings as _keybindings
+        action = _keybindings.action_for(ev)
+        if action == "keybindings":
+            self.launch_app("keybindings")
+            return
+        if action == "source":
             self.open_focused_source()
             return
-
-        # Tab / Shift-Tab cycles focus globally
-        if ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code == _gui_input.KEY_TAB:
-            direction = -1 if (ev.mods & _gui_input.MOD_SHIFT) else 1
-            self.cycle_focus(direction)
+        if action in ("next_window", "previous_window"):
+            self.cycle_focus(-1 if action == "previous_window" else 1)
             return
 
         # Track Ctrl so control-click works even if mouse events omit mods.
@@ -888,6 +893,17 @@ class Compositor:
             if is_context_click(ev.code, mods):
                 if self._handle_context_click(ev.x, ev.y):
                     return
+
+        # A native host file can target a transfer-aware Files/chooser window.
+        # A drop elsewhere has the unsurprising desktop default: import into
+        # /home, then open Files there to reveal the new file.
+        if ev.kind == _gui_input.HOST_FILE_DROP:
+            win = self.focused_window
+            if win is not None and getattr(win, "accepts_host_file_drop", False):
+                win.deliver(ev)
+            else:
+                asyncio.get_event_loop().create_task(self._import_host_drop(ev))
+            return
 
         # Mouse-button-down: dock click → focus → maybe-start-drag / close
         if ev.kind == _gui_input.MOUSE_DOWN and ev.code == 1:  # left button
@@ -955,6 +971,16 @@ class Compositor:
         if win != None:
             win.deliver(ev)
 
+    async def _import_host_drop(self, ev) -> None:
+        try:
+            from kernel.gui.filetransfer import import_host_file
+            path, count = await import_host_file(ev.token, ev.name, ev.size,
+                                                  "/home")
+            log.info(f"file drop: imported {count} bytes to {path}")
+            self.launch_app("files", ["/home/"])
+        except Exception as exc:
+            log.warn(f"file drop failed: {exc}")
+
     # ── Tasks ───────────────────────────────────────────────────────────────
 
     async def _draw_loop(self) -> None:
@@ -986,6 +1012,8 @@ class Compositor:
         except Exception:
             self._boot_tick0 = 0
         loop = loop or asyncio.get_event_loop()
+        from kernel.gui import keybindings as _keybindings
+        self._tasks.append(loop.create_task(_keybindings.load()))
         self._tasks.append(loop.create_task(self._open_bridge_window()))
         self._tasks.append(loop.create_task(self._draw_loop()))
         self._tasks.append(loop.create_task(self._input_loop()))

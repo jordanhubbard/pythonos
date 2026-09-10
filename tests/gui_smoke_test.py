@@ -10,7 +10,7 @@ host SDL window opens. Connects to the kernel's TCP REPL and exercises:
     1. The kernel's serial log shows  "framebuffer console ready"
        and "GUI input ready (PS/2)".
     2. `import sdl2` resolves without ImportError.
-    3. `examples/sdl_hello.py` runs and prints "sdl_hello: ok".
+    3. `examples/graphics/sdl/sdl_hello.py` runs and prints "sdl_hello: ok".
     4. The public `desktop` command is reachable (validated by listing
        /bin, which also retains the legacy pythonos_gui.py alias).
 
@@ -165,13 +165,13 @@ def main() -> int:
                 fails += 1
 
         # 1. Examples sdl_hello runs end-to-end via the sdl2 shim.
-        out = _send(s, "run('/examples/sdl_hello.py')", wait=4.5)
-        check("examples/sdl_hello.py runs", "sdl_hello: ok" in out,
+        out = _send(s, "run('/examples/graphics/sdl/sdl_hello.py')", wait=4.5)
+        check("examples/graphics/sdl/sdl_hello.py runs", "sdl_hello: ok" in out,
               detail=out.splitlines()[-1] if out.strip() else "(empty)")
 
         # 1b. SDL_Renderer corpus item.
-        out = _send(s, "run('/examples/sdl_renderer.py')", wait=4.5)
-        check("examples/sdl_renderer.py runs", "sdl_renderer: ok" in out,
+        out = _send(s, "run('/examples/graphics/sdl/sdl_renderer.py')", wait=4.5)
+        check("examples/graphics/sdl/sdl_renderer.py runs", "sdl_renderer: ok" in out,
               detail=out.splitlines()[-1] if out.strip() else "(empty)")
 
         # 1c. TTF used to render via the bundled bitmap font, but the
@@ -186,14 +186,14 @@ def main() -> int:
               detail=out.splitlines()[-1] if out.strip() else "(empty)")
 
         # 1d. PNG decoder corpus item — decode an embedded 16x16 RGBA PNG.
-        out = _send(s, "run('/examples/sdl_image.py')", wait=6.0)
-        check("examples/sdl_image.py runs (PNG decode)",
+        out = _send(s, "run('/examples/graphics/sdl/sdl_image.py')", wait=6.0)
+        check("examples/graphics/sdl/sdl_image.py runs (PNG decode)",
               "sdl_image: ok" in out,
               detail=out.splitlines()[-1] if out.strip() else "(empty)")
 
         # 1e. JPEG decoder corpus item — decode an embedded 8x8 baseline JPEG.
-        out = _send(s, "run('/examples/sdl_jpeg.py')", wait=10.0)
-        check("examples/sdl_jpeg.py runs (JPEG decode)",
+        out = _send(s, "run('/examples/graphics/sdl/sdl_jpeg.py')", wait=10.0)
+        check("examples/graphics/sdl/sdl_jpeg.py runs (JPEG decode)",
               "sdl_jpeg: ok" in out,
               detail=out.splitlines()[-1] if out.strip() else "(empty)")
 

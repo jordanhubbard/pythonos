@@ -1,4 +1,4 @@
-"""sdl_hello — minimal PySDL2-compatible "hello window" smoke.
+"""sdl_hello — minimal PySDL2-compatible "hello window" example.
 
 Opens a window, fills it with blue, presents, then exits cleanly.
 Works on any boot that has a framebuffer up — that's the only

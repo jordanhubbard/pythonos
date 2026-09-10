@@ -304,6 +304,7 @@ def py_desktop(app_name: str | None = None):
         import apps.sysmon            # noqa: F401
         import apps.about             # noqa: F401
         import apps.clock             # noqa: F401
+        import apps.keybindings       # noqa: F401
         import apps.toaster           # noqa: F401
         from apps import registry
         seed_desktop(compositor, registry)

@@ -1,4 +1,4 @@
-"""sdl_renderer — Renderer corpus item.
+"""sdl_renderer — software-renderer drawing example.
 
 Opens a window, creates a renderer, fills with red, draws a green
 rectangle, presents, and exits cleanly. Verifies the PySDL2-shaped

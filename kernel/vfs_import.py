@@ -17,8 +17,9 @@ The importer is intentionally written without ``importlib.abc`` /
 ``importlib.machinery`` because the kernel's frozen Python doesn't
 include them; we use the legacy ``find_module`` / ``load_module``
 protocol that CPython still supports for ``sys.meta_path`` entries.
-Top-level modules only in v0 — package nesting (``import a.b``) is a
-follow-up that needs a per-package finder + path attribute.
+Both modules and nested packages are supported. Source is compiled on first
+import and cached by its exact bytes; editing a ``.py`` invalidates the cache
+without requiring application bytecode to be linked into the kernel.
 """
 
 import sys
@@ -29,6 +30,7 @@ import kernel.log as log
 
 
 search_path: list[str] = []
+_code_cache: dict[str, tuple[bytes, object]] = {}
 
 
 # ── Loader ──────────────────────────────────────────────────────────────────
@@ -42,7 +44,7 @@ class _Spec:
     __slots__ = (
         "name", "loader", "origin", "submodule_search_locations",
         "has_location", "cached", "parent", "loader_state",
-        "_set_fileattr", "_initializing",
+        "_set_fileattr", "_initializing", "_uninitialized_submodules",
     )
 
     def __init__(self, name, loader, origin, is_package) -> None:
@@ -51,10 +53,11 @@ class _Spec:
         self.origin = origin
         self.has_location = True
         self.cached = None
-        self.parent = name if is_package else ""
+        self.parent = name if is_package else name.rpartition(".")[0]
         self.loader_state = None
         self._set_fileattr = True
         self._initializing = False
+        self._uninitialized_submodules = []
         if is_package:
             self.submodule_search_locations = [origin.rsplit("/", 1)[0]]
         else:
@@ -79,15 +82,18 @@ class _VfsLoader:
         # rejects the identity forms when compiling source dynamically.
         # Apply the same fixup here so VFS-imported modules get the same
         # treatment that /examples/run() applies.
-        src = data.decode("utf-8")
-        for kw in ("None", "True", "False"):
-            src = src.replace("is not " + kw, "!= " + kw)
-            src = src.replace("is " + kw, "== " + kw)
-        # PYCF_ALLOW_TOP_LEVEL_AWAIT (0x2000) — the same flag the shell
-        # uses when running /examples/*.py. Without it the kernel's
-        # compile() rejects ordinary `def` blocks at module top level
-        # with a confusing "cannot delete function call" diagnostic.
-        code = compile(src, path, "exec", flags=0x2000)
+        cached = _code_cache.get(path)
+        if cached is not None and cached[0] == data:
+            code = cached[1]
+        else:
+            src = data.decode("utf-8")
+            for kw in ("None", "True", "False"):
+                src = src.replace("is not " + kw, "!= " + kw)
+                src = src.replace("is " + kw, "== " + kw)
+            # PYCF_ALLOW_TOP_LEVEL_AWAIT (0x2000) — the same flag the shell
+            # uses when running /examples/*.py.
+            code = compile(src, path, "exec", flags=0x2000)
+            _code_cache[path] = (data, code)
         exec(code, module.__dict__)
 
     def get_filename(self, fullname: str) -> str:
@@ -106,10 +112,9 @@ class _VfsFinder:
     """PEP 451 ``find_spec`` finder — no importlib dependency."""
 
     def find_spec(self, fullname: str, path=None, target=None):
-        if "." in fullname:
-            return None     # top-level only for v0
+        relative = fullname.replace(".", "/")
         for vdir in search_path:
-            base = vdir.rstrip("/") + "/" + fullname
+            base = vdir.rstrip("/") + "/" + relative
             init = base + "/__init__.py"
             flat = base + ".py"
             if vfs.read_sync(init) is not None:
@@ -147,6 +152,7 @@ def install() -> None:
         return
     _finder = _VfsFinder()
     sys.meta_path.append(_finder)
+    add_search_dir("/lib")
     add_search_dir("/examples")
     add_search_dir("/home")
     log.info(f"vfs_import: search path = {search_path}")

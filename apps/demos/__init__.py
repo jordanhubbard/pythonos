@@ -16,3 +16,4 @@ from apps.demos import sprites        # noqa: F401
 from apps.demos import defender       # noqa: F401
 from apps.demos import pacmaze        # noqa: F401
 from apps.demos import raiders        # noqa: F401
+from apps.demos import invaders       # noqa: F401

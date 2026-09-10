@@ -178,6 +178,7 @@ DOCKER_RUN = docker run --rm --platform $(DOCKER_PLATFORM) --user $(DOCKER_USER)
 .PHONY: all build build-gui run run-gui start stop restart test clean cleanall \
         docker-build help disk-image \
         bridge bridge-clean test-bridge \
+        run-display-server connect-display \
         _freeze _iso _iso_arm64 \
         x86_64 run-x86_64 stop-x86_64 test-x86_64 run-gui-x86_64 test-gui-x86_64 run-fb-x86_64 \
         arm64 run-arm64 stop-arm64 test-arm64 test-arm64-gicv3 run-gui-arm64 run-fb-arm64 \
@@ -203,6 +204,9 @@ help:
 	@echo "    make build-gui          Build kernel AND pythonos_bridge"
 	@echo "    make run-gui            Boot kernel + spawn bridge + open SDL"
 	@echo "                              desktop with full app dock"
+	@echo "    make run-display-server Boot kernel and expose its display endpoint"
+	@echo "    PYTHONOS_DISPLAY_SERVER=<ip> make connect-display"
+	@echo "                            Open that kernel's desktop on this machine"
 	@echo ""
 	@echo "Build flags:"
 	@echo "  make TARGET_ARCH=x86_64   Cross-build for x86_64"
@@ -255,6 +259,9 @@ help:
 	@echo "  PYTHONOS_BRIDGE_GUEST_PORT=<p> native guest bridge port (default: 5001)"
 	@echo "  PYTHONOS_BRIDGE_TRANSPORT=<m>  native-tcp (default) or chardev"
 	@echo "  PYTHONOS_BRIDGE_EXTERNAL=1     use an already-running remote bridge"
+	@echo "  PYTHONOS_DISPLAY_BIND=<addr>   run-display-server bind (default: 0.0.0.0)"
+	@echo "  PYTHONOS_DISPLAY_SERVER=<addr> kernel host for connect-display"
+	@echo "  PYTHONOS_EXPORT_DIR=<path>     host directory for dragged-out files"
 	@echo "  PYTHONOS_GOLDEN_REFRESH=1      regenerate test screendump goldens"
 	@echo ""
 	@echo "TCP REPL access (host → guest forwarded ports):"
@@ -292,6 +299,26 @@ build:     all
 build-gui: all bridge
 start:     run
 restart:   stop start
+
+# Remote display, deliberately split into two explicit roles. Machine X boots
+# QEMU and exposes its guest bridge listener. Machine Y runs only the SDL
+# desktop companion and connects to X. The wire protocol has no encryption or
+# authentication yet, so operators should use a trusted network or SSH tunnel.
+PYTHONOS_DISPLAY_BIND ?= 0.0.0.0
+PYTHONOS_DISPLAY_PORT ?= 17010
+
+run-display-server: build-gui
+	PYTHONOS_BRIDGE_EXTERNAL=1 \
+	PYTHONOS_BRIDGE_ADDR=$(PYTHONOS_DISPLAY_BIND):$(PYTHONOS_DISPLAY_PORT) \
+	$(MAKE) run-gui
+
+connect-display: bridge
+	@test -n "$(PYTHONOS_DISPLAY_SERVER)" || \
+	  (echo "Set PYTHONOS_DISPLAY_SERVER to the kernel machine IP"; exit 2)
+	PYTHONOS_DESKTOP_MODE=interactive \
+	tools/pythonos_bridge/pythonos_bridge \
+	  --connect-tcp $(PYTHONOS_DISPLAY_SERVER):$(PYTHONOS_DISPLAY_PORT) \
+	  --connect-timeout-ms -1
 
 # ── Persistent disk image (ext2, /home + /apps) ──────────────────────────────
 # Built inside the build container — see tools/build_disk.sh and
@@ -347,6 +374,9 @@ test-chipset:
 	python3 tests/arcade_test.py
 	python3 tests/dock_test.py
 	python3 tests/ui_test.py
+	python3 tests/editor_navigation_test.py
+	python3 tests/timekeeper_test.py
+	python3 tests/keybindings_test.py
 	python3 tests/layout_test.py
 	python3 tests/ci_gate_test.py
 
@@ -428,7 +458,10 @@ LINENOISE_SRC := $(wildcard src/linenoise/*.c src/linenoise/*.h)
 KERNEL_PY  := $(call rwildcard,kernel/,*.py) $(call rwildcard,apps/,*.py)
 ASYNCIO_PY := $(wildcard asyncio/*.py)
 STUBS_PY   := $(call rwildcard,tools/stdlib_stubs/,*.py)
-EXAMPLES_SRC := $(wildcard examples/*.py examples/*.txt)
+EXAMPLES_SRC := $(call rwildcard,examples/,*.py) $(call rwildcard,examples/,*.txt) \
+	$(call rwildcard,examples/,*.png) $(call rwildcard,examples/,*.jpg) \
+	$(call rwildcard,examples/,*.jpeg) $(call rwildcard,examples/,*.bmp) \
+	$(call rwildcard,examples/,*.ppm)
 
 # Python sources shared by both architectures
 KERNEL_DEPS := $(KERNEL_PY) $(ASYNCIO_PY) $(STUBS_PY) $(EXAMPLES_SRC) tools/freeze_kernel.py

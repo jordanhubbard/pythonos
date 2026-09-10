@@ -57,7 +57,7 @@ async def main(argv=None, cwd="/", read_char=None, write=None):
     path = _abspath(argv[0], cwd) if argv else "/tmp/vfs-demo.txt"
     lines = [
         "PythonOS VFS demo",
-        "created from /examples/vfs_demo.py",
+        "created from /examples/storage/vfs_demo.py",
         "cwd=" + cwd,
     ]
     payload = ("\n".join(lines) + "\n").encode("utf-8")

@@ -357,7 +357,7 @@ class Shell:
         self._write("Type help or help() for commands, demos, and examples.\n")
         self._write("Commands: ls ps pwd cd cat cp mv ftp ed sysinfo netstat\n")
         self._write("Desktop: desktop()  desktop('pacmaze')  desktop('help')\n")
-        self._write("Examples: examples()  run('/examples/hello_kernel.py')\n")
+        self._write("Examples: examples()  run('/examples/start_here/hello_kernel.py')\n")
         self._write("Helpers: sh()  sh('cmd args')  run('/path')  clear()\n\n")
 
         await self._history_load()
@@ -652,7 +652,7 @@ class Shell:
         await commands.desktop(args, self._cwd, self._write)
 
     async def _examples(self) -> None:
-        """examples() — list programs frozen into the /examples directory."""
+        """examples() — show the teaching tracks under /examples."""
         from kernel import commands
         await commands.examples([], self._cwd, self._write)
 
@@ -722,7 +722,7 @@ class Shell:
             "  netstat        — network status\n"
             "  desktop [APP]  — open the GUI desktop; optionally launch APP\n"
             "  desktop --list — list bundled desktop apps, demos, and games\n"
-            "  examples       — list readable programs frozen into /examples\n"
+            "  examples [track] — browse the teaching examples curriculum\n"
             "  clear()        — clear framebuffer console\n"
             "  run('/path')   — run script by absolute path\n"
             "  sh()           — enter shell sub-REPL\n"
@@ -734,8 +734,8 @@ class Shell:
             "  desktop('pacmaze')   — open it and launch a bundled game\n"
             "  desktop('help')      — list all apps, demos, and games\n"
             "\nBundled examples:\n"
-            "  examples()                         — list /examples\n"
-            "  run('/examples/hello_kernel.py')   — run one\n"
+            "  examples()                         — show learning tracks\n"
+            "  run('/examples/start_here/hello_kernel.py')   — run one\n"
             "  cat /examples/README.txt           — usage and descriptions\n"
             "\nLeaving the shell:\n"
             "  exit() / quit() — close a TCP or desktop terminal session\n"

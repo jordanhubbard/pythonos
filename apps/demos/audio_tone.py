@@ -1,7 +1,7 @@
 """apps.demos.audio_tone — Plays a 440 Hz square-wave tone via the mixer.
 
 Opens a small status window, generates a half-second tone using the
-same square-wave generator as ``examples/tone.py``, then pushes it
+same square-wave generator as ``examples/audio/tone.py``, then pushes it
 through :class:`kernel.sound.mixer.Mixer.play_pcm`. ESC closes.
 """
 

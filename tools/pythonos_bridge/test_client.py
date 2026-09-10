@@ -17,7 +17,9 @@ import socket
 import struct
 import subprocess
 import sys
+import tempfile
 import time
+import shutil
 
 
 def _send(sock, frame_id, op, params=None, trailer=b""):
@@ -66,7 +68,9 @@ def main():
     port = _free_port()
     endpoint = f"127.0.0.1:{port}"
 
-    proc = subprocess.Popen([binary, "--listen-tcp", endpoint])
+    export_dir = tempfile.mkdtemp(prefix="pythonos-bridge-export-")
+    bridge_env = dict(os.environ, PYTHONOS_EXPORT_DIR=export_dir)
+    proc = subprocess.Popen([binary, "--listen-tcp", endpoint], env=bridge_env)
     try:
         # Wait for the server to bind.
         deadline = time.time() + 3.0
@@ -106,6 +110,8 @@ def main():
         check("hello advertises image decode", "image.decode" in features)
         check("hello advertises rle32 frames", "frame.rle32" in features)
         check("hello advertises one-way ops", "oneway" in features)
+        check("hello advertises file transfer",
+              "file.drop" in features and "file.export" in features)
 
         # id=0 is an ordered notification: it must not leave a response that
         # could be mistaken for the next synchronous RPC.
@@ -150,6 +156,36 @@ def main():
         for frame_id, handle in ((123, image_handle), (124, frame_handle)):
             _send(s, frame_id, "surface.destroy", {"handle": handle})
             check("optimized surface destroy", _recv(s).get("ok") is True)
+
+        # Guest-to-host exports use a bounded raw trailer and an atomic finish.
+        export_payload = b"dragged from PythonOS\n"
+        _send(s, 130, "host.export.begin", {"name": "lesson.txt"})
+        r = _recv(s)
+        export_token = int(r.get("result", {}).get("token", 0))
+        check("host.export.begin", r.get("ok") is True and export_token > 0)
+        _send(s, 131, "host.export.chunk", {"token": export_token}, export_payload)
+        r = _recv(s)
+        check("host.export.chunk", r.get("result", {}).get("bytes") == len(export_payload))
+        _send(s, 132, "host.export.finish", {"token": export_token})
+        r = _recv(s)
+        export_path = r.get("result", {}).get("path", "")
+        check("host.export.finish writes exact bytes",
+              r.get("ok") is True and os.path.dirname(export_path) == export_dir
+              and open(export_path, "rb").read() == export_payload)
+
+        _send(s, 133, "host.export.begin", {"name": "cancelled.txt"})
+        r = _recv(s)
+        cancelled_token = int(r.get("result", {}).get("token", 0))
+        cancelled_temp = r.get("result", {}).get("path", "") + ".part-%d-%d" % (
+            proc.pid, cancelled_token)
+        _send(s, 134, "host.export.chunk", {"token": cancelled_token}, b"partial")
+        _recv(s)
+        _send(s, 135, "host.export.abort", {"token": cancelled_token})
+        r = _recv(s)
+        check("host.export.abort removes partial output",
+              r.get("ok") is True
+              and not os.path.exists(os.path.join(export_dir, "cancelled.txt"))
+              and not os.path.exists(cancelled_temp))
 
         # ping with tag
         _send(s, 2, "ping", {"tag": "abc"})
@@ -317,6 +353,7 @@ def main():
             proc.terminate()
             try: proc.wait(timeout=2.0)
             except subprocess.TimeoutExpired: proc.kill()
+        shutil.rmtree(export_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":

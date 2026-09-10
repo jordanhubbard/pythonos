@@ -1,4 +1,4 @@
-"""sdl_jpeg — JPEG decoder corpus item.
+"""sdl_jpeg — JPEG decoding example.
 
 Embeds a small 8x8 baseline JPEG as a bytes literal and decodes it
 through the full Huffman + IDCT + YCbCr→RGB pipeline.

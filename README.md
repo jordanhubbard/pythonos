@@ -2,7 +2,7 @@
 
 A bare-metal operating system where CPython 3.14 **is** the kernel — not a program running on an OS, but the OS itself. Python owns the machine from interrupt handlers to the interactive shell. Runs on x86_64 and arm64 (QEMU `virt`).
 
-Boots directly to a `>>>` prompt on the serial console. The interactive prompt is a real Python REPL — define functions and classes, `import` files written to `/examples` or `/home`, recall history with up-arrow (persisted across reboots on the ext2 mount). An opt-in **GUI desktop** with a stacking compositor, PySDL2-compatible Python API, PNG/JPEG decoders, audio mixer, a macOS-style menu bar (PythonOS / Apps / Demos / Games), a polished desktop background, and a dock of bundled apps (terminal, editor, file browser, image viewer, system monitor, about, clock, toaster) is one make target away — see **GUI Mode** below. Demos and games launch from a two-finger / control-click on the wallpaper (or the Demos and Games menus); they appear in the dock only while running, unless you Keep in Dock.
+Boots directly to a `>>>` prompt on the serial console. The interactive prompt is a real Python REPL — define functions and classes, `import` files written to `/examples` or `/home`, recall history with up-arrow (persisted across reboots on the ext2 mount). An opt-in **GUI desktop** with a stacking compositor, PySDL2-compatible Python API, PNG/JPEG decoders, audio mixer, configurable keybindings, a `top` performance monitor, a macOS-style menu bar (PythonOS / Apps / Demos / Games), a polished desktop background, and a dock of bundled apps is one make target away — see **GUI Mode** below. Demos and games launch from a two-finger / control-click on the wallpaper (or the Demos and Games menus); they appear in the dock only while running, unless you Keep in Dock.
 
 Run `make help` at any time for the top-level target listing.
 
@@ -70,6 +70,8 @@ PYTHONOS_GUI_APP=terminal     make run-gui
 PYTHONOS_GUI_APP=editor       make run-gui
 PYTHONOS_GUI_APP=files        make run-gui
 PYTHONOS_GUI_APP=image_viewer make run-gui
+PYTHONOS_GUI_APP=top          make run-gui
+PYTHONOS_GUI_APP=keybindings  make run-gui
 PYTHONOS_GUI_APP=audio_tone   make run-gui
 PYTHONOS_GUI_APP=sprites      make run-gui
 PYTHONOS_GUI_APP=defender     make run-gui
@@ -93,12 +95,51 @@ In the `$` sub-shell, use `desktop`, `desktop pacmaze`, or
 name for the direct framebuffer backend.
 
 Inside the compositor:
+- **F1** opens Keybindings; choose a row and press Enter to replace a shortcut.
+- **F2** opens the focused application's live source. Both shortcuts are configurable.
 - **Tab** / **Shift-Tab** cycles focus between windows.
 - Click a window's title bar to drag it; click in the body to focus + raise.
+- Drop a host file anywhere to import it into `/home`, or onto a directory in
+  Files to import it there. Drag a PythonOS file row onto **Export** to copy it
+  to the display machine's Downloads directory (`PYTHONOS_EXPORT_DIR` changes it).
 - **ESC** typically closes the focused app and returns to the REPL.
+
+Image Viewer starts in `/examples/images`, which contains three original
+snake-themed PNGs in photographic, pixel-art, and scientific-illustration
+styles. The focused chipset curriculum is under `/examples/graphics/chipset`.
 
 See **`docs/gui.md`** for the full feature reference (compositor, chipset,
 sdl2 API surface, image decoders, audio backends, apps).
+
+### Remote display: kernel on X, desktop on Y
+
+The desktop protocol is TCP and does not require QEMU and SDL to run on the
+same computer. Machine X runs PythonOS and exposes port 17010:
+
+```bash
+# Machine X — the kernel host. Restrict the bind address when possible.
+PYTHONOS_DISPLAY_BIND=0.0.0.0 make run-display-server
+```
+
+Machine Y needs the repository and SDL dependencies only for the small bridge
+binary; it connects by X's address and owns the actual window, input, audio,
+and host-side import/export directory:
+
+```bash
+# Machine Y — the display host.
+make bridge
+PYTHONOS_DISPLAY_SERVER=192.0.2.10 make connect-display
+
+# Optional destination for files dragged out of PythonOS:
+PYTHONOS_EXPORT_DIR="$HOME/Desktop/PythonOS" \
+  PYTHONOS_DISPLAY_SERVER=192.0.2.10 make connect-display
+```
+
+This is analogous to a network display, though the connection direction is
+currently desktop-to-kernel: PythonOS listens and `pythonos_bridge` connects.
+The protocol presently has no authentication or encryption. Use it only on a
+trusted network, bind it to a private interface, or forward port 17010 through
+SSH; do not expose it directly to the public Internet.
 
 ### Native debug sessions
 
@@ -162,7 +203,7 @@ Python 3.14.0a0
 Type help or help() for commands, demos, and examples.
 Commands: ls ps pwd cd cat cp mv ftp ed sysinfo netstat
 Desktop: desktop()  desktop('pacmaze')  desktop('help')
-Examples: examples()  run('/examples/hello_kernel.py')
+Examples: examples()  run('/examples/start_here/hello_kernel.py')
 Helpers: sh()  sh('cmd args')  run('/path')  clear()
 
 >>> 1 + 1
@@ -251,7 +292,7 @@ $ pwd
 $ help
 $ examples
 $ desktop --list
-$ /examples/tone.py
+$ /examples/audio/tone.py
 $ exit
 >>> cwd        # cwd change is visible back in Python
 '/tmp'
@@ -266,7 +307,7 @@ PythonOS.
 ```python
 >>> sh('cp /bin/sysinfo.py /tmp/backup.py')
 >>> sh('ls /tmp')
->>> sh('/examples/tone.py')
+>>> sh('/examples/audio/tone.py')
 ```
 
 #### Writing your own commands
@@ -302,16 +343,20 @@ PythonOS also seeds `/examples` with readable Python programs that are frozen in
 
 ```
 >>> ls /examples
-README.txt  async_tasks.py  hello_kernel.py  primes.py  recv_file.py  send_file.py  tone.py  vfs_demo.py
->>> run('/examples/hello_kernel.py')
->>> run('/examples/vfs_demo.py')
->>> run('/examples/async_tasks.py')
->>> sh('/examples/primes.py 100')
->>> run('/examples/tone.py')
+README.txt  start_here/  storage/  concurrency/  graphics/  images/  audio/
+networking/  demos/  games/  internals/
+>>> examples()
+PythonOS learning tracks in /examples:
+>>> run('/examples/start_here/hello_kernel.py')
+>>> run('/examples/storage/vfs_demo.py')
+>>> run('/examples/concurrency/async_tasks.py')
+>>> sh('/examples/start_here/primes.py 100')
+>>> run('/examples/audio/tone.py')
 ```
 
-The smaller examples cover shell arguments, scheduler/VFS inspection, TmpFS
-read/write, cooperative asyncio tasks, and pure-Python computation.
+Each directory has a README with an ordered path and concepts. `internals/`
+holds executable kernel-validation fixtures so they no longer masquerade as
+beginner lessons; `demos/` and `games/` expose the desktop application sources.
 
 The `ed` command is backed by `kernel.ed`, a line-oriented editor inspired by
 `py_ed`. It supports append/insert/change/delete, print/number/literal print,
@@ -335,7 +380,7 @@ $ nc -l 7001 > from-pythonos.txt
 Use `FILE_HOST_PORT=<port> make run` if you need a different host-side
 forwarded port.
 
-The older file-transfer examples are still available as readable source at `/examples/recv_file.py` and `/examples/send_file.py`.
+The older file-transfer examples are still available as readable source at `/examples/networking/recv_file.py` and `/examples/networking/send_file.py`.
 
 #### Mixing Python and shell
 
@@ -367,7 +412,7 @@ make test-gui       # GUI subsystem smoke (headless screendump + audio capture)
 `make test-gui` runs three additional suites on x86_64 (or one on arm64):
 - **gui smoke** — sdl2 corpus (`hello`/`renderer`/`text`/`image`/`jpeg`), compositor render, mouse pipeline, pointer round-trip, serial markers
 - **desktop smoke** — boots, launches `desktop('bouncing_ball')`, screendumps, asserts pixel-exact desktop bg + title bar + window body + tile-hash golden
-- **audio smoke** — boots with `-audiodev wav,id=a`, runs `examples/tone.py`, verifies the captured WAV header (48 kHz / 2ch / 16-bit)
+- **audio smoke** — boots with `-audiodev wav,id=a`, runs `examples/audio/tone.py`, verifies the captured WAV header (48 kHz / 2ch / 16-bit)
 
 Counts at HEAD: 55 / 37 / 26 / 5 / 6 / 8 across the six suites (default x86, default arm64, x86 gui, x86 desktop, x86 audio, arm64 gui) — **137 tests** total.
 
@@ -375,7 +420,7 @@ GitHub Actions runs that gate on **both** architectures: `ubuntu-24.04` builds `
 
 For the no-GIL path, run `PYTHONOS_FREE_THREADING=1 SMP_CPUS=4 make test`.
 That smoke covers the boot-time SMP self-tests, `_hal.pthread_selftest()`, and
-`/examples/thread_demo.py`, including multiple Python worker threads and timed
+`/examples/concurrency/thread_demo.py`, including multiple Python worker threads and timed
 lock acquisition.
 
 ---
@@ -447,7 +492,7 @@ PythonOS kernel shell
 Python 3.14.0
 Type help or help() for commands, demos, and examples.
 Desktop: desktop()  desktop('pacmaze')  desktop('help')
-Examples: examples()  run('/examples/hello_kernel.py')
+Examples: examples()  run('/examples/start_here/hello_kernel.py')
 
 >>>
 ```
@@ -530,14 +575,15 @@ kernel/
   scheduler.py       asyncio task scheduler (ps, spawn)
   shell.py           kernel shell: Python REPL + bare-word /bin dispatch + sh() sub-REPL
 
-apps/                  built-in GUI applications (frozen, registered via apps.registry)
+apps/                  source-first GUI applications registered via apps.registry
   terminal/          Python REPL inside a CompositorWindow
-  editor/            ed line editor in a window
-  files/             arrow-key file browser with TCP send/recv
+  editor/            shared screen editor used standalone and in source panes
+  files/             shared chooser wrapper with host drag/drop transfer
   image_viewer/      BMP / PPM / PNG / JPEG viewer
-  sysmon/            live kernel state — uptime, free RAM, processes
+  sysmon/            Top — live tasks, memory, and bridge performance
+  keybindings/       inspect and change desktop-wide shortcuts
   about/             "About PythonOS" version + system info window
-  clock/             big-digit uptime clock with bespoke 5x7 font
+  clock/             settable session clock/uptime with bespoke 5x7 font
   demos/             bouncing_ball, audio_tone, starfield, rainfall,
                      plasma, paint, life, keyboard, mandelbrot, spirograph,
                      sprites, defender, pacmaze, raiders
@@ -551,11 +597,15 @@ bin/  (seeded in tmpfs at boot — add .py files here to create new shell comman
   desktop.py, examples.py                                  — public catalogs / launchers
   pythonos_gui.py                                          — legacy framebuffer launcher
 
-examples/          frozen runnable demos, also seeded as readable source in /examples
-  hello_kernel.py, vfs_demo.py, async_tasks.py, primes.py, tone.py,
-  recv_file.py, send_file.py
-  fb_test.py, sdl_hello.py, sdl_renderer.py, sdl_text.py,
-  sdl_image.py (PNG corpus), sdl_jpeg.py (JPEG corpus)
+examples/          runnable, readable curriculum mirrored to /examples
+  start_here/      first shell program and pure-Python algorithm
+  storage/         VFS files, paths, metadata, and byte/text boundaries
+  concurrency/     asyncio queues followed by AP-backed threads
+  graphics/        framebuffer lesson plus ordered SDL lessons
+  audio/           PCM synthesis and device output
+  networking/      TCP receive/send and VFS streaming
+  demos/, games/   source of interactive desktop teaching programs
+  internals/       contributor smoke and substrate coverage fixtures
 
 asyncio/             bare-metal asyncio (no socket/selectors): Future, Task,
                      Queue, Event, Lock, Semaphore, sleep, wait_for, gather

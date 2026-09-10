@@ -1,4 +1,4 @@
-"""Drive _hal's non-blocking linenoise edit with a synthetic byte stream.
+"""Internal coverage fixture for _hal's non-blocking linenoise editor.
 
 The smoke test (tests/smoke_test.py) runs this and checks that the
 edited line, computed entirely in-kernel from a scripted byte sequence

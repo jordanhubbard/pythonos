@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Audio-output smoke. Boots the kernel headlessly with a WAV-recording
-``audiodev`` plumbed into the HDA codec, runs ``examples/tone.py`` (which
+``audiodev`` plumbed into the HDA codec, runs ``examples/audio/tone.py`` (which
 generates a 440 Hz square-wave PCM buffer and pushes it through the
 HDA driver), then verifies the captured WAV file has both a valid
 header and at least some non-silence samples.
@@ -174,8 +174,8 @@ def main() -> int:
         try: s.recv(8192)
         except (TimeoutError, BlockingIOError): pass
 
-        out = _send(s, "run('/examples/tone.py')", wait=4.5)
-        check("examples/tone.py runs",
+        out = _send(s, "run('/examples/audio/tone.py')", wait=4.5)
+        check("examples/audio/tone.py runs",
               "Generated" in out or "tone" in out.lower(),
               detail=(out.splitlines()[-1] if out.strip() else "(empty)"))
 

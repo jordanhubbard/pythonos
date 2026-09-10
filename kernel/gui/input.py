@@ -25,6 +25,7 @@ MOUSE_MOVE   = 3
 MOUSE_DOWN   = 4
 MOUSE_UP     = 5
 MOUSE_WHEEL  = 6
+HOST_FILE_DROP = 7
 QUIT         = 100
 
 
@@ -105,6 +106,9 @@ class Event:
     y:    int = 0
     dx:   int = 0
     dy:   int = 0
+    name: str = ""             # host basename for HOST_FILE_DROP
+    token: int = 0              # opaque bridge-side dropped-file token
+    size: int = 0               # advertised host file size
 
 
 # ── EventQueue ──────────────────────────────────────────────────────────────

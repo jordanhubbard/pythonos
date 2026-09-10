@@ -15,6 +15,7 @@ disk-arm64.img
 __pycache__/
 *.pyc
 *.pyo
+tools/pythonos_bridge/*.d
 
 # Temp files
 *.tmp

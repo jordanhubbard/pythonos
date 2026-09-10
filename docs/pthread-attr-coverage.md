@@ -50,11 +50,11 @@ matrix below calls "live"; everything else is a stub.
 
 | pthread call                        | Gated by                       | Status in our build | Test coverage                      |
 |-------------------------------------|--------------------------------|---------------------|------------------------------------|
-| `pthread_attr_init`                 | `THREAD_STACK_SIZE` ∪ `PTHREAD_SYSTEM_SCHED_SUPPORTED` | **stub (never reached by CPython)** — `pthread_create` is invoked with `NULL` attrs | `examples/pthread_coverage.py: attr_self_test` — direct call only |
+| `pthread_attr_init`                 | `THREAD_STACK_SIZE` ∪ `PTHREAD_SYSTEM_SCHED_SUPPORTED` | **stub (never reached by CPython)** — `pthread_create` is invoked with `NULL` attrs | `examples/internals/pthread_coverage.py: attr_self_test` — direct call only |
 | `pthread_attr_destroy`              | same                           | **stub**            | same                               |
 | `pthread_attr_setstacksize`         | `THREAD_STACK_SIZE` defined    | **stub**            | direct call asserts EINVAL on stack < 32 KiB |
 | `pthread_attr_getstacksize`         | not used by CPython            | **stub** (round-trip works) | direct call round-trips a value |
-| `pthread_attr_setdetachstate`       | not used by `do_start_joinable_thread` | **live for in-tree direct callers** (e.g. `pthread_create` honors `PTHREAD_CREATE_DETACHED`) | `examples/pthread_coverage.py: lifecycle_detached` |
+| `pthread_attr_setdetachstate`       | not used by `do_start_joinable_thread` | **live for in-tree direct callers** (e.g. `pthread_create` honors `PTHREAD_CREATE_DETACHED`) | `examples/internals/pthread_coverage.py: lifecycle_detached` |
 | `pthread_attr_setscope`             | `PTHREAD_SYSTEM_SCHED_SUPPORTED` | **not declared** — symbol absent. CPython would fail link if the macro were defined, which it isn't. | n/a |
 
 Notes:
@@ -64,7 +64,7 @@ Notes:
   `deps/cpython-src/Python/thread_pthread.h:289-294`. Our pyconfig defines
   neither, so CPython hits the `(pthread_attr_t *)NULL` arm.
 - `pthread_attr_setdetachstate` is still load-bearing for **direct**
-  in-tree callers that build an attr by hand. `examples/pthread_coverage.py`
+  in-tree callers that build an attr by hand. `examples/internals/pthread_coverage.py`
   exercises this path because the lifetime semantics it gates (detached
   worker reaps its own slot) is on the no-GIL critical path.
 - `pthread_attr_setstacksize` rejects sizes below 32 KiB with `EINVAL`
@@ -78,7 +78,7 @@ Notes:
 
 | pthread call                        | Gated by                            | Status in our build  | Test coverage                |
 |-------------------------------------|--------------------------------------|----------------------|------------------------------|
-| `pthread_condattr_init`             | `CONDATTR_MONOTONIC`                | **stub (never reached by CPython)** — `init_condattr()` only runs the call when `CONDATTR_MONOTONIC` is defined, which requires `HAVE_PTHREAD_CONDATTR_SETCLOCK` | `examples/pthread_coverage.py: attr_self_test` — direct call only |
+| `pthread_condattr_init`             | `CONDATTR_MONOTONIC`                | **stub (never reached by CPython)** — `init_condattr()` only runs the call when `CONDATTR_MONOTONIC` is defined, which requires `HAVE_PTHREAD_CONDATTR_SETCLOCK` | `examples/internals/pthread_coverage.py: attr_self_test` — direct call only |
 | `pthread_condattr_destroy`          | same                                | **stub**             | same                         |
 | `pthread_condattr_setclock`         | `CONDATTR_MONOTONIC`                | **stub** (silently accepts any clock; returns 0) | same                         |
 
@@ -112,7 +112,7 @@ semantics." The substrate enforces this as follows:
 
 ## What gets tested where
 
-- `examples/pthread_coverage.py: attr_self_test` exercises the live
+- `examples/internals/pthread_coverage.py: attr_self_test` exercises the live
   failure modes (NULL inputs, undersized stack, bogus detach state) and
   confirms that the round-trip getters return the values we set. It also
   covers the no-op `pthread_condattr_*` happy path so that a future change

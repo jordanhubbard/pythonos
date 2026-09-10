@@ -219,11 +219,11 @@ def run() -> int:
             # ef6.3: virtio-blk-mmio bound + ext2 disk visible.
             ("virtio_blk.blk.num_sectors\n", "131072"),
             # ef6.4: /home is mounted from ext2 (arm64) — round-trip a small
-            # file via /examples/check_home.py.
-            ("run('/examples/check_home.py')\n", "EF64_HOME_OK"),
+            # file via /examples/internals/check_home.py.
+            ("run('/examples/internals/check_home.py')\n", "EF64_HOME_OK"),
             ("help\n", "desktop('pacmaze')"),
-            ("desktop('help')\n", "Games: defender, pacmaze, raiders, sprites"),
-            ("examples()\n", "Frozen examples in /examples:"),
+            ("desktop('help')\n", "Games: defender, invaders, pacmaze, raiders, sprites"),
+            ("examples()\n", "PythonOS learning tracks in /examples:"),
             ("halt\n", "PythonOS has no guest halt command"),
             ("exit()\n", "The native kernel console stays active."),
         ]:
@@ -277,7 +277,7 @@ def run() -> int:
 
         # pthread_coverage exercises multiple workers and repeated lock
         # cycles — give it a generous deadline.
-        cov = _send_and_wait("run('/examples/pthread_coverage.py')\n",
+        cov = _send_and_wait("run('/examples/internals/pthread_coverage.py')\n",
                               timeout=max(RECV_TIMEOUT, 180.0))
         if not cov:
             print("[FAIL] pthread_coverage.py never returned to shell prompt")

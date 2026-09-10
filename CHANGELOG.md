@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Add original snake image samples and open Image Viewer directly in their gallery.
+- Add seven focused virtual Amiga chipset teaching lessons.
+- Add persistent, configurable desktop keybindings with a docked control panel.
+- Promote System Monitor to Top with bounded guest/host RPC performance sampling.
+
 ## [0.3.3] - 2026-09-09
 
 ### Added
@@ -175,7 +181,7 @@ QEMU `virt`.
 - VirtIO-Net driver (PCI on x86, MMIO on arm64) with arp / ip / icmp /
   tcp / udp.
 - TCP listen / accept / send / recv with retransmit + backoff; powers
-  `repl_server` on port 5000 and `examples/recv_file.py` on 7000.
+  `repl_server` on port 5000 and `examples/networking/recv_file.py` on 7000.
 
 #### Build, release, and tests
 - Cross-compilation Docker image (`tools/Dockerfile`) builds CPython 3.14

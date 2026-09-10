@@ -192,7 +192,7 @@ def main() -> int:
     check("registry seed pins only category=app",
           seeded.visible_names() == ["terminal"] and seeded.is_pinned("terminal"))
 
-    for name in ("sprites", "defender", "pacmaze", "raiders"):
+    for name in ("sprites", "defender", "invaders", "pacmaze", "raiders"):
         src = open(os.path.join(ROOT, "apps", "demos", f"{name}.py")).read()
         check(f"{name} registers as category=game",
               'category="game"' in src)

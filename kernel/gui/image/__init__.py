@@ -57,3 +57,26 @@ def load(path: str) -> SDL_Surface:
     with open(p, "rb") as f:
         data = f.read()
     return load_bytes(data)
+
+
+async def load_vfs(path: str) -> SDL_Surface:
+    """Read through the VFS, preferring compressed host-side decoding."""
+    from kernel.fs.vfs import OpenFlags, vfs
+    fd = await vfs.open(str(path), OpenFlags.RDONLY)
+    data = bytearray()
+    try:
+        while True:
+            chunk = await vfs.read(fd, 32 * 1024)
+            if not chunk:
+                break
+            data.extend(chunk)
+    finally:
+        vfs.close(fd)
+    encoded = bytes(data)
+    try:
+        from kernel.bridge import bridge
+        if bridge.opened and "image.decode" in bridge.features:
+            return SDL_Surface.from_image_bytes(encoded)
+    except Exception:
+        pass
+    return load_bytes(encoded)

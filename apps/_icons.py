@@ -176,3 +176,16 @@ def raiders_icon() -> SDL_Surface:
     SDL_FillRect(s, SDL_Rect(20, 32, 8, 8), 0xFFE060)
     _border(s, 0x306050)
     return s
+
+
+def invaders_icon() -> SDL_Surface:
+    """Marching alien above a defensive cannon."""
+    s = _new_icon(0x020608)
+    green = 0x50F070
+    for rect in ((14, 8, 4, 4), (30, 8, 4, 4), (18, 12, 12, 4),
+                 (10, 16, 28, 8), (14, 24, 4, 4), (30, 24, 4, 4)):
+        SDL_FillRect(s, SDL_Rect(*rect), green)
+    SDL_FillRect(s, SDL_Rect(20, 34, 8, 3), 0xE8F0E8)
+    SDL_FillRect(s, SDL_Rect(14, 37, 20, 5), 0xE8F0E8)
+    _border(s, 0x307040)
+    return s

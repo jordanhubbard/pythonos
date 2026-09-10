@@ -256,6 +256,10 @@ def main() -> int:
                     "from kernel.bridge import bridge; print(bridge.performance_snapshot())")
             elif args.command == "key":
                 aliases = {"esc": "KEY_ESC", "space": "KEY_SPACE", "tab": "KEY_TAB",
+                           "enter": "KEY_ENTER", "return": "KEY_ENTER",
+                           "backspace": "KEY_BACKSPACE", "delete": "KEY_DELETE",
+                           "home": "KEY_HOME", "end": "KEY_END",
+                           "pageup": "KEY_PAGE_UP", "pagedown": "KEY_PAGE_DOWN",
                            "left": "KEY_LEFT", "right": "KEY_RIGHT",
                            "up": "KEY_UP", "down": "KEY_DOWN",
                            **{"f" + str(n): "KEY_F" + str(n)
@@ -265,12 +269,14 @@ def main() -> int:
                     if len(args.key) != 1:
                         raise ValueError("key must be a named key or one ASCII character")
                     key_expr = "ord(" + repr(args.key) + ")"
+                    text_expr = repr(args.key) if not args.up else "''"
                 else:
                     key_expr = "i." + key_name
+                    text_expr = "''"
                 kind = "EVENT_KEY_UP" if args.up else "EVENT_KEY_DOWN"
                 reply = dbg.execute(
-                    "import kernel.gui.input as i; i.queue.post(i.Event(kind=i.%s, code=%s))"
-                    % (kind, key_expr))
+                    "import kernel.gui.input as i; i.queue.post(i.Event(kind=i.%s, code=%s, text=%s))"
+                    % (kind, key_expr, text_expr))
             else:
                 kinds = {"move": "MOUSE_MOVE", "down": "MOUSE_DOWN", "up": "MOUSE_UP"}
                 extra = "" if args.action == "move" else ", code=" + str(args.button)

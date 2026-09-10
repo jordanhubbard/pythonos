@@ -3,6 +3,9 @@
 Implements just enough emacs-flavored editing to be useful:
 
     Arrows / Home / End / PgUp / PgDn   move cursor
+    C-b/f, C-p/n, C-a/e                  character, line movement
+    M-b/f, M-a/e, M-{ / M-}             word, sentence, paragraph movement
+    C-v / M-v, M-< / M->, C-l           page, buffer, recenter movement
     Backspace / Delete                  remove characters
     Enter                               split line
     Printable keys                      insert
@@ -11,8 +14,7 @@ Implements just enough emacs-flavored editing to be useful:
     Ctrl-G                              cancel pending Ctrl-X prefix
 
 A File menu in the menu bar provides clickable Open / Save / Save As /
-Close — Save / Save As prompt for the path in a footer minibuffer when
-none is set on the current buffer. ESC cancels a prompt; Enter accepts.
+Close. Open and Save As use the same graphical file chooser as the Files app.
 
 When opened as an application's source pane, the same File and Edit menus are
 used and a Run menu adds Reload Running App. Reload compiles the current buffer
@@ -116,18 +118,32 @@ class EditorView(TextView):
     # ── Menu / prompt actions ───────────────────────────────────────────
 
     def prompt_open(self) -> None:
-        """Open the footer minibuffer in 'load a file' mode. Wired from
-        the File > Open… menu item."""
-        self.prompt_mode = "open"
-        self.prompt_buf  = self.path or "/home/"
-        self.message = ""
+        """Open the shared graphical file chooser."""
+        asyncio.get_event_loop().create_task(self._choose_open())
 
     def prompt_save_as(self) -> None:
-        """Footer minibuffer for 'save under a new name'. Same UX as
-        prompt_open but the Enter handler routes to save() afterwards."""
-        self.prompt_mode = "save_as"
-        self.prompt_buf  = self.path or "/home/untitled.txt"
-        self.message = ""
+        """Choose a directory and filename with the shared Save dialog."""
+        asyncio.get_event_loop().create_task(self._choose_save_as())
+
+    async def _choose_open(self) -> None:
+        from kernel.gui.filechooser import choose_file
+        path = await choose_file(title="Open File", mode="open",
+                                 path=self.path or "/home/")
+        if path:
+            self.path = path
+            self.cy = self.cx = self.scroll = 0
+            self._refresh_title()
+            await self.load()
+            self.redraw()
+
+    async def _choose_save_as(self) -> None:
+        from kernel.gui.filechooser import choose_file
+        path = await choose_file(title="Save File", mode="save",
+                                 path=self.path or "/home/untitled.txt")
+        if path:
+            self.path = path
+            self._refresh_title()
+            await self.save()
 
     def start_save(self) -> None:
         """Schedule a save on the running event loop. If no path is set,
@@ -274,6 +290,98 @@ class EditorView(TextView):
     def _clamp_x(self) -> None:
         self.cx = min(self.cx, len(self.lines[self.cy]))
 
+    def _buffer_text(self) -> str:
+        return "\n".join(self.lines)
+
+    def _cursor_offset(self) -> int:
+        return sum(len(line) + 1 for line in self.lines[:self.cy]) + self.cx
+
+    def _set_cursor_offset(self, offset: int) -> None:
+        """Move to a character offset in the newline-joined buffer."""
+        offset = max(0, min(len(self._buffer_text()), offset))
+        for row, line in enumerate(self.lines):
+            if offset <= len(line):
+                self.cy, self.cx = row, offset
+                return
+            offset -= len(line) + 1
+        self.cy = len(self.lines) - 1
+        self.cx = len(self.lines[self.cy])
+
+    @staticmethod
+    def _word_char(ch: str) -> bool:
+        return ch.isalnum() or ch == "_"
+
+    def _word_forward(self) -> None:
+        text = self._buffer_text()
+        pos = self._cursor_offset()
+        while pos < len(text) and not self._word_char(text[pos]):
+            pos += 1
+        while pos < len(text) and self._word_char(text[pos]):
+            pos += 1
+        self._set_cursor_offset(pos)
+
+    def _word_backward(self) -> None:
+        text = self._buffer_text()
+        pos = self._cursor_offset()
+        while pos > 0 and not self._word_char(text[pos - 1]):
+            pos -= 1
+        while pos > 0 and self._word_char(text[pos - 1]):
+            pos -= 1
+        self._set_cursor_offset(pos)
+
+    def _sentence_forward(self) -> None:
+        text = self._buffer_text()
+        pos = self._cursor_offset()
+        while pos < len(text) and text[pos] not in ".!?":
+            pos += 1
+        if pos < len(text):
+            pos += 1
+        while pos < len(text) and text[pos].isspace():
+            pos += 1
+        self._set_cursor_offset(pos)
+
+    def _sentence_backward(self) -> None:
+        text = self._buffer_text()
+        pos = self._cursor_offset()
+        while pos > 0 and text[pos - 1].isspace():
+            pos -= 1
+        while pos > 0 and text[pos - 1] not in ".!?":
+            pos -= 1
+        while pos < len(text) and text[pos].isspace():
+            pos += 1
+        self._set_cursor_offset(pos)
+
+    def _paragraph_forward(self) -> None:
+        row = self.cy
+        while row < len(self.lines) and self.lines[row].strip():
+            row += 1
+        while row < len(self.lines) and not self.lines[row].strip():
+            row += 1
+        if row >= len(self.lines):
+            self.cy = len(self.lines) - 1
+            self.cx = len(self.lines[self.cy])
+        else:
+            self.cy, self.cx = row, 0
+
+    def _paragraph_backward(self) -> None:
+        row = self.cy
+        if self.cx == 0 and row > 0:
+            row -= 1
+        while row > 0 and not self.lines[row].strip():
+            row -= 1
+        while row > 0 and self.lines[row - 1].strip():
+            row -= 1
+        self.cy, self.cx = row, 0
+
+    def _page(self, direction: int) -> None:
+        self.cy = max(0, min(len(self.lines) - 1,
+                             self.cy + direction * self.rows))
+        self._clamp_x()
+
+    def _recenter(self) -> None:
+        self.scroll = max(0, self.cy - self.rows // 2)
+        self.message = "Recenter"
+
     # ── Event handling ──────────────────────────────────────────────────
 
     def on_event(self, ev) -> bool:
@@ -305,6 +413,11 @@ class EditorView(TextView):
         self.message = ""
         c = ev.code
         ctrl = bool(ev.mods & _gui_input.MOD_CTRL)
+        # Either Alt/Option or the platform Meta/Command key acts as Emacs
+        # Meta. This keeps bindings portable between PS/2 and SDL desktops.
+        meta = bool(ev.mods & (_gui_input.MOD_ALT | _gui_input.MOD_META))
+        letter = chr(c).lower() if ord("A") <= c <= ord("z") else ""
+        shifted = bool(ev.mods & _gui_input.MOD_SHIFT)
 
         if self.ctrl_x_pending:
             self.ctrl_x_pending = False
@@ -316,9 +429,40 @@ class EditorView(TextView):
             self.message = "Quit"
             return True
 
+        if meta and not ctrl:
+            if letter == "b":             # M-b: backward word
+                self._word_backward()
+            elif letter == "f":           # M-f: forward word
+                self._word_forward()
+            elif letter == "a":           # M-a: backward sentence
+                self._sentence_backward()
+            elif letter == "e":           # M-e: forward sentence
+                self._sentence_forward()
+            elif letter == "v":           # M-v: previous page
+                self._page(-1)
+            elif letter == "m":           # M-m: back to indentation
+                line = self.lines[self.cy]
+                self.cx = len(line) - len(line.lstrip())
+            elif (ev.text == "<" or
+                  (c == ord(",") and shifted)):  # M-<: buffer start
+                self.cy = self.cx = 0
+            elif (ev.text == ">" or
+                  (c == ord(".") and shifted)):  # M->: buffer end
+                self.cy = len(self.lines) - 1
+                self.cx = len(self.lines[self.cy])
+            elif (ev.text == "{" or
+                  (c == ord("[") and shifted)):  # M-{: previous paragraph
+                self._paragraph_backward()
+            elif (ev.text == "}" or
+                  (c == ord("]") and shifted)):  # M-}: next paragraph
+                self._paragraph_forward()
+            else:
+                return True
+            self._ensure_visible()
+            return True
+
         if ctrl:
             byte = ord(ev.text[0]) if ev.text else 0
-            letter = chr(c).lower() if ord("A") <= c <= ord("z") else ""
             if byte == 24 or letter == "x":   # C-x prefix
                 self.ctrl_x_pending = True
                 return True
@@ -336,6 +480,9 @@ class EditorView(TextView):
             if byte == 5 or letter == "e":    # C-e: end of line
                 self.cx = len(self.lines[self.cy])
                 return True
+            if byte == 12 or letter == "l":   # C-l: recenter
+                self._recenter()
+                return True
             if byte == 2 or letter == "b":    # C-b: backward char
                 c = _gui_input.KEY_LEFT
             elif byte == 6 or letter == "f":  # C-f: forward char
@@ -344,6 +491,8 @@ class EditorView(TextView):
                 c = _gui_input.KEY_UP
             elif byte == 14 or letter == "n": # C-n: next line
                 c = _gui_input.KEY_DOWN
+            elif byte == 22 or letter == "v": # C-v: next page
+                c = _gui_input.KEY_PAGE_DOWN
             elif byte == 4 or letter == "d":  # C-d: delete char
                 self._delete()
                 return True
@@ -381,11 +530,9 @@ class EditorView(TextView):
         elif c == _gui_input.KEY_END:
             self.cx = len(self.lines[self.cy])
         elif c == _gui_input.KEY_PAGE_UP:
-            self.cy = max(0, self.cy - self.rows)
-            self._clamp_x()
+            self._page(-1)
         elif c == _gui_input.KEY_PAGE_DOWN:
-            self.cy = min(len(self.lines) - 1, self.cy + self.rows)
-            self._clamp_x()
+            self._page(1)
         elif c == _gui_input.KEY_ENTER:
             self._newline()
         elif c == _gui_input.KEY_BACKSPACE:
@@ -451,6 +598,10 @@ def _editor_menus(ed: EditorView, win: CompositorWindow, *, source=False):
             MenuItem.sep(),
             MenuItem("Arrows / C-b C-f C-p C-n", enabled=False),
             MenuItem("C-a start / C-e end / C-k kill", enabled=False),
+            MenuItem("C-v next page / M-v previous", enabled=False),
+            MenuItem("M-b/f word / M-a/e sentence", enabled=False),
+            MenuItem("M-{ / M-} paragraph", enabled=False),
+            MenuItem("M-< / M-> buffer / C-l center", enabled=False),
         ]),
     ]
     if source:

@@ -3,7 +3,7 @@ sdl2 — PySDL2-compatible API surface for PythonOS.
 
 This package mirrors the public PySDL2 namespace closely enough that the
 canonical samples from the project's compatibility corpus
-(``examples/sdl_compat/*.py``) run unchanged. It is *not* a ctypes
+(``examples/graphics/sdl/*.py``) run unchanged. It is *not* a ctypes
 wrapper around libSDL2 — there is no libSDL2 inside the guest. Instead,
 the API thunks into kernel.gui.compositor, kernel.gui.input, and
 kernel.sound.mixer.

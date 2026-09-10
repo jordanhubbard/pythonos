@@ -95,17 +95,20 @@ TEST_CASES = [
     ("sh('ps')\n",                      "kshell"),
     ("sh('/bin/sysinfo.py')\n",          "PythonOS"),
     ("ls /bin\n",                       "ed.py"),
-    ("cat /examples/README.txt\n",      "PythonOS examples"),
+    ("cat /examples/README.txt\n",      "PythonOS learning examples"),
     ("help\n",                          "desktop('pacmaze')"),
     ("sh('help')\n",                    "Bundled examples:"),
     ("sh('desktop --list')\n",          "Demos: audio_tone"),
-    ("sh('examples')\n",                "Frozen examples in /examples:"),
-    ("desktop('help')\n",               "Games: defender, pacmaze, raiders, sprites"),
-    ("examples()\n",                    "Frozen examples in /examples:"),
+    ("sh('examples')\n",                "PythonOS learning tracks in /examples:"),
+    ("desktop('help')\n",               "Games: defender, invaders, pacmaze, raiders, sprites"),
+    ("examples()\n",                    "PythonOS learning tracks in /examples:"),
     ("halt\n",                          "PythonOS has no guest halt command"),
     ("ftp\n",                           "usage: ftp get DST"),
     ("ftp get /tmp/repl-port.txt 5000\n", "ftp: port already in use: 5000"),
-    ("ls /examples\n",                  "hello_kernel.py"),
+    ("ls /examples\n",                  "start_here"),
+    ("sh('examples graphics/sdl')\n",   "sdl_renderer.py"),
+    ("ls /examples/games\n",            "pacmaze.py"),
+    ("ls /examples/demos\n",            "spirograph.py"),
     ("vi\n",                            "NameError"),
     ("__import__('_hal').PY_GIL_DISABLED\n", "1" if FREE_THREADING == "1" else "0"),
     # linenoise wrappers (no-tty path: blocking call returns None
@@ -123,9 +126,9 @@ TEST_CASES = [
     ("virtio_blk.blk.num_sectors\n", "131072"),
     # ef6.4: /home is wired up at boot (ext2 mount on arm64; tmpfs fallback
     # on x86 until the PCI virtio-blk read_sector hang is fixed).
-    # /examples/check_home.py writes to /home/smoke.txt, reads it back, prints
+    # /examples/internals/check_home.py writes to /home/smoke.txt, reads it back, prints
     # a marker iff the round-trip matches. Proves the boot wiring end-to-end.
-    ("run('/examples/check_home.py')\n", "EF64_HOME_OK"),
+    ("run('/examples/internals/check_home.py')\n", "EF64_HOME_OK"),
     # Dynamic compile() of compound statements + VFS-backed import.
     # Regression guard for pythonos-0ta (libc strncmp returned wrong value
     # when prefix matched but n was exhausted — broke all keyword lookups
@@ -133,7 +136,7 @@ TEST_CASES = [
     # def/class/for/if/import). Together these prove the parser, the VFS
     # importer, and tmpfs sync-read are all wired up.
     ('compile("def f(): return 7", "<t>", "exec") is not None\n', "True"),
-    ("__import__('_vfs_test').square(9)\n", "81"),
+    ("__import__('examples.internals._vfs_test', fromlist=['square']).square(9)\n", "81"),
 ]
 
 if SMP_CPUS.isdigit():
@@ -484,7 +487,7 @@ def run_simple_example(sock: socket.socket, expr: str, expected_markers: tuple[s
 def run_hello_kernel_example(sock: socket.socket) -> bool:
     return run_simple_example(
         sock,
-        "run('/examples/hello_kernel.py')\n",
+        "run('/examples/start_here/hello_kernel.py')\n",
         ("Hello, PythonOS!", "root entries:", "tasks:"),
     )
 
@@ -492,7 +495,7 @@ def run_hello_kernel_example(sock: socket.socket) -> bool:
 def run_vfs_demo_example(sock: socket.socket) -> bool:
     return run_simple_example(
         sock,
-        "run('/examples/vfs_demo.py')\n",
+        "run('/examples/storage/vfs_demo.py')\n",
         ("VFS demo wrote", "read back:", "PythonOS VFS demo"),
     )
 
@@ -500,7 +503,7 @@ def run_vfs_demo_example(sock: socket.socket) -> bool:
 def run_async_tasks_example(sock: socket.socket) -> bool:
     return run_simple_example(
         sock,
-        "run('/examples/async_tasks.py')\n",
+        "run('/examples/concurrency/async_tasks.py')\n",
         ("async queue demo", "producer sent: 4", "consumer total: 10"),
     )
 
@@ -508,13 +511,13 @@ def run_async_tasks_example(sock: socket.socket) -> bool:
 def run_primes_example(sock: socket.socket) -> bool:
     return run_simple_example(
         sock,
-        "sh('/examples/primes.py 30')\n",
+        "sh('/examples/start_here/primes.py 30')\n",
         ("Prime numbers up to 30", "found 10 primes"),
     )
 
 
 def run_tone_example(sock: socket.socket) -> bool:
-    expr = "run('/examples/tone.py')\n"
+    expr = "run('/examples/audio/tone.py')\n"
     sock.sendall(expr.encode())
     response = recv_until_prompt(sock)
     expected = (
@@ -534,7 +537,7 @@ def run_tone_example(sock: socket.socket) -> bool:
 def run_thread_demo_example(sock: socket.socket) -> bool:
     return run_simple_example(
         sock,
-        "run('/examples/thread_demo.py')\n",
+        "run('/examples/concurrency/thread_demo.py')\n",
         (
             "thread demo",
             "worker ident: True",
@@ -553,7 +556,7 @@ def run_linenoise_demo_example(sock: socket.socket) -> bool:
     # surface from kernel/linenoise.py with a synthetic byte stream.
     return run_simple_example(
         sock,
-        "run('/examples/linenoise_demo.py')\n",
+        "run('/examples/internals/linenoise_demo.py')\n",
         (
             "linenoise demo start",
             "linenoise edit ok line='hell world'",
@@ -569,7 +572,7 @@ def run_pthread_coverage_example(sock: socket.socket) -> bool:
     # lock+condvar, AP capacity, and attr surface.
     return run_simple_example(
         sock,
-        "run('/examples/pthread_coverage.py')\n",
+        "run('/examples/internals/pthread_coverage.py')\n",
         (
             "pthread coverage start",
             "lifecycle ok",
@@ -586,7 +589,7 @@ def run_pthread_coverage_example(sock: socket.socket) -> bool:
 def run_recv_file_example(sock: socket.socket) -> bool:
     payload = b"hello from recv_file example\n"
     target = "/tmp/example-recv.txt"
-    expr = "sh('/examples/recv_file.py 7000 " + target + "')\n"
+    expr = "sh('/examples/networking/recv_file.py 7000 " + target + "')\n"
 
     sock.sendall(expr.encode())
     response = recv_until_prompt(sock, prompt=b"Saving to ")
@@ -621,7 +624,7 @@ def run_send_file_example(sock: socket.socket) -> bool:
     listener.listen(1)
     listener.settimeout(10)
     put_port = listener.getsockname()[1]
-    expr = "sh('/examples/send_file.py 10.0.2.2 " + str(put_port) + " " + source + "')\n"
+    expr = "sh('/examples/networking/send_file.py 10.0.2.2 " + str(put_port) + " " + source + "')\n"
 
     received = b""
     try:

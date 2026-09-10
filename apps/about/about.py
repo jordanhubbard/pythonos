@@ -43,6 +43,12 @@ def _arch() -> str:
         return "?"
 
 
+def _python_version() -> str:
+    """The bare-metal build string lacks normal compiler metadata."""
+    info = sys.version_info
+    return f"{info.major}.{info.minor}.{info.micro}"
+
+
 def _smp_str() -> str:
     try:
         import _hal
@@ -86,7 +92,7 @@ async def _run(win: CompositorWindow) -> None:
         "Bare-metal CPython 3.14 — boots into a Python REPL with no",
         "POSIX between you and the hardware.",
         "",
-        f"  Python    {sys.version.split()[0]}",
+        f"  Python    {_python_version()}",
         f"  Arch      {_arch()}",
         f"  SMP CPUs  {_smp_str()}",
         f"  Free RAM  {_free_mib()} MiB",

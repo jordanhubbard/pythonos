@@ -22,6 +22,7 @@ _BR_MOUSE_MOVE = 3
 _BR_MOUSE_DOWN = 4
 _BR_MOUSE_UP   = 5
 _BR_QUIT       = 6
+_BR_FILE_DROP  = 7
 
 
 # SDL_Keycode → kernel.gui.input KEY_* mapping for non-ASCII keys.
@@ -64,6 +65,17 @@ def _translate_keycode(sym: int) -> int:
     return 0  # unknown
 
 
+def _translate_modifiers(value: int) -> int:
+    """Translate SDL_Keymod bits into the desktop's portable modifier mask."""
+    mods = 0
+    if value & 0x0003: mods |= _gui.MOD_SHIFT   # KMOD_L/RSHIFT
+    if value & 0x00C0: mods |= _gui.MOD_CTRL    # KMOD_L/RCTRL
+    if value & 0x0300: mods |= _gui.MOD_ALT     # KMOD_L/RALT
+    if value & 0x0C00: mods |= _gui.MOD_META    # KMOD_L/RGUI
+    if value & 0x2000: mods |= _gui.MOD_CAPS
+    return mods
+
+
 def _translate(ev: dict):
     kind = ev.get("kind", 0)
     x    = int(ev.get("x", 0)); y  = int(ev.get("y", 0))
@@ -79,12 +91,19 @@ def _translate(ev: dict):
     if kind == _BR_KEY_DOWN:
         return _gui.Event(kind=_gui.EVENT_KEY_DOWN,
                           code=_translate_keycode(int(ev.get("code", 0))),
-                          text=ev.get("text", ""))
+                          text=ev.get("text", ""),
+                          mods=_translate_modifiers(int(ev.get("mod", 0))))
     if kind == _BR_KEY_UP:
         return _gui.Event(kind=_gui.EVENT_KEY_UP,
-                          code=_translate_keycode(int(ev.get("code", 0))))
+                          code=_translate_keycode(int(ev.get("code", 0))),
+                          mods=_translate_modifiers(int(ev.get("mod", 0))))
     if kind == _BR_QUIT:
         return _gui.Event(kind=_gui.QUIT)
+    if kind == _BR_FILE_DROP:
+        return _gui.Event(kind=_gui.HOST_FILE_DROP, x=x, y=y,
+                          name=str(ev.get("name", "")),
+                          token=int(ev.get("token", 0)),
+                          size=int(ev.get("size", 0)))
     return None
 
 

@@ -1,4 +1,4 @@
-"""sdl_image — PNG decoder corpus item.
+"""sdl_image — PNG decoding example.
 
 Embeds a 16x16 RGBA gradient as a bytes literal, writes it to /tmp/test.png
 in the guest tmpfs, then decodes via kernel.gui.image.load() and asserts

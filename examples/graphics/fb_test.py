@@ -1,5 +1,5 @@
 """
-Framebuffer smoke demo. Draws color bands and a centered banner.
+Framebuffer drawing demo. Draws color bands and a centered banner.
 
 Run from the kernel REPL after booting in GUI mode (`make run-gui`):
 

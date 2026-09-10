@@ -95,12 +95,21 @@ def boot(mmap: list[tuple[int, int]],
     except Exception:
         _seed_sources = {}
     _examples = {}
+    _lib_apps = {}
     for _path, _source in _seed_sources.items():
-        if not _path.startswith("/examples/"):
+        if _path.startswith("/examples/"):
+            _rel = _path[len("/examples/"):]
+            _node = _examples
+        elif _path.startswith("/src/apps/"):
+            _rel = _path[len("/src/apps/"):]
+            _node = _lib_apps
+        else:
             continue
-        _rel = _path[len("/examples/"):]
-        if "/" not in _rel:
-            _examples[_rel] = _source
+        _parts = [part for part in _rel.split("/") if part]
+        for _part in _parts[:-1]:
+            _node = _node.setdefault(_part, {})
+        if _parts:
+            _node[_parts[-1]] = _source
 
     root_fs.seed({
         "dev": {},
@@ -109,6 +118,7 @@ def boot(mmap: list[tuple[int, int]],
         "sys": {},
         "bin": commands.SCRIPTS,
         "examples": _examples,
+        "lib": {"apps": _lib_apps},
     })
     vfs.mount("/", root_fs)
     log.info("kernel.boot: tmpfs mounted at /")
