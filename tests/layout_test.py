@@ -212,6 +212,15 @@ def main() -> int:
                                       "07_display_window.py"))
           and "01_playfield.py" in _read("examples/graphics/chipset/README.txt")
           and "06_paula.py" in _read("examples/graphics/chipset/README.txt"))
+    surface = _read("kernel/gui/sdl2/surface.py")
+    compositor = _read("kernel/gui/compositor.py")
+    check("desktop drawing uses generic SDL dispatch instead of legacy ops",
+          'sdl_cast("SDL_FillRect"' in surface
+          and 'sdl_cast("SDL_BlitSurface"' in surface
+          and '"surface.fill_rect"' not in surface
+          and '"surface.blit"' not in surface
+          and '"surface.fill_rect"' not in compositor
+          and '"surface.blit"' not in compositor)
     run_gui = _read("tools/run_gui.py")
     check("interactive x86 GUI binds HDA output to the host audiodev",
           '"-audiodev", f"{audiodev},id=a"' in run_gui

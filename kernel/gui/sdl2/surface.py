@@ -205,13 +205,9 @@ class SDL_Surface:
 
     def _fill_rect(self, x: int, y: int, w: int, h: int, color: int) -> None:
         if self.host_backed:
-            from kernel.bridge import bridge as _br
+            from kernel.gui.sdl2.dispatch import sdl_cast
             word = (color & 0xFFFFFF) | 0xFF000000
-            _br.cast("surface.fill_rect", {
-                "handle": self.handle,
-                "rect": {"x": x, "y": y, "w": w, "h": h},
-                "rgb": word,
-            })
+            sdl_cast("SDL_FillRect", self.handle, [x, y, w, h], word)
             return
         x1 = max(0, x); y1 = max(0, y)
         x2 = min(self.w, x + w); y2 = min(self.h, y + h)
@@ -228,16 +224,11 @@ class SDL_Surface:
               src_rect: SDL_Rect | None = None) -> None:
         if self.host_backed:
             src_handle = src._sync_to_host()
-            from kernel.bridge import bridge as _br
-            params = {
-                "src": src_handle,
-                "dst": self.handle,
-                "dst_rect": {"x": dst_x, "y": dst_y, "w": src.w, "h": src.h},
-            }
-            if src_rect is not None:
-                params["src_rect"] = {"x": src_rect.x, "y": src_rect.y,
-                                       "w": src_rect.w, "h": src_rect.h}
-            _br.cast("surface.blit", params)
+            from kernel.gui.sdl2.dispatch import sdl_cast
+            sr = ([src_rect.x, src_rect.y, src_rect.w, src_rect.h]
+                  if src_rect is not None else None)
+            sdl_cast("SDL_BlitSurface", src_handle, sr, self.handle,
+                     [dst_x, dst_y, src.w, src.h])
             return
         # guest-backed dst.
         if src.host_backed:

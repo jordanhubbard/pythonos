@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add persistent, configurable desktop keybindings with a docked control panel.
 - Promote System Monitor to Top with bounded guest/host RPC performance sampling.
 
+### Changed
+- Route compositor fills and blits through the generic `sdl.call` dispatcher;
+  legacy bridge operations remain protocol-compatibility shims only.
+
 ## [0.3.3] - 2026-09-09
 
 ### Added

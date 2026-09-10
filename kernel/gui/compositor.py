@@ -343,30 +343,18 @@ class Compositor:
             if bg is not None:
                 src_handle = bg._sync_to_host()
                 if src_handle != 0:
-                    _br.cast("surface.blit", {
-                        "src": src_handle,
-                        "dst": fb_handle,
-                        "dst_rect": {"x": 0, "y": 0, "w": bg.w, "h": bg.h},
-                    })
+                    fb_surf._blit(bg, 0, 0)
                 else:
-                    _br.cast("surface.fill_rect", {
-                        "handle": fb_handle, "rect": None,
-                        "rgb": (self._desktop_bg & 0xFFFFFF) | 0xFF000000,
-                    })
+                    fb_surf._fill_rect(0, 0, self._bridge_w,
+                                       self._bridge_h, self._desktop_bg)
             else:
-                _br.cast("surface.fill_rect", {
-                    "handle": fb_handle, "rect": None,
-                    "rgb": (self._desktop_bg & 0xFFFFFF) | 0xFF000000,
-                })
+                fb_surf._fill_rect(0, 0, self._bridge_w,
+                                   self._bridge_h, self._desktop_bg)
             for win in self._windows:
                 if win.chrome:
                     chrome_color = CHROME_FOCUS_BG if win.focused else CHROME_UNFOCUS_BG
-                    _br.cast("surface.fill_rect", {
-                        "handle": fb_handle,
-                        "rect": {"x": win.x, "y": win.y,
-                                  "w": win.w, "h": TITLE_BAR_H},
-                        "rgb": (chrome_color & 0xFFFFFF) | 0xFF000000,
-                    })
+                    fb_surf._fill_rect(win.x, win.y, win.w, TITLE_BAR_H,
+                                       chrome_color)
                     # Title text — TTF, truncated to fit the title bar.
                     title_text = win.title or ""
                     title_max_w = max(1, win.w - 8 - CLOSE_BOX_W - 4)
@@ -380,12 +368,9 @@ class Compositor:
                     # Close box (top-right of chrome).
                     cx, cy, cw, ch = self._close_box_rect(win)
                     is_hot = (self._close_hot_win is win)
-                    _br.cast("surface.fill_rect", {
-                        "handle": fb_handle,
-                        "rect": {"x": cx, "y": cy, "w": cw, "h": ch},
-                        "rgb": ((CLOSE_BG_HOT if is_hot else CLOSE_BG)
-                                & 0xFFFFFF) | 0xFF000000,
-                    })
+                    fb_surf._fill_rect(
+                        cx, cy, cw, ch,
+                        CLOSE_BG_HOT if is_hot else CLOSE_BG)
                     # Centered ×. Lowercase 'x' renders cleanly in both
                     # TTF (which has the multiplication sign too, but
                     # this is consistent with the older look) and the
@@ -402,12 +387,7 @@ class Compositor:
                 src_handle = s._sync_to_host()
                 if src_handle != 0:
                     body_y = win.y + (TITLE_BAR_H if win.chrome else 0)
-                    _br.cast("surface.blit", {
-                        "src": src_handle,
-                        "dst": fb_handle,
-                        "dst_rect": {"x": win.x, "y": body_y,
-                                      "w": s.w, "h": s.h},
-                    })
+                    fb_surf._blit(s, win.x, body_y)
             self._draw_dock_bridge(fb_handle, fb_surf)
             # Menu bar last so any open dropdown sits on top of the
             # rest of the desktop. Refresh the right-side uptime text
@@ -466,7 +446,6 @@ class Compositor:
         a tooltip-style label above the hovered slot."""
         if not self._dock_apps:
             return
-        from kernel.bridge import bridge as _br
         from kernel.gui.text import text_renderer
         if fb_surf is None:
             from kernel.gui.sdl2.surface import SDL_Surface
@@ -474,35 +453,21 @@ class Compositor:
                                                 self._bridge_w, self._bridge_h)
         dock_y = self._bridge_h - DOCK_H
         # Dock backdrop.
-        _br.cast("surface.fill_rect", {
-            "handle": fb_handle,
-            "rect": {"x": 0, "y": dock_y,
-                      "w": self._bridge_w, "h": DOCK_H},
-            "rgb": (DOCK_BG & 0xFFFFFF) | 0xFF000000,
-        })
+        fb_surf._fill_rect(0, dock_y, self._bridge_w, DOCK_H, DOCK_BG)
         first_x = self._dock_first_x()
         slot_y  = dock_y + (DOCK_H - DOCK_ICON_SIZE) // 2
         for i, entry_tuple in enumerate(self._dock_apps):
             name = entry_tuple[0]
             slot_x = first_x + i * (DOCK_ICON_SIZE + DOCK_ICON_GAP)
             if i == self._dock_hot:
-                _br.cast("surface.fill_rect", {
-                    "handle": fb_handle,
-                    "rect": {"x": slot_x - 4, "y": slot_y - 4,
-                              "w": DOCK_ICON_SIZE + 8,
-                              "h": DOCK_ICON_SIZE + 8},
-                    "rgb": (DOCK_ICON_HOT_BG & 0xFFFFFF) | 0xFF000000,
-                })
+                fb_surf._fill_rect(slot_x - 4, slot_y - 4,
+                                   DOCK_ICON_SIZE + 8, DOCK_ICON_SIZE + 8,
+                                   DOCK_ICON_HOT_BG)
             icon = self._ensure_icon(name)
             if icon is not None:
                 src_handle = icon._sync_to_host()
                 if src_handle != 0:
-                    _br.cast("surface.blit", {
-                        "src": src_handle,
-                        "dst": fb_handle,
-                        "dst_rect": {"x": slot_x, "y": slot_y,
-                                      "w": icon.w, "h": icon.h},
-                    })
+                    fb_surf._blit(icon, slot_x, slot_y)
         if self._dock_hot >= 0:
             label = self._dock_apps[self._dock_hot][0]
             tw, th = text_renderer.measure(label, size=11)
@@ -513,12 +478,8 @@ class Compositor:
                         + (DOCK_ICON_SIZE - label_w) // 2)
             label_y = dock_y - label_h - 4
             label_x = max(4, min(self._bridge_w - 4 - label_w, label_x))
-            _br.cast("surface.fill_rect", {
-                "handle": fb_handle,
-                "rect": {"x": label_x, "y": label_y,
-                          "w": label_w, "h": label_h},
-                "rgb": (DOCK_LABEL_BG & 0xFFFFFF) | 0xFF000000,
-            })
+            fb_surf._fill_rect(label_x, label_y, label_w, label_h,
+                               DOCK_LABEL_BG)
             text_renderer.draw(fb_surf,
                                 label_x + 6, label_y + 3,
                                 label, DOCK_LABEL_FG, size=11)
