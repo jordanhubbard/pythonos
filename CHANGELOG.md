@@ -6,6 +6,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-09-10
+
+### Fixed
+- Fix release smoke prompt framing
+
+### Other
+- Rework Defender and desktop interaction
+- Reap short-lived kernel service tasks
+- Route desktop drawing through generic SDL calls
+- Expand desktop teaching environment
+- Accelerate GUI and add live source editing
+
+
 ### Added
 - Add original snake image samples and open Image Viewer directly in their gallery.
 - Add seven focused virtual Amiga chipset teaching lessons.
