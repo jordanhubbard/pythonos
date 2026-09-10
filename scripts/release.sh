@@ -165,23 +165,24 @@ release_notes() {
     local previous="$1"
     local version="$2"
     local notes_file="$3"
-    local range
-    range="$(commit_range "$previous")"
     local commit_count
-    commit_count="$(git rev-list --count "$range")"
+    commit_count="$(git rev-list --count "$(commit_range "$previous")")"
 
     {
-        printf '## PythonOS v%s\n\n' "$version"
-        printf '### Validation\n'
+        cat RELEASE-NOTES.md
+        printf '\n## Release validation\n\n'
         printf -- '- Local validation: `scripts/validate-release.sh` (host arch)\n'
-        printf -- '- CI: x86_64 ISO + arm64 ELF gates green for `%s`\n\n' "$(git rev-parse --short HEAD)"
-        printf '### Statistics\n'
-        printf -- '- Commits since v%s: %s\n\n' "$previous" "$commit_count"
-        # Use the categorized changelog body for the GitHub release notes
-        # too — keeps the release page and CHANGELOG.md in lockstep.
-        render_changelog_entry "$version" "$range" \
-            | sed '1,/^$/d'   # drop the leading "## [version] - date" line
+        printf -- '- CI: x86_64 ISO + arm64 ELF gates green for `%s`\n' "$(git rev-parse --short HEAD)"
+        printf -- '- Commits since v%s: %s\n' "$previous" "$commit_count"
     } > "$notes_file"
+}
+
+validate_release_notes() {
+    local version="$1"
+    [ -f RELEASE-NOTES.md ] || \
+        fail "RELEASE-NOTES.md is required; generate it with the pythonos-release skill"
+    grep -Fq "# PythonOS v$version" RELEASE-NOTES.md || \
+        fail "RELEASE-NOTES.md is stale; expected a '# PythonOS v$version' heading"
 }
 
 wait_for_ci() {
@@ -244,6 +245,7 @@ main() {
     git rev-parse "$tag" >/dev/null 2>&1 && fail "tag $tag already exists"
 
     check_prerequisites
+    validate_release_notes "$version"
 
     info "releasing $tag (previous v$previous)"
     ./scripts/validate-release.sh

@@ -4,6 +4,10 @@ All notable changes to PythonOS are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+For the narrative highlights of the latest release, with considerably more
+personality than a categorized ledger should legally possess, see
+[RELEASE-NOTES.md](RELEASE-NOTES.md).
+
 ## [Unreleased]
 
 ## [0.3.4] - 2026-09-10
