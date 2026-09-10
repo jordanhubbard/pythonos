@@ -342,6 +342,244 @@ static PyObject *py_buf_fill32_at(PyObject *self, PyObject *args) {
     Py_RETURN_NONE;
 }
 
+/* Compact a BGRX framebuffer with a deliberately simple wire codec.
+ * Output records are: uint16 little-endian run length + one 32-bit pixel.
+ * Two linear C passes keep encoding cheap even under QEMU TCG. */
+static PyObject *py_rle_encode32(PyObject *self, PyObject *args) {
+    (void)self;
+    Py_buffer buf;
+    if (!PyArg_ParseTuple(args, "y*", &buf)) return NULL;
+    if (buf.len % 4 != 0) {
+        PyBuffer_Release(&buf);
+        PyErr_SetString(PyExc_ValueError, "buffer length must be multiple of 4");
+        return NULL;
+    }
+    const uint32_t *pixels = (const uint32_t *)buf.buf;
+    Py_ssize_t words = buf.len / 4;
+    Py_ssize_t runs = 0;
+    for (Py_ssize_t i = 0; i < words;) {
+        uint32_t pixel = pixels[i];
+        Py_ssize_t count = 1;
+        while (i + count < words && count < 65535 &&
+               pixels[i + count] == pixel) count++;
+        runs++;
+        i += count;
+    }
+    PyObject *result = PyBytes_FromStringAndSize(NULL, runs * 6);
+    if (!result) {
+        PyBuffer_Release(&buf);
+        return NULL;
+    }
+    unsigned char *out = (unsigned char *)PyBytes_AS_STRING(result);
+    Py_ssize_t oi = 0;
+    for (Py_ssize_t i = 0; i < words;) {
+        uint32_t pixel = pixels[i];
+        uint32_t count = 1;
+        while (i + count < words && count < 65535 &&
+               pixels[i + count] == pixel) count++;
+        out[oi++] = (unsigned char)(count & 0xFF);
+        out[oi++] = (unsigned char)((count >> 8) & 0xFF);
+        memcpy(out + oi, &pixel, 4);
+        oi += 4;
+        i += count;
+    }
+    PyBuffer_Release(&buf);
+    return result;
+}
+
+typedef struct {
+    Py_buffer pixels;
+    int x, y, w, h, key, indexed, enabled;
+} RasterSprite;
+
+static long py_attr_long(PyObject *obj, const char *name, long fallback) {
+    PyObject *value = PyObject_GetAttrString(obj, name);
+    if (!value) { PyErr_Clear(); return fallback; }
+    long result = PyLong_AsLong(value);
+    Py_DECREF(value);
+    if (PyErr_Occurred()) { PyErr_Clear(); return fallback; }
+    return result;
+}
+
+static int py_attr_is_indexed(PyObject *obj) {
+    PyObject *value = PyObject_GetAttrString(obj, "mode");
+    if (!value) { PyErr_Clear(); return 0; }
+    int result = PyUnicode_Check(value) &&
+                 PyUnicode_CompareWithASCIIString(value, "indexed") == 0;
+    Py_DECREF(value);
+    return result;
+}
+
+static int py_attr_true(PyObject *obj, const char *name, int fallback) {
+    PyObject *value = PyObject_GetAttrString(obj, name);
+    if (!value) { PyErr_Clear(); return fallback; }
+    int result = PyObject_IsTrue(value);
+    Py_DECREF(value);
+    if (result < 0) { PyErr_Clear(); return fallback; }
+    return result;
+}
+
+static long py_sequence_long(PyObject *seq, Py_ssize_t index, long fallback) {
+    PyObject *value = PySequence_GetItem(seq, index);
+    if (!value) { PyErr_Clear(); return fallback; }
+    long result = PyLong_AsLong(value);
+    Py_DECREF(value);
+    if (PyErr_Occurred()) { PyErr_Clear(); return fallback; }
+    return result;
+}
+
+static int py_sequence_true(PyObject *seq, Py_ssize_t index, int fallback) {
+    PyObject *value = PySequence_GetItem(seq, index);
+    if (!value) { PyErr_Clear(); return fallback; }
+    int result = PyObject_IsTrue(value);
+    Py_DECREF(value);
+    if (result < 0) { PyErr_Clear(); return fallback; }
+    return result;
+}
+
+/* Native inner loop for the Amiga-style chipset rasterizer. Python still
+ * owns Views, copper state, palettes, and sprites; it snapshots the small
+ * per-scanline state and this function performs the 64K pixel samples. */
+static PyObject *py_chipset_raster32(PyObject *self, PyObject *args) {
+    (void)self;
+    Py_buffer dest = {0}, pf0_buf = {0}, pf1_buf = {0};
+    PyObject *pf0, *pf1, *rows, *sprites;
+    int view_indexed;
+    if (!PyArg_ParseTuple(args, "w*OOOOi", &dest, &pf0, &pf1,
+                          &rows, &sprites, &view_indexed)) return NULL;
+
+    int width = (int)py_attr_long(pf0, "width", 0);
+    int height = (int)py_attr_long(pf0, "height", 0);
+    int pf0_indexed = py_attr_is_indexed(pf0);
+    int pf1_indexed = py_attr_is_indexed(pf1);
+    PyObject *pf0_pixels = PyObject_GetAttrString(pf0, "pixels");
+    PyObject *pf1_pixels = PyObject_GetAttrString(pf1, "pixels");
+    if (!pf0_pixels || !pf1_pixels || width <= 0 || height <= 0 ||
+        dest.len < (Py_ssize_t)width * height * 4 ||
+        PyObject_GetBuffer(pf0_pixels, &pf0_buf, PyBUF_SIMPLE) != 0 ||
+        PyObject_GetBuffer(pf1_pixels, &pf1_buf, PyBUF_SIMPLE) != 0) {
+        Py_XDECREF(pf0_pixels); Py_XDECREF(pf1_pixels);
+        if (pf0_buf.obj) PyBuffer_Release(&pf0_buf);
+        if (pf1_buf.obj) PyBuffer_Release(&pf1_buf);
+        PyBuffer_Release(&dest);
+        if (!PyErr_Occurred()) PyErr_SetString(PyExc_ValueError,
+                                               "invalid chipset buffers");
+        return NULL;
+    }
+    Py_DECREF(pf0_pixels); Py_DECREF(pf1_pixels);
+    Py_ssize_t expected0 = (Py_ssize_t)width * height * (pf0_indexed ? 1 : 4);
+    Py_ssize_t expected1 = (Py_ssize_t)width * height * (pf1_indexed ? 1 : 4);
+    if (pf0_buf.len < expected0 || pf1_buf.len < expected1 ||
+        PySequence_Size(rows) < height) {
+        PyBuffer_Release(&pf0_buf); PyBuffer_Release(&pf1_buf);
+        PyBuffer_Release(&dest);
+        PyErr_SetString(PyExc_ValueError, "chipset source buffer too small");
+        return NULL;
+    }
+    int p0sx = (int)py_attr_long(pf0, "scroll_x", 0);
+    int p0sy = (int)py_attr_long(pf0, "scroll_y", 0);
+    int p1sx = (int)py_attr_long(pf1, "scroll_x", 0);
+    int p1sy = (int)py_attr_long(pf1, "scroll_y", 0);
+
+    RasterSprite sprite_rows[8];
+    memset(sprite_rows, 0, sizeof(sprite_rows));
+    Py_ssize_t sprite_count = PySequence_Size(sprites);
+    if (sprite_count < 0) { PyErr_Clear(); sprite_count = 0; }
+    if (sprite_count > 8) sprite_count = 8;
+    for (Py_ssize_t i = 0; i < sprite_count; i++) {
+        PyObject *sprite = PySequence_GetItem(sprites, i);
+        if (!sprite) { PyErr_Clear(); continue; }
+        RasterSprite *s = &sprite_rows[i];
+        s->x = (int)py_attr_long(sprite, "x", 0);
+        s->y = (int)py_attr_long(sprite, "y", 0);
+        s->w = (int)py_attr_long(sprite, "w", 0);
+        s->h = (int)py_attr_long(sprite, "h", 0);
+        s->key = (int)py_attr_long(sprite, "key_color", 0);
+        s->enabled = py_attr_true(sprite, "enabled", 0);
+        PyObject *indexed_obj = PyObject_GetAttrString(sprite, "indexed");
+        s->indexed = indexed_obj ? PyObject_IsTrue(indexed_obj) : 1;
+        Py_XDECREF(indexed_obj);
+        PyObject *pixels = PyObject_GetAttrString(sprite, "pixels");
+        if (!pixels || PyObject_GetBuffer(pixels, &s->pixels, PyBUF_SIMPLE) != 0) {
+            PyErr_Clear(); s->enabled = 0;
+        }
+        if (s->pixels.obj && s->pixels.len <
+                (Py_ssize_t)s->w * s->h * (s->indexed ? 1 : 4))
+            s->enabled = 0;
+        Py_XDECREF(pixels);
+        Py_DECREF(sprite);
+    }
+
+    uint32_t *out = (uint32_t *)dest.buf;
+    for (int y = 0; y < height; y++) {
+        PyObject *row = PySequence_GetItem(rows, y);
+        if (!row) { PyErr_Clear(); continue; }
+        PyObject *palette_obj = PySequence_GetItem(row, 0);
+        int bplcon = (int)py_sequence_long(row, 1, 0);
+        int key = (int)py_sequence_long(row, 2, 0);
+        int visible = py_sequence_true(row, 3, 1);
+        uint32_t palette[32] = {0};
+        for (int i = 0; i < 32 && palette_obj; i++) {
+            PyObject *color = PySequence_GetItem(palette_obj, i);
+            if (!color) { PyErr_Clear(); break; }
+            palette[i] = (uint32_t)PyLong_AsUnsignedLong(color) & 0xFFFFFFu;
+            Py_DECREF(color);
+        }
+        Py_XDECREF(palette_obj);
+        Py_DECREF(row);
+        if (PyErr_Occurred()) PyErr_Clear();
+        for (int x = 0; x < width; x++) {
+            uint32_t color = 0;
+            if (visible) {
+                int p0x = (x + p0sx) % width; if (p0x < 0) p0x += width;
+                int p0y = (y + p0sy) % height; if (p0y < 0) p0y += height;
+                size_t p0i = (size_t)p0y * width + p0x;
+                if (pf0_indexed) {
+                    unsigned int index = ((unsigned char *)pf0_buf.buf)[p0i];
+                    color = index < 32 ? palette[index] : 0;
+                }
+                else color = ((uint32_t *)pf0_buf.buf)[p0i] & 0xFFFFFFu;
+
+                int p1x = (x + p1sx) % width; if (p1x < 0) p1x += width;
+                int p1y = (y + p1sy) % height; if (p1y < 0) p1y += height;
+                size_t p1i = (size_t)p1y * width + p1x;
+                uint32_t p1raw = pf1_indexed
+                    ? ((unsigned char *)pf1_buf.buf)[p1i]
+                    : (((uint32_t *)pf1_buf.buf)[p1i] & 0xFFFFFFu);
+                if (bplcon & 1) {
+                    if (p1raw != (uint32_t)(pf1_indexed ? key & 0xFF : key & 0xFFFFFF))
+                        color = pf1_indexed && p1raw < 32 ? palette[p1raw] :
+                                (pf1_indexed ? 0 : p1raw);
+                } else if (p1raw != 0) {
+                    color = pf1_indexed && p1raw < 32 ? palette[p1raw] :
+                            (pf1_indexed ? 0 : p1raw);
+                }
+                for (Py_ssize_t i = 0; i < sprite_count; i++) {
+                    RasterSprite *s = &sprite_rows[i];
+                    int sx = x - s->x, sy = y - s->y;
+                    if (!s->enabled || !s->pixels.obj || sx < 0 || sy < 0 ||
+                        sx >= s->w || sy >= s->h) continue;
+                    size_t si = (size_t)sy * s->w + sx;
+                    uint32_t raw = s->indexed
+                        ? ((unsigned char *)s->pixels.buf)[si]
+                        : (((uint32_t *)s->pixels.buf)[si] & 0xFFFFFFu);
+                    if (raw == (uint32_t)(s->indexed ? s->key & 0xFF
+                                                    : s->key & 0xFFFFFF)) continue;
+                    color = s->indexed && view_indexed
+                        ? (raw < 32 ? palette[raw] : 0) : raw;
+                    break;
+                }
+            }
+            out[(size_t)y * width + x] = color | 0xFF000000u;
+        }
+    }
+    for (Py_ssize_t i = 0; i < sprite_count; i++)
+        if (sprite_rows[i].pixels.obj) PyBuffer_Release(&sprite_rows[i].pixels);
+    PyBuffer_Release(&pf0_buf); PyBuffer_Release(&pf1_buf);
+    PyBuffer_Release(&dest);
+    Py_RETURN_NONE;
+}
+
 // ── High-resolution performance counter ───────────────────────────────────
 
 static uint64_t perf_counter_read(void) {
@@ -1072,6 +1310,8 @@ static PyMethodDef hal_methods[] = {
     {"mmio_write_buf32",     py_mmio_write_buf32,     METH_VARARGS, "MMIO bulk write: copy a 4-byte-multiple bytes-like buffer as 32-bit words"},
     {"buf_fill32",           py_buf_fill32,           METH_VARARGS, "Fill a writable buffer with a 32-bit pattern (in-place, no alloc)"},
     {"buf_fill32_at",        py_buf_fill32_at,        METH_VARARGS, "Fill `count` 32-bit words at byte offset `off` of a writable buffer"},
+    {"rle_encode32",         py_rle_encode32,         METH_VARARGS, "Encode a 32-bit pixel buffer as uint16-run/value records"},
+    {"chipset_raster32",     py_chipset_raster32,     METH_VARARGS, "Raster a native-scale chipset View into a BGRX buffer"},
 #ifdef ARCH_ARM64
     {"pl011_write_buf",      py_pl011_write_buf,      METH_VARARGS, "Bulk transmit a bytes-like through a PL011 UART (TXFF-polled)"},
     {"pl011_read_buf",       py_pl011_read_buf,       METH_VARARGS, "Bulk receive `n` bytes from a PL011 UART (RXFE-polled, blocking)"},

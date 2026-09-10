@@ -40,6 +40,7 @@ def main() -> int:
         formation_xy,
         ghost_step,
         mountain_height,
+        orient_square_art,
         parse_maze,
         scroll_wrap,
         try_move,
@@ -93,6 +94,29 @@ def main() -> int:
     check("default maze has pellets", maze2.pellets > 10, str(maze2.pellets))
     check("default maze has four ghosts", len(maze2.ghosts) == 4, str(len(maze2.ghosts)))
     check("mountain height in range", 12 <= mountain_height(0) <= 40)
+
+    open_right = bytes((
+        0, 0, 2, 2, 2, 2, 0, 0,
+        0, 2, 2, 2, 2, 2, 2, 0,
+        2, 2, 2, 2, 2, 2, 0, 0,
+        2, 2, 2, 2, 0, 0, 0, 0,
+        2, 2, 2, 2, 2, 2, 0, 0,
+        0, 2, 2, 2, 2, 2, 2, 0,
+        0, 0, 2, 2, 2, 2, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+    ))
+    closed = bytes([2]) * 64
+    direction_mouth = {
+        "right": (3, 7),
+        "left": (3, 0),
+        "up": (0, 3),
+        "down": (7, 3),
+    }
+    for direction, (row, col) in direction_mouth.items():
+        opened = orient_square_art(open_right, 8, direction)
+        shut = orient_square_art(closed, 8, direction)
+        check(f"pac mouth opens {direction}", opened[row * 8 + col] == 0)
+        check(f"pac mouth closes {direction}", shut[row * 8 + col] == 2)
 
     print(f"{_passed} passed, {_failed} failed")
     return 1 if _failed else 0

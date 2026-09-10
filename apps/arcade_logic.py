@@ -160,6 +160,20 @@ def art_from_rows(rows) -> bytes:
     return bytes(out)
 
 
+def orient_square_art(source: bytes, size: int, direction: str) -> bytes:
+    """Rotate or mirror right-facing square sprite art."""
+    rows = [source[y * size:(y + 1) * size] for y in range(size)]
+    if direction == "left":
+        return bytes(value for row in rows for value in reversed(row))
+    if direction == "down":
+        return bytes(rows[size - 1 - x][y]
+                     for y in range(size) for x in range(size))
+    if direction == "up":
+        return bytes(rows[x][size - 1 - y]
+                     for y in range(size) for x in range(size))
+    return bytes(source)
+
+
 def square_pcm(freq: int, ms: int, rate: int = 8000, amp: int = 10000) -> bytes:
     n = rate * ms // 1000
     half = max(1, rate // (freq * 2))

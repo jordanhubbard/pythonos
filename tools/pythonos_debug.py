@@ -257,7 +257,9 @@ def main() -> int:
             elif args.command == "key":
                 aliases = {"esc": "KEY_ESC", "space": "KEY_SPACE", "tab": "KEY_TAB",
                            "left": "KEY_LEFT", "right": "KEY_RIGHT",
-                           "up": "KEY_UP", "down": "KEY_DOWN"}
+                           "up": "KEY_UP", "down": "KEY_DOWN",
+                           **{"f" + str(n): "KEY_F" + str(n)
+                              for n in range(1, 13)}}
                 key_name = aliases.get(args.key.lower())
                 if key_name is None:
                     if len(args.key) != 1:

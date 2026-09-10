@@ -23,6 +23,7 @@ pixel uploads (surface.upload).
 """
 
 import struct
+import _thread
 
 from kernel.bridge import uart as _uart
 import kernel.log as log
@@ -80,6 +81,13 @@ class Bridge:
         # call() or explicit flush() drains it as one batch.
         self._pending: list = []
         self._metrics: dict[str, dict] = {}
+        self.features: set[str] = set()
+        # The REPL, compositor input task, and chipset clock may run on
+        # different kernel threads in a free-threaded build.  A request's
+        # JSON envelope and binary trailer are one indivisible wire frame;
+        # without this lock another caller can splice its envelope between
+        # them and permanently desynchronise the stream.
+        self._transport_lock = _thread.allocate_lock()
 
     def _record_metric(self, op: str, elapsed: int, frequency: int,
                        tx_bytes: int, rx_bytes: int) -> None:
@@ -123,6 +131,7 @@ class Bridge:
         r = self.call("hello", {"protocol": PROTOCOL_VERSION},
                       timeout_ms=timeout_ms)
         self._opened = True
+        self.features = set(r.get("features") or ())
         return r
 
     @property
@@ -157,9 +166,53 @@ class Bridge:
             self._send("batch", {"ops": ops}, b"", timeout_ms=timeout_ms)
         return self._send(op, params, payload, timeout_ms=timeout_ms)
 
+    def notify(self, op: str, params: dict | None = None,
+               payload: bytes = b"") -> None:
+        """Send an ordered one-way operation without waiting for a reply.
+
+        Protocol id 0 is reserved for notifications. A later call remains a
+        transport-order barrier, while animation producers avoid blocking on
+        the host's window presentation. Only use with a peer that advertises
+        the ``oneway`` feature.
+        """
+        if self._pending:
+            self.flush()
+        self._transport_lock.acquire()
+        try:
+            json = _json()
+            env_params = dict(params or {})
+            if payload:
+                env_params["payload_len"] = len(payload)
+            body = json.dumps({
+                "v": PROTOCOL_VERSION, "id": 0,
+                "op": op, "params": env_params,
+            }).encode("utf-8")
+            started, frequency = _counter()
+            tx_bytes = 4 + len(body) + len(payload)
+            try:
+                _uart.write_bytes(struct.pack(">I", len(body)) + body)
+                if payload:
+                    _uart.write_bytes(payload)
+            finally:
+                ended, end_frequency = _counter()
+                self._record_metric(op + ".notify", ended - started,
+                                    end_frequency or frequency, tx_bytes, 0)
+        finally:
+            self._transport_lock.release()
+
     def _send(self, op: str, params: dict | None,
                payload: bytes,
                timeout_ms: int | None = None) -> dict:
+        self._transport_lock.acquire()
+        try:
+            return self._send_locked(op, params, payload,
+                                     timeout_ms=timeout_ms)
+        finally:
+            self._transport_lock.release()
+
+    def _send_locked(self, op: str, params: dict | None,
+                     payload: bytes,
+                     timeout_ms: int | None = None) -> dict:
         json = _json()
         frame_id = self._next_id
         self._next_id += 1

@@ -39,6 +39,9 @@ class Chipset:
         self.workbench: View | None = None
         self.tick_hz = TICK_HZ
         self.on_event = None
+        self.exit_requested = False
+        self._bridge_native_frames = False
+        self._native_dest = bytearray()
 
     @property
     def is_running(self) -> bool:
@@ -59,10 +62,29 @@ class Chipset:
         if view is None:
             raise ValueError("load_view requires a View")
         self.active_view = view
+        self.exit_requested = False
+
+    def request_exit(self) -> None:
+        """Request that the active full-screen View return to Workbench."""
+        self.exit_requested = True
 
     def tick(self) -> bytes:
-        dest = self._dest
-        raster_view(self.active_view, dest, self.dest_w, self.dest_h)
+        view = self.active_view
+        native = (self._bridge_native_frames and view is not None
+                  and int(view.scale) > 1)
+        if native:
+            width, height = view.width, view.height
+            needed = width * height * 4
+            if len(self._native_dest) != needed:
+                self._native_dest = bytearray(needed)
+            dest = self._native_dest
+            raster_view(view, dest, width, height, scale_override=1)
+            present_scale = int(view.scale)
+        else:
+            width, height = self.dest_w, self.dest_h
+            dest = self._dest
+            raster_view(view, dest, width, height)
+            present_scale = 1
         frames = max(1, OUTPUT_RATE // self.tick_hz)
         pcm = paula.mix(frames)
         mixer = self._mixer
@@ -73,7 +95,7 @@ class Chipset:
                 pass
         cb = self._present
         if cb is not None:
-            cb(bytes(dest), self.dest_w, self.dest_h)
+            cb(bytes(dest), width, height, present_scale)
         if self._vblank is not None:
             try:
                 self._vblank.set()
@@ -137,22 +159,45 @@ def start_for_gui() -> None:
     except Exception:
         pass
     chipset.set_present(_present_frame)
+    bridge_open = False
+    try:
+        from kernel.bridge import bridge as _br
+        bridge_open = _br.opened
+        chipset._bridge_native_frames = "frame.rle32" in _br.features
+    except Exception:
+        chipset._bridge_native_frames = False
     wb = chipset.ensure_workbench(width, height)
     if chipset.active_view is None:
         chipset.load_view(wb)
     # In bridge mode the compositor owns Workbench presentation until an app
     # explicitly activates a LoadView.  Starting the raster clock here would
     # replace the freshly opened desktop with an empty Workbench frame.
-    if fb is not None:
+    if fb is not None and not bridge_open:
         chipset.start()
 
 
-def _present_frame(buf: bytes, width: int, height: int) -> None:
+def _present_frame(buf: bytes, width: int, height: int,
+                   scale: int = 1) -> None:
     from kernel.gui.compositor import compositor as _comp
     from kernel.display.framebuffer import fb
     if getattr(_comp, "_bridge_present", False) and _comp._bridge_fb_handle:
         try:
             from kernel.bridge import bridge as _br
+            if scale > 1 and "frame.rle32" in _br.features:
+                import _hal
+                encoded = _hal.rle_encode32(buf)
+                encoding = "rle32" if len(encoded) < len(buf) else "raw"
+                payload = encoded if encoding == "rle32" else buf
+                send = (_br.notify if "oneway" in _br.features else _br.call)
+                send("surface.upload_scaled", {
+                    "handle": _comp._bridge_fb_handle,
+                    "src_w": width,
+                    "src_h": height,
+                    "scale": scale,
+                    "encoding": encoding,
+                    "present": True,
+                }, payload=payload)
+                return
             _br.call("surface.upload",
                      {"handle": _comp._bridge_fb_handle},
                      payload=buf)

@@ -113,6 +113,9 @@ TEST_CASES = [
     ("__import__('_hal').linenoise_history_set_max_len(50)\n", "1"),
     ("__import__('_hal').linenoise_history_add('test entry')\n", "1"),
     ("__import__('_hal').linenoise(':no-tty: ') is None\n", "True"),
+    # PIT IRQ0 must be unmasked after idt_init() masks the legacy PIC.  A
+    # frozen zero clock also prevents every asyncio.sleep() from waking.
+    ("__import__('time').monotonic() > 0\n", "True"),
     # virtio-blk-pci (ef6.3): driver bound, num_sectors matches the 64 MiB
     # ext2 disk image (64*1024*1024/512 = 131072 sectors). num_sectors comes
     # from device config space, so this proves enumeration → bind → init all

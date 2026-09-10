@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import struct
 
 from kernel.chipset import (
@@ -10,11 +9,11 @@ from kernel.chipset import (
     Move,
     View,
     Wait,
-    chipset,
     paula,
 )
 from kernel.gui import input as _gui_input
 from apps import registry
+from apps.chipset_play import run_view
 
 
 def _square(freq: int, ms: int, rate: int = 8000) -> bytes:
@@ -95,34 +94,18 @@ async def main(*args, **kwargs) -> None:
     paula.channel[0].loop_end = len(bass) // 2
     paula.channel[0].play()
 
-    prev = chipset.active_view
-    chipset.load_view(v)
-    chipset.start()
-
-    keys = set()
-    closed = False
     missile = v.sprites[3]
     missile.enabled = False
-
-    def on_event(ev):
-        nonlocal closed
-        if ev.kind == _gui_input.EVENT_KEY_DOWN:
-            if ev.code == _gui_input.KEY_ESC:
-                closed = True
-            elif ev.code == _gui_input.KEY_SPACE:
-                if not missile.enabled:
-                    missile.place(bytes([2, 2, 2, 2]), 1, 4,
-                                  x=v.sprites[0].x + 3,
-                                  y=v.sprites[0].y - 6, key_color=0)
-                    shot.stop()
-                    shot.play()
-            keys.add(ev.code)
-        elif ev.kind == _gui_input.EVENT_KEY_UP:
-            keys.discard(ev.code)
-
-    chipset.on_event = on_event
     ship = v.sprites[0]
-    while not closed:
+
+    def fire():
+        if not missile.enabled:
+            missile.place(bytes([2, 2, 2, 2]), 1, 4,
+                          x=ship.x + 3, y=ship.y - 6, key_color=0)
+            shot.stop()
+            shot.play()
+
+    def tick(keys):
         if _gui_input.KEY_LEFT in keys:
             ship.x = max(0, ship.x - 4)
         if _gui_input.KEY_RIGHT in keys:
@@ -137,21 +120,22 @@ async def main(*args, **kwargs) -> None:
                 missile.enabled = False
         v.sprites[1].x = (v.sprites[1].x + 2) % 312
         v.sprites[2].x = (v.sprites[2].x - 1) % 312
-        await asyncio.sleep(1.0 / 30)
 
-    paula.channel[0].stop()
-    shot.stop()
-    chipset.on_event = None
-    if chipset.workbench is not None:
-        chipset.load_view(chipset.workbench)
-    elif prev is not None:
-        chipset.load_view(prev)
-    chipset.stop()
-    try:
-        from kernel.gui.compositor import compositor
-        compositor._bridge_needs_redraw = True
-    except Exception:
-        pass
+    def demo(frame):
+        keys = {_gui_input.KEY_RIGHT if (frame // 90) % 2 == 0
+                else _gui_input.KEY_LEFT}
+        keys.add(_gui_input.KEY_UP if (frame // 120) % 2 == 0
+                 else _gui_input.KEY_DOWN)
+        if frame % 12 == 0:
+            keys.add(_gui_input.KEY_SPACE)
+        return keys
+
+    def on_exit():
+        paula.channel[0].stop()
+        shot.stop()
+
+    await run_view(v, tick, on_space=fire, on_exit=on_exit, demo=demo,
+                   controls="ARROWS MOVE  SPACE FIRE")
 
 
 from apps._icons import bouncing_ball_icon

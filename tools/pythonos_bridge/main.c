@@ -19,6 +19,7 @@
  */
 
 #include <SDL.h>
+#include <SDL_image.h>
 #include <SDL_ttf.h>
 #include <arpa/inet.h>
 #include <errno.h>
@@ -30,6 +31,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -280,12 +282,72 @@ static void drain_sdl_events(void) {
 typedef struct {
     int          open;
     SDL_Window  *win;
-    SDL_Surface *fb;     /* SDL_GetWindowSurface — guest blits land here */
+    SDL_Surface *fb;     /* software framebuffer — guest blits land here */
+    int          fb_owned;
+    SDL_Renderer *renderer;
+    SDL_Texture  *texture;
+    int          texture_w, texture_h;
+    unsigned char *last_scaled_pixels;
+    size_t       last_scaled_len;
+    int          last_scaled_w, last_scaled_h, last_scale;
     int          w, h;
     int          fb_handle;   /* handle table entry pointing at fb (borrowed) */
 } BridgeWindow;
 
 static BridgeWindow g_window = { 0 };
+
+static void forget_scaled_frame(void) {
+    free(g_window.last_scaled_pixels);
+    g_window.last_scaled_pixels = NULL;
+    g_window.last_scaled_len = 0;
+    g_window.last_scaled_w = g_window.last_scaled_h = 0;
+    g_window.last_scale = 1;
+}
+
+static int remember_scaled_frame(const unsigned char *pixels, size_t len,
+                                 int w, int h, int scale) {
+    if (g_window.last_scaled_len != len) {
+        unsigned char *replacement = (unsigned char *)realloc(
+            g_window.last_scaled_pixels, len);
+        if (!replacement) return -1;
+        g_window.last_scaled_pixels = replacement;
+        g_window.last_scaled_len = len;
+    }
+    memcpy(g_window.last_scaled_pixels, pixels, len);
+    g_window.last_scaled_w = w;
+    g_window.last_scaled_h = h;
+    g_window.last_scale = scale;
+    return 0;
+}
+
+static int render_pixels(const unsigned char *pixels, int w, int h,
+                         int pitch, int scale) {
+    if (!g_window.renderer) return -1;
+    if (!g_window.texture || g_window.texture_w != w ||
+        g_window.texture_h != h) {
+        SDL_DestroyTexture(g_window.texture);
+        g_window.texture = SDL_CreateTexture(
+            g_window.renderer, SDL_PIXELFORMAT_ARGB8888,
+            SDL_TEXTUREACCESS_STREAMING, w, h);
+        if (!g_window.texture) return -1;
+        g_window.texture_w = w;
+        g_window.texture_h = h;
+    }
+    if (SDL_UpdateTexture(g_window.texture, NULL, pixels, pitch) != 0)
+        return -1;
+    SDL_SetRenderDrawColor(g_window.renderer, 0, 0, 0, 255);
+    if (SDL_RenderClear(g_window.renderer) != 0) return -1;
+    SDL_Rect dst = {
+        (g_window.w - w * scale) / 2,
+        (g_window.h - h * scale) / 2,
+        w * scale, h * scale,
+    };
+    if (SDL_RenderCopy(g_window.renderer, g_window.texture, NULL, &dst) != 0)
+        return -1;
+    SDL_RenderPresent(g_window.renderer);
+    drain_sdl_events();
+    return 0;
+}
 
 #define MAX_HANDLES 1024
 
@@ -367,6 +429,28 @@ static int read_payload_trailer(int fd, size_t n, char **out_buf) {
     return 0;
 }
 
+/* Decode the compact rle32 wire representation used for animation frames.
+ * Each record is a little-endian uint16 run length followed by one native
+ * BGRX pixel (4 bytes). This deliberately has a tiny decoder and no external
+ * dependency so the same protocol works across local and remote desktops. */
+static int decode_rle32(const unsigned char *src, size_t src_len,
+                        unsigned char *dst, size_t dst_len) {
+    size_t si = 0, di = 0;
+    while (si < src_len) {
+        if (src_len - si < 6) return -1;
+        unsigned int run = (unsigned int)src[si]
+                         | ((unsigned int)src[si + 1] << 8);
+        if (run == 0 || run > (dst_len - di) / 4) return -1;
+        const unsigned char *pixel = src + si + 2;
+        for (unsigned int i = 0; i < run; i++) {
+            memcpy(dst + di, pixel, 4);
+            di += 4;
+        }
+        si += 6;
+    }
+    return di == dst_len ? 0 : -1;
+}
+
 /* ─── Op dispatch ───────────────────────────────────────────────────────── */
 
 typedef struct {
@@ -393,6 +477,8 @@ static int g_metric_count = 0;
 typedef struct { char op[48]; uint64_t ticks; } SlowTrace;
 static SlowTrace g_slow_trace[SLOW_TRACE_CAP];
 static int g_slow_head = 0, g_slow_count = 0;
+static uint64_t g_slow_last_log_tick = 0;
+static uint64_t g_slow_suppressed = 0;
 
 static uint64_t slow_threshold_us(void) {
     const char *value = getenv("PYTHONOS_BRIDGE_SLOW_US");
@@ -411,8 +497,27 @@ static void slow_trace_record(const char *name, uint64_t elapsed) {
     row->ticks = elapsed;
     g_slow_head = (g_slow_head + 1) % SLOW_TRACE_CAP;
     if (g_slow_count < SLOW_TRACE_CAP) g_slow_count++;
-    LOG_WARN("desktop-main blocked: op=%s service_us=%llu", name,
-             (unsigned long long)us);
+
+    /* Keep every sample in the in-memory ring, but do not turn profiling into
+     * a per-frame disk-write benchmark.  One diagnostic per second is enough
+     * to make a live stall visible; the metrics RPC retains the full detail. */
+    uint64_t now = SDL_GetPerformanceCounter();
+    if (!g_slow_last_log_tick || !frequency ||
+        now - g_slow_last_log_tick >= frequency) {
+        if (g_slow_suppressed) {
+            LOG_WARN("desktop-main blocked: op=%s service_us=%llu "
+                     "(suppressed %llu similar warnings)", name,
+                     (unsigned long long)us,
+                     (unsigned long long)g_slow_suppressed);
+        } else {
+            LOG_WARN("desktop-main blocked: op=%s service_us=%llu", name,
+                     (unsigned long long)us);
+        }
+        g_slow_last_log_tick = now;
+        g_slow_suppressed = 0;
+    } else {
+        g_slow_suppressed++;
+    }
 }
 
 static void metric_record(const char *name, uint64_t elapsed) {
@@ -478,9 +583,39 @@ static int op_debug_capture(BridgeState *st, int id, cJSON *params) {
     if (!g_window.open || !g_window.fb) {
         return send_err(st->fd, id, 7, "debug.capture: display not open");
     }
-    if (SDL_SaveBMP(g_window.fb, jpath->valuestring) != 0) {
+    SDL_Surface *capture = g_window.fb;
+    SDL_Surface *scaled = NULL;
+    SDL_Surface *source = NULL;
+    if (g_window.renderer && g_window.last_scaled_pixels) {
+        scaled = SDL_CreateRGBSurfaceWithFormat(
+            0, g_window.w, g_window.h, 32, SDL_PIXELFORMAT_ARGB8888);
+        source = SDL_CreateRGBSurfaceFrom(
+            g_window.last_scaled_pixels,
+            g_window.last_scaled_w, g_window.last_scaled_h, 32,
+            g_window.last_scaled_w * 4,
+            0x00FF0000, 0x0000FF00, 0x000000FF, 0);
+        if (!scaled || !source) {
+            SDL_FreeSurface(source); SDL_FreeSurface(scaled);
+            return send_err(st->fd, id, 11, SDL_GetError());
+        }
+        SDL_FillRect(scaled, NULL, SDL_MapRGB(scaled->format, 0, 0, 0));
+        SDL_Rect dst = {
+            (g_window.w - g_window.last_scaled_w * g_window.last_scale) / 2,
+            (g_window.h - g_window.last_scaled_h * g_window.last_scale) / 2,
+            g_window.last_scaled_w * g_window.last_scale,
+            g_window.last_scaled_h * g_window.last_scale,
+        };
+        if (SDL_BlitScaled(source, NULL, scaled, &dst) != 0) {
+            SDL_FreeSurface(source); SDL_FreeSurface(scaled);
+            return send_err(st->fd, id, 11, SDL_GetError());
+        }
+        capture = scaled;
+    }
+    if (SDL_SaveBMP(capture, jpath->valuestring) != 0) {
+        SDL_FreeSurface(source); SDL_FreeSurface(scaled);
         return send_err(st->fd, id, 8, SDL_GetError());
     }
+    SDL_FreeSurface(source); SDL_FreeSurface(scaled);
     cJSON *result = cJSON_CreateObject();
     cJSON_AddStringToObject(result, "path", jpath->valuestring);
     cJSON_AddNumberToObject(result, "w", g_window.w);
@@ -498,6 +633,12 @@ static int op_hello(BridgeState *st, int id, cJSON *params) {
     cJSON_AddStringToObject(r, "agent",      "pythonos_bridge");
     cJSON_AddStringToObject(r, "agent_ver",  "0.1");
     cJSON_AddStringToObject(r, "sdl_ver",    SDL_GetRevision());
+    cJSON *features = cJSON_CreateArray();
+    cJSON_AddItemToArray(features, cJSON_CreateString("batch"));
+    cJSON_AddItemToArray(features, cJSON_CreateString("image.decode"));
+    cJSON_AddItemToArray(features, cJSON_CreateString("frame.rle32"));
+    cJSON_AddItemToArray(features, cJSON_CreateString("oneway"));
+    cJSON_AddItemToObject(r, "features", features);
     if (peer_proto != 0 && peer_proto != BRIDGE_PROTOCOL_VERSION) {
         LOG_WARN("peer requested protocol v%d, we are v%d",
                  peer_proto, BRIDGE_PROTOCOL_VERSION);
@@ -536,9 +677,12 @@ static int op_display_open(BridgeState *st, int id, cJSON *params) {
 
     if (g_window.open) {
         if (g_window.fb_handle) handle_free(g_window.fb_handle);
+        SDL_DestroyTexture(g_window.texture);
+        SDL_DestroyRenderer(g_window.renderer);
+        if (g_window.fb_owned) SDL_FreeSurface(g_window.fb);
+        forget_scaled_frame();
         SDL_DestroyWindow(g_window.win);
-        g_window.win = NULL;
-        g_window.open = 0;
+        memset(&g_window, 0, sizeof(g_window));
     }
     if (SDL_WasInit(SDL_INIT_VIDEO) == 0) {
         if (SDL_Init(SDL_INIT_VIDEO) != 0) {
@@ -555,14 +699,37 @@ static int op_display_open(BridgeState *st, int id, cJSON *params) {
         SDL_RaiseWindow(win);
         SDL_SetWindowInputFocus(win);
     }
+    SDL_Renderer *renderer = NULL;
+    SDL_Surface *fb = NULL;
+    int fb_owned = 0;
+    if (!headless) {
+        SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0");
+        renderer = SDL_CreateRenderer(win, -1, SDL_RENDERER_ACCELERATED);
+        if (!renderer)
+            renderer = SDL_CreateRenderer(win, -1, SDL_RENDERER_SOFTWARE);
+        if (renderer) {
+            fb = SDL_CreateRGBSurfaceWithFormat(
+                0, w, h, 32, SDL_PIXELFORMAT_ARGB8888);
+            fb_owned = 1;
+        }
+    }
+    if (!fb) fb = SDL_GetWindowSurface(win);
+    if (!fb) {
+        SDL_DestroyRenderer(renderer);
+        SDL_DestroyWindow(win);
+        return send_err(st->fd, id, 6, SDL_GetError());
+    }
     g_window.win  = win;
-    g_window.fb   = SDL_GetWindowSurface(win);
+    g_window.fb   = fb;
+    g_window.fb_owned = fb_owned;
+    g_window.renderer = renderer;
     g_window.w    = w;
     g_window.h    = h;
     g_window.open = 1;
     g_window.fb_handle = handle_alloc(g_window.fb, /*owned=*/0);
-    LOG_INFO("display.open: %dx%d (%s) mode=%s fb_handle=%d",
+    LOG_INFO("display.open: %dx%d (%s) mode=%s backend=%s fb_handle=%d",
              w, h, title, headless ? "headless" : "interactive",
+             renderer ? "renderer" : "window-surface",
              g_window.fb_handle);
 
     cJSON *r = cJSON_CreateObject();
@@ -581,17 +748,28 @@ static int op_display_close(BridgeState *st, int id, cJSON *params) {
             handle_free(g_window.fb_handle);
             g_window.fb_handle = 0;
         }
+        SDL_DestroyTexture(g_window.texture);
+        SDL_DestroyRenderer(g_window.renderer);
+        if (g_window.fb_owned) SDL_FreeSurface(g_window.fb);
+        forget_scaled_frame();
         SDL_DestroyWindow(g_window.win);
-        g_window.win = NULL;
-        g_window.open = 0;
+        memset(&g_window, 0, sizeof(g_window));
     }
     return send_ok(st->fd, id, NULL);
 }
 
 static int op_display_present(BridgeState *st, int id, cJSON *params) {
     if (!g_window.open) return send_err(st->fd, id, 7, "display not open");
-    SDL_UpdateWindowSurface(g_window.win);
-    drain_sdl_events();
+    forget_scaled_frame();
+    if (g_window.renderer) {
+        if (render_pixels((unsigned char *)g_window.fb->pixels,
+                          g_window.fb->w, g_window.fb->h,
+                          g_window.fb->pitch, 1) != 0)
+            return send_err(st->fd, id, 11, SDL_GetError());
+    } else {
+        SDL_UpdateWindowSurface(g_window.win);
+        drain_sdl_events();
+    }
     return send_ok(st->fd, id, NULL);
 }
 
@@ -849,6 +1027,140 @@ static int op_surface_upload(BridgeState *st, int id, cJSON *params) {
     SDL_UnlockSurface(s);
     free(payload);
     return send_ok(st->fd, id, NULL);
+}
+
+/* Encoded image upload. The guest sends the original PNG/JPEG bytes and the
+ * host decodes them directly into an SDL surface. This avoids expanding the
+ * 86 KiB desktop PNG to a 3 MiB framebuffer before it crosses TCP. */
+static int op_surface_load_image(BridgeState *st, int id, cJSON *params) {
+    cJSON *jp = cJSON_GetObjectItemCaseSensitive(params, "payload_len");
+    if (!cJSON_IsNumber(jp) || jp->valuedouble <= 0) {
+        return send_err(st->fd, id, 4, "payload_len required");
+    }
+    size_t plen = (size_t)jp->valuedouble;
+    char *payload = NULL;
+    if (read_payload_trailer(st->fd, plen, &payload) != 0) return -1;
+
+    SDL_RWops *rw = SDL_RWFromConstMem(payload, (int)plen);
+    SDL_Surface *decoded = rw ? IMG_Load_RW(rw, 1) : NULL;
+    if (!decoded) {
+        free(payload);
+        return send_err(st->fd, id, 11, IMG_GetError());
+    }
+    SDL_Surface *surface = SDL_ConvertSurfaceFormat(
+        decoded, SDL_PIXELFORMAT_ARGB8888, 0);
+    SDL_FreeSurface(decoded);
+    free(payload);
+    if (!surface) return send_err(st->fd, id, 11, SDL_GetError());
+
+    int handle = handle_alloc(surface, /*owned=*/1);
+    if (handle == 0) {
+        SDL_FreeSurface(surface);
+        return send_err(st->fd, id, 10, "handle table full");
+    }
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "handle", handle);
+    cJSON_AddNumberToObject(r, "w", surface->w);
+    cJSON_AddNumberToObject(r, "h", surface->h);
+    cJSON_AddNumberToObject(r, "wire_bytes", (double)plen);
+    return send_ok(st->fd, id, r);
+}
+
+/* Upload a compact native-resolution animation frame and scale it on the
+ * host. params: {handle, src_w, src_h, scale, encoding, payload_len}.
+ * `encoding` is either raw BGRX or rle32. The destination is letterboxed and
+ * updated by the following display.present call. */
+static int op_surface_upload_scaled(BridgeState *st, int id, cJSON *params) {
+    cJSON *jh = cJSON_GetObjectItemCaseSensitive(params, "handle");
+    cJSON *jw = cJSON_GetObjectItemCaseSensitive(params, "src_w");
+    cJSON *jheight = cJSON_GetObjectItemCaseSensitive(params, "src_h");
+    cJSON *jscale = cJSON_GetObjectItemCaseSensitive(params, "scale");
+    cJSON *jencoding = cJSON_GetObjectItemCaseSensitive(params, "encoding");
+    cJSON *jp = cJSON_GetObjectItemCaseSensitive(params, "payload_len");
+    if (!cJSON_IsNumber(jh) || !cJSON_IsNumber(jw) ||
+        !cJSON_IsNumber(jheight) || !cJSON_IsNumber(jp)) {
+        return send_err(st->fd, id, 4,
+                        "handle/src_w/src_h/payload_len required");
+    }
+    size_t plen = (size_t)jp->valuedouble;
+    char *payload = NULL;
+    if (read_payload_trailer(st->fd, plen, &payload) != 0) return -1;
+    SDL_Surface *dst = handle_get(jh->valueint);
+    int src_w = jw->valueint, src_h = jheight->valueint;
+    int scale = cJSON_IsNumber(jscale) ? jscale->valueint : 1;
+    if (!dst || src_w <= 0 || src_h <= 0 || scale <= 0) {
+        free(payload);
+        return send_err(st->fd, id, 7, "invalid surface or dimensions");
+    }
+    size_t raw_len = (size_t)src_w * (size_t)src_h * 4;
+    unsigned char *pixels = NULL;
+    int owned = 0;
+    const char *encoding = cJSON_IsString(jencoding)
+                         ? jencoding->valuestring : "raw";
+    if (strcmp(encoding, "rle32") == 0) {
+        pixels = (unsigned char *)malloc(raw_len);
+        owned = 1;
+        if (!pixels || decode_rle32((unsigned char *)payload, plen,
+                                    pixels, raw_len) != 0) {
+            free(pixels); free(payload);
+            return send_err(st->fd, id, 9, "invalid rle32 payload");
+        }
+    } else if (strcmp(encoding, "raw") == 0 && plen == raw_len) {
+        pixels = (unsigned char *)payload;
+    } else {
+        free(payload);
+        return send_err(st->fd, id, 9, "invalid raw frame payload");
+    }
+
+    cJSON *jpresent = cJSON_GetObjectItemCaseSensitive(params, "present");
+    if (cJSON_IsTrue(jpresent) && g_window.open && dst == g_window.fb &&
+        g_window.renderer) {
+        if (remember_scaled_frame(pixels, raw_len, src_w, src_h, scale) != 0 ||
+            render_pixels(pixels, src_w, src_h, src_w * 4, scale) != 0) {
+            if (owned) free(pixels);
+            free(payload);
+            return send_err(st->fd, id, 11, SDL_GetError());
+        }
+        if (owned) free(pixels);
+        free(payload);
+        cJSON *r = cJSON_CreateObject();
+        cJSON_AddNumberToObject(r, "wire_bytes", (double)plen);
+        cJSON_AddNumberToObject(r, "raw_bytes", (double)raw_len);
+        cJSON_AddStringToObject(r, "encoding", encoding);
+        return send_ok(st->fd, id, r);
+    }
+
+    SDL_Surface *src = SDL_CreateRGBSurfaceFrom(
+        pixels, src_w, src_h, 32, src_w * 4,
+        0x00FF0000, 0x0000FF00, 0x000000FF, 0x00000000);
+    if (!src) {
+        if (owned) free(pixels);
+        free(payload);
+        return send_err(st->fd, id, 11, SDL_GetError());
+    }
+    SDL_FillRect(dst, NULL, SDL_MapRGB(dst->format, 0, 0, 0));
+    SDL_Rect dr = {
+        (dst->w - src_w * scale) / 2,
+        (dst->h - src_h * scale) / 2,
+        src_w * scale, src_h * scale,
+    };
+    int rc = SDL_BlitScaled(src, NULL, dst, &dr);
+    SDL_FreeSurface(src);
+    if (owned) free(pixels);
+    free(payload);
+    if (rc != 0) return send_err(st->fd, id, 11, SDL_GetError());
+
+    if (cJSON_IsTrue(jpresent) && g_window.open && dst == g_window.fb) {
+        if (SDL_UpdateWindowSurface(g_window.win) != 0)
+            return send_err(st->fd, id, 11, SDL_GetError());
+        drain_sdl_events();
+    }
+
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddNumberToObject(r, "wire_bytes", (double)plen);
+    cJSON_AddNumberToObject(r, "raw_bytes", (double)raw_len);
+    cJSON_AddStringToObject(r, "encoding", encoding);
+    return send_ok(st->fd, id, r);
 }
 
 static op_handler lookup_op(const char *name);
@@ -1224,6 +1536,8 @@ static const struct {
     { "surface.scroll",     op_surface_scroll     },
     { "surface.line",       op_surface_line       },
     { "surface.upload",     op_surface_upload     },
+    { "surface.load_image", op_surface_load_image },
+    { "surface.upload_scaled", op_surface_upload_scaled },
     { "text.draw",          op_text_draw          },
     { "event.poll",         op_event_poll         },
     { "debug.metrics",      op_debug_metrics      },
@@ -1263,11 +1577,14 @@ static int handle_one_frame(BridgeState *st, const char *payload, size_t len) {
     LOG_DEBUG("dispatch op=%s id=%d", op->valuestring, id);
     uint64_t started = SDL_GetPerformanceCounter();
     int rc;
+    int previous_silent = g_silent_response;
+    if (id == 0) g_silent_response = 1;
     if (!fn) {
         rc = send_err(st->fd, id, 3, "unknown op");
     } else {
         rc = fn(st, id, params);
     }
+    g_silent_response = previous_silent;
     metric_record(op->valuestring, SDL_GetPerformanceCounter() - started);
     cJSON_Delete(root);
     return rc;
@@ -1295,11 +1612,49 @@ static int serve_fd(int fd) {
 
 static void cleanup_sdl(void) {
     if (g_window.open) {
+        SDL_DestroyTexture(g_window.texture);
+        SDL_DestroyRenderer(g_window.renderer);
+        if (g_window.fb_owned) SDL_FreeSurface(g_window.fb);
+        forget_scaled_frame();
         SDL_DestroyWindow(g_window.win);
-        g_window.win = NULL;
-        g_window.open = 0;
+        memset(&g_window, 0, sizeof(g_window));
     }
+    IMG_Quit();
     if (SDL_WasInit(SDL_INIT_VIDEO)) SDL_Quit();
+}
+
+static int socket_buffer_bytes(void) {
+    const char *value = getenv("PYTHONOS_BRIDGE_SOCKET_BUFFER");
+    if (!value || !value[0]) return 4 * 1024 * 1024;
+    char *end = NULL;
+    long parsed = strtol(value, &end, 10);
+    if (end == value || *end != '\0' || parsed < 65536 ||
+        parsed > 64 * 1024 * 1024) {
+        LOG_WARN("ignoring invalid PYTHONOS_BRIDGE_SOCKET_BUFFER=%s", value);
+        return 4 * 1024 * 1024;
+    }
+    return (int)parsed;
+}
+
+static void tune_tcp_socket(int fd) {
+    struct sockaddr_storage address;
+    socklen_t address_len = sizeof(address);
+    if (getsockname(fd, (struct sockaddr *)&address, &address_len) != 0 ||
+        address.ss_family != AF_INET) return;
+    int one = 1;
+    int bytes = socket_buffer_bytes();
+    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) != 0)
+        LOG_WARN("TCP_NODELAY: %s", strerror(errno));
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &bytes, sizeof(bytes)) != 0)
+        LOG_WARN("SO_RCVBUF: %s", strerror(errno));
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &bytes, sizeof(bytes)) != 0)
+        LOG_WARN("SO_SNDBUF: %s", strerror(errno));
+    int actual_rx = 0, actual_tx = 0;
+    socklen_t n = sizeof(int);
+    (void)getsockopt(fd, SOL_SOCKET, SO_RCVBUF, &actual_rx, &n);
+    n = sizeof(int);
+    (void)getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &actual_tx, &n);
+    LOG_INFO("TCP tuned: nodelay=1 rcvbuf=%d sndbuf=%d", actual_rx, actual_tx);
 }
 
 static int accept_loop(int srv) {
@@ -1310,6 +1665,7 @@ static int accept_loop(int srv) {
             LOG_ERROR("accept: %s", strerror(errno));
             break;
         }
+        tune_tcp_socket(conn);
         int rc = serve_fd(conn);
         close(conn);
         if (rc == 0) {
@@ -1466,6 +1822,7 @@ static int connect_tcp_socket(const char *endpoint, int timeout_ms) {
             return 1;
         }
         if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+            tune_tcp_socket(fd);
             LOG_INFO("connected to tcp %s:%d", host, port);
             int rc = serve_fd(fd);
             close(fd);

@@ -19,6 +19,7 @@ from kernel.gui.compositor import compositor, CompositorWindow
 from kernel.gui import input as _gui_input
 from kernel.gui.sdl2.surface import SDL_FillRect
 from kernel.display.font import GLYPH_W, GLYPH_H
+from kernel.gui.ui import ListView
 from apps import registry
 
 
@@ -30,9 +31,11 @@ _HL_FG    = 0xFFFFFF
 _HEADER_H = GLYPH_H + 4
 
 
-class _Browser:
+class _Browser(ListView):
     def __init__(self, win: CompositorWindow) -> None:
+        super().__init__(0, 0, win.w, win.h, background=_BG, host=win)
         self.win = win
+        win.add(self)
         self.cwd = "/"
         self.entries: list[tuple[str, str]] = []   # (name, kind)
         self.selected = 0

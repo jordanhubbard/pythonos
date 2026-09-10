@@ -56,9 +56,14 @@ async def main(*args, **kwargs) -> None:
 
     def on_event(ev):
         nonlocal closed, wiping, wipe_t, program_b
+        if ev.kind == _gui_input.QUIT:
+            closed = True
+            return
         if ev.kind != _gui_input.EVENT_KEY_DOWN:
             return
-        if ev.code == _gui_input.KEY_ESC:
+        if (ev.code == _gui_input.KEY_ESC
+                or ev.text in ("q", "Q")
+                or ev.code in (ord("q"), ord("Q"))):
             closed = True
         elif ev.text in ("w", "W") or ev.code in (ord("w"), ord("W")):
             wiping = True
@@ -85,7 +90,7 @@ async def main(*args, **kwargs) -> None:
 
     chipset.on_event = on_event
 
-    while not closed:
+    while not closed and not chipset.exit_requested:
         if program_b and not wiping:
             v.bplcon = 0
         elif wiping:

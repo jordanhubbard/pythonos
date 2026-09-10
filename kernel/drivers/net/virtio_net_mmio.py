@@ -159,6 +159,8 @@ class VirtioMmioNet:
         self._rxq: _VirtQueue | None = None
         self._txq: _VirtQueue | None = None
         self._rx_bufs: dict[int, int] = {}
+        self._tx_bufs: dict[int, int] = {}
+        self._tx_free: list[int] = []
         self._mac = bytes([0x02, 0x50, 0x59, 0x4f, 0x00, 0x01])
 
     def probe(self) -> bool:
@@ -199,6 +201,7 @@ class VirtioMmioNet:
         self._rxq = _VirtQueue(self._base, RXQ, version)
         self._txq = _VirtQueue(self._base, TXQ, version)
         self._prime_rx()
+        self._prime_tx()
 
         _w32(self._base, 0x070,
              STATUS_ACK | STATUS_DRIVER | STATUS_FEATURES | STATUS_DRIVER_OK)
@@ -214,19 +217,39 @@ class VirtioMmioNet:
             self._rxq.write_desc(i, buf, BUF_SIZE, VRING_DESC_F_WRITE, 0)
             self._rxq.avail_push(i)
 
-    def send_nowait(self, frame: bytes) -> None:
+    def _prime_tx(self) -> None:
+        for i in range(QUEUE_SIZE):
+            self._tx_bufs[i] = _hal.dma_alloc(BUF_SIZE)
+        self._tx_free = list(reversed(range(QUEUE_SIZE)))
+
+    def _reclaim_tx(self) -> None:
         if not self._txq:
             return
+        while self._txq.has_used():
+            desc_id, _length = self._txq.used_pop()
+            if desc_id in self._tx_bufs and desc_id not in self._tx_free:
+                self._tx_free.append(desc_id)
+
+    def send_nowait(self, frame: bytes) -> bool:
+        if not self._txq:
+            return False
         payload = _net_header() + bytes(frame)
-        buf = _hal.dma_alloc(len(payload))
+        if len(payload) > BUF_SIZE:
+            return False
+        self._reclaim_tx()
+        if not self._tx_free:
+            return False
+        idx = self._tx_free.pop()
+        buf = self._tx_bufs[idx]
         _copy_to_dma(buf, payload)
-        idx = self._txq.alloc_desc()
         self._txq.write_desc(idx, buf, len(payload), 0, 0)
         self._txq.avail_push(idx)
         self._txq.notify()
+        return True
 
     async def send(self, frame: bytes) -> None:
-        self.send_nowait(frame)
+        while not self.send_nowait(frame):
+            await asyncio.sleep(0)
 
     def recv_nowait(self) -> bytes | None:
         if not self._rxq or not self._rxq.has_used():

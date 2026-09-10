@@ -48,6 +48,10 @@ F_URG = 0x20
 # No PMTU/MSS negotiation yet. Keep payloads comfortably below Ethernet MTU
 # so bridge pixel uploads do not create impossible IPv4 packets.
 TCP_MAX_PAYLOAD = 1200
+# Polling the receive path after every transmitted segment made bulk bridge
+# payloads pay the full Python network-stack cost thousands of times. Keep a
+# bounded burst below the 256-entry virtio queue, then drain ACKs in groups.
+TCP_TX_POLL_BURST = 32
 TRACE_SEGMENTS = False
 
 
@@ -159,11 +163,17 @@ class TCPConnection:
     def send_nowait(self, data: bytes) -> bool:
         data = bytes(data)
         from kernel.net import stack
+        segment_count = 0
         for off in range(0, len(data), TCP_MAX_PAYLOAD):
             if not self.send_segment_nowait(
                     F_ACK | F_PSH, data[off:off + TCP_MAX_PAYLOAD]):
                 return False
-            stack.poll_once()
+            segment_count += 1
+            if segment_count % TCP_TX_POLL_BURST == 0:
+                while stack.poll_once():
+                    pass
+        while stack.poll_once():
+            pass
         return True
 
     def close(self) -> None:

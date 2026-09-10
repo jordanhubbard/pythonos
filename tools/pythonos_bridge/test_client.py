@@ -11,6 +11,7 @@ coverage lives in the run-gui and GUI smoke targets.
 """
 
 import json
+import zlib
 import os
 import socket
 import struct
@@ -19,11 +20,14 @@ import sys
 import time
 
 
-def _send(sock, frame_id, op, params=None):
+def _send(sock, frame_id, op, params=None, trailer=b""):
+    params = dict(params or {})
+    if trailer:
+        params["payload_len"] = len(trailer)
     payload = json.dumps({
-        "v": 1, "id": frame_id, "op": op, "params": params or {},
+        "v": 1, "id": frame_id, "op": op, "params": params,
     }).encode("utf-8")
-    sock.sendall(struct.pack(">I", len(payload)) + payload)
+    sock.sendall(struct.pack(">I", len(payload)) + payload + trailer)
 
 
 def _recv(sock):
@@ -98,6 +102,54 @@ def main():
         check("hello agent set",
               isinstance(r.get("result", {}).get("agent"), str)
               and r["result"]["agent"] == "pythonos_bridge")
+        features = r.get("result", {}).get("features", [])
+        check("hello advertises image decode", "image.decode" in features)
+        check("hello advertises rle32 frames", "frame.rle32" in features)
+        check("hello advertises one-way ops", "oneway" in features)
+
+        # id=0 is an ordered notification: it must not leave a response that
+        # could be mistaken for the next synchronous RPC.
+        _send(s, 0, "ping", {"tag": "notify"})
+        _send(s, 119, "ping", {"tag": "barrier"})
+        r = _recv(s)
+        check("one-way op emits no response",
+              r.get("id") == 119
+              and r.get("result", {}).get("tag") == "barrier")
+
+        # Encoded assets stay compact on the wire and decode on the host.
+        def png_chunk(kind, data):
+            return (struct.pack(">I", len(data)) + kind + data
+                    + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF))
+        png_1x1 = (b"\x89PNG\r\n\x1a\n"
+                   + png_chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+                   + png_chunk(b"IDAT", zlib.compress(b"\x00\x30\x20\x10"))
+                   + png_chunk(b"IEND", b""))
+        _send(s, 120, "surface.load_image", {}, png_1x1)
+        r = _recv(s)
+        check("surface.load_image.ok", r.get("ok") is True)
+        image_handle = int(r.get("result", {}).get("handle", 0))
+        check("surface.load_image dimensions",
+              r.get("result", {}).get("w") == 1
+              and r.get("result", {}).get("h") == 1)
+
+        _send(s, 121, "surface.create", {"w": 4, "h": 4})
+        r = _recv(s)
+        frame_handle = int(r.get("result", {}).get("handle", 0))
+        # Four identical BGRX pixels: uint16 run=4 + one pixel.
+        rle = b"\x04\x00\x10\x20\x30\xff"
+        _send(s, 122, "surface.upload_scaled", {
+            "handle": frame_handle, "src_w": 2, "src_h": 2,
+            "scale": 2, "encoding": "rle32",
+        }, rle)
+        r = _recv(s)
+        check("surface.upload_scaled rle32.ok", r.get("ok") is True)
+        check("surface.upload_scaled reports compression",
+              r.get("result", {}).get("wire_bytes") == 6
+              and r.get("result", {}).get("raw_bytes") == 16)
+
+        for frame_id, handle in ((123, image_handle), (124, frame_handle)):
+            _send(s, frame_id, "surface.destroy", {"handle": handle})
+            check("optimized surface destroy", _recv(s).get("ok") is True)
 
         # ping with tag
         _send(s, 2, "ping", {"tag": "abc"})

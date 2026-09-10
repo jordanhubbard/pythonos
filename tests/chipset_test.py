@@ -84,6 +84,10 @@ def main() -> int:
     ]
     v.pf0.fill(0)
     chipset.load_view(v)
+    chipset.request_exit()
+    check("full-screen exit request is recorded", chipset.exit_requested)
+    chipset.load_view(v)
+    check("loading a View clears stale exit request", not chipset.exit_requested)
     buf = chipset.tick()
     check("tick dest size 32x24x4", len(buf) == 32 * 24 * 4, str(len(buf)))
     check("copper COLOR00 before wait line",

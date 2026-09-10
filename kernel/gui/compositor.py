@@ -29,6 +29,7 @@ from kernel.gui.dock import (
     is_context_click,
 )
 from kernel.gui.sdl2.surface import SDL_Surface
+from kernel.gui.ui import Container
 
 
 # ── Title-bar + dock geometry ──────────────────────────────────────────────
@@ -61,12 +62,13 @@ DOCK_LABEL_FG     = 0xFFFFFF
 
 # ── CompositorWindow ────────────────────────────────────────────────────────
 
-class CompositorWindow:
+class CompositorWindow(Container):
     """One displayable window. Apps mutate ``surface`` then mark
     ``dirty = True`` to schedule a redraw."""
 
     def __init__(self, title: str, x: int, y: int, w: int, h: int,
                  chrome: bool = True) -> None:
+        super().__init__(x, y, w, h)
         self.title  = title
         self.x      = x
         self.y      = y
@@ -100,25 +102,34 @@ class CompositorWindow:
         # main() function. Empty falls back to registry.get(app_name).menus.
         self.menus: list = []
 
+    def redraw_views(self) -> None:
+        """Draw high-level child views; direct SDL drawing remains valid."""
+        for child in self.children:
+            child.host = self
+        Container.draw(self, self.surface)
+        self.dirty = True
+
     def set_event_handler(self, fn) -> None:
         self._on_event = fn
 
     def deliver(self, ev) -> None:
-        if self._on_event:
-            try:
-                # GUI input is desktop-relative, while an app surface is
-                # body-relative.  Give every window the latter; this keeps
-                # drawing and hit-testing independent of window placement.
-                if ev.kind in (_gui_input.MOUSE_MOVE, _gui_input.MOUSE_DOWN,
-                               _gui_input.MOUSE_UP, _gui_input.MOUSE_WHEEL):
-                    from kernel.gui.input import Event
-                    ev = Event(kind=ev.kind, code=ev.code, text=ev.text,
-                               mods=ev.mods, x=ev.x - self.x,
-                               y=ev.y - self.y - (TITLE_BAR_H if self.chrome else 0),
-                               dx=ev.dx, dy=ev.dy)
+        try:
+            # GUI input is desktop-relative, while an app surface is
+            # body-relative. Give raw handlers and View children the same
+            # simple coordinate system.
+            if ev.kind in (_gui_input.MOUSE_MOVE, _gui_input.MOUSE_DOWN,
+                           _gui_input.MOUSE_UP, _gui_input.MOUSE_WHEEL):
+                from kernel.gui.input import Event
+                ev = Event(kind=ev.kind, code=ev.code, text=ev.text,
+                           mods=ev.mods, x=ev.x - self.x,
+                           y=ev.y - self.y - (TITLE_BAR_H if self.chrome else 0),
+                           dx=ev.dx, dy=ev.dy)
+            if self._on_event:
                 self._on_event(ev)
-            except Exception:
-                pass
+            else:
+                self.on_event(ev)
+        except Exception:
+            pass
 
     def close(self) -> None:
         self._closed = True
@@ -617,6 +628,19 @@ class Compositor:
         loop.create_task(self._launch_dock_app(name,
                                                 lambda: info.entry(*args)))
 
+    def open_focused_source(self) -> None:
+        """Open an editable source pane for the focused registered app."""
+        win = self.focused_window
+        if win is None or not win.app_name:
+            log.info("source: focus an application window first")
+            return
+        try:
+            from apps.editor.edwin import open_app_source
+            asyncio.get_event_loop().create_task(
+                open_app_source(win.app_name, target_window=win))
+        except Exception as e:
+            log.warn(f"source: cannot open {win.app_name}: {e}")
+
     def _paint_dock_local(self, back) -> None:
         """Bitmap-font dock onto the in-guest back buffer (chipset path)."""
         if not self._dock_apps:
@@ -797,6 +821,13 @@ class Compositor:
             asyncio.get_event_loop().create_task(self.stop())
             return
 
+        # F2 is the global educational affordance. Ctrl-E stays available for
+        # the editor's standard Emacs "end of line" binding.
+        if (ev.kind == _gui_input.EVENT_KEY_DOWN
+                and ev.code == _gui_input.KEY_F2):
+            self.open_focused_source()
+            return
+
         # Tab / Shift-Tab cycles focus globally
         if ev.kind == _gui_input.EVENT_KEY_DOWN and ev.code == _gui_input.KEY_TAB:
             direction = -1 if (ev.mods & _gui_input.MOD_SHIFT) else 1
@@ -819,6 +850,12 @@ class Compositor:
                     and _cs.workbench is not None
                     and _cs.active_view is not _cs.workbench):
                 cb = getattr(_cs, "on_event", None)
+                if (ev.kind == _gui_input.EVENT_KEY_DOWN
+                        and ev.code == _gui_input.KEY_ESC):
+                    # Escape is owned by the full-screen shell. Individual
+                    # apps cannot accidentally strand the user outside the
+                    # desktop by omitting or replacing their handler.
+                    _cs.request_exit()
                 if cb is not None:
                     cb(ev)
                 return
@@ -962,8 +999,14 @@ class Compositor:
             return
         try:
             from kernel.gui.assets import DESKTOP_BG_PNG
-            from kernel.gui.image import load_bytes as _img_load
-            self._bg_surface = _img_load(DESKTOP_BG_PNG)
+            from kernel.gui.sdl2.surface import SDL_Surface
+            try:
+                self._bg_surface = SDL_Surface.from_image_bytes(DESKTOP_BG_PNG)
+            except Exception:
+                # Older/remote bridge peers remain compatible through the
+                # original guest decode + raw upload path.
+                from kernel.gui.image import load_bytes as _img_load
+                self._bg_surface = _img_load(DESKTOP_BG_PNG)
             log.info(f"compositor: desktop background loaded "
                      f"({self._bg_surface.w}x{self._bg_surface.h})")
         except Exception as e:

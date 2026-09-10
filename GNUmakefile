@@ -346,6 +346,7 @@ test-chipset:
 	python3 tests/chipset_test.py
 	python3 tests/arcade_test.py
 	python3 tests/dock_test.py
+	python3 tests/ui_test.py
 	python3 tests/layout_test.py
 	python3 tests/ci_gate_test.py
 

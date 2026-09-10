@@ -67,20 +67,22 @@ def freeze_dir(src_dir: Path) -> dict[str, tuple[bytes, bool]]:
 
 
 def collect_seed_sources(src_dir: Path) -> dict[str, str]:
-    """Collect source files that should be visible in the boot TmpFS."""
-    if src_dir.name != "examples":
+    """Collect teaching/runtime sources alongside their frozen bytecode."""
+    if src_dir.name not in ("examples", "apps"):
         return {}
 
     sources: dict[str, str] = {}
     for source_file in sorted(src_dir.rglob("*")):
         if not source_file.is_file():
             continue
-        if source_file.name == "__init__.py":
+        if src_dir.name == "examples" and source_file.name == "__init__.py":
             continue
-        if source_file.suffix not in (".py", ".txt"):
+        suffixes = (".py", ".txt") if src_dir.name == "examples" else (".py",)
+        if source_file.suffix not in suffixes:
             continue
         rel = source_file.relative_to(src_dir).as_posix()
-        sources["/examples/" + rel] = source_file.read_text(encoding="utf-8")
+        prefix = "/examples/" if src_dir.name == "examples" else "/src/apps/"
+        sources[prefix + rel] = source_file.read_text(encoding="utf-8")
     return sources
 
 

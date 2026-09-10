@@ -187,8 +187,7 @@ def _send_frame_nowait(frame: bytes) -> bool:
     if _nic is None:
         return False
     if hasattr(_nic, "send_nowait"):
-        _nic.send_nowait(frame)
-        return True
+        return _nic.send_nowait(frame) is not False
     return False
 
 def send_tcp_segment_nowait(seg, src_ip: bytes, dst_ip: bytes) -> bool:

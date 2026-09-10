@@ -80,12 +80,31 @@ def _sample(view, px: int, py: int) -> int:
     return color
 
 
-def raster_view(view, dest: bytearray, dest_w: int, dest_h: int) -> None:
+def raster_view(view, dest: bytearray, dest_w: int, dest_h: int,
+                scale_override: int | None = None) -> None:
     """Composite ``view`` into ``dest`` (BGRX, dest_w*dest_h*4 bytes)."""
     if view is None:
         _fill_dest(dest, 0)
         return
-    scale = max(1, int(view.scale))
+    scale = max(1, int(view.scale if scale_override is None else scale_override))
+    if scale == 1 and dest_w == view.width and dest_h == view.height:
+        try:
+            import _hal
+            native_raster = _hal.chipset_raster32
+        except Exception:
+            native_raster = None
+        if native_raster is not None:
+            diw0 = view.diw_start
+            diw1 = view.diw_stop if view.diw_stop >= 0 else view.height - 1
+            rows = []
+            view.copper.reset_pc()
+            for py in range(view.height):
+                view.copper.apply_line(view, py)
+                rows.append((tuple(view.palette), view.bplcon,
+                             view.key_color, diw0 <= py <= diw1))
+            native_raster(dest, view.pf0, view.pf1, rows, view.sprites,
+                          int(view.mode == MODE_INDEXED))
+            return
     sprites_on = any(s.enabled for s in view.sprites)
     copper_on = bool(view.copper.instructions)
     fast = (

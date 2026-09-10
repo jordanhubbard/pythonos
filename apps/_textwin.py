@@ -21,6 +21,7 @@ from kernel.display.font import GLYPH_W, GLYPH_H
 from kernel.gui import input as _gui_input
 from kernel.gui.compositor import CompositorWindow
 from kernel.gui.sdl2.surface import SDL_FillRect
+from kernel.gui.ui import TextView
 
 
 # Map kernel keycodes to byte sequences linenoise can consume async.
@@ -40,7 +41,7 @@ _KEYCODE_BYTES: dict[int, bytes] = {
 }
 
 
-class TextWin:
+class TextWin(TextView):
     """Text terminal inside a CompositorWindow with a blinking cursor."""
 
     CURSOR_BLINK_HZ = 2
@@ -48,7 +49,10 @@ class TextWin:
     def __init__(self, window: CompositorWindow,
                  fg: int = 0xCCCCCC, bg: int = 0x101010,
                  cursor_color: int = 0xCCCCCC) -> None:
+        super().__init__(0, 0, window.w, window.h,
+                         background=bg, host=window)
         self.win = window
+        window.add(self)
         self.fg = fg
         self.bg = bg
         self.cursor_color = cursor_color

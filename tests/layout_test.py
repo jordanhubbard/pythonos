@@ -112,8 +112,49 @@ def main() -> int:
           "ERROR: cannot freeze" in freezer
           and "raise SystemExit(1) from e" in freezer
           and "WARNING: skipping" not in freezer)
+    check("freezer embeds application source for live teaching panes",
+          'src_dir.name not in ("examples", "apps")' in freezer
+          and '"/src/apps/"' in freezer)
+    compositor = _read("kernel/gui/compositor.py")
+    desktop = _read("kernel/gui/desktop.py")
+    editor = _read("apps/editor/edwin.py")
+    check("focused app source has shortcut and menubar entry",
+          "open_focused_source" in compositor
+          and "KEY_F2" in compositor
+          and "View Source (F2)" in desktop)
+    check("source pane supports save cancel and runtime reload",
+          'MenuItem("Save (Ctrl-S)"' in editor
+          and 'MenuItem("Cancel Changes"' in editor
+          and 'MenuItem("Reload Running App"' in editor
+          and 'compile(runtime_text, overlay, "exec"' in editor)
+    ui = _read("kernel/gui/ui.py")
+    check("desktop exposes a Python view hierarchy over SDL surfaces",
+          "class UIElement" in ui and "class View(UIElement)" in ui
+          and "class Container(View)" in ui and "class Panel(Container)" in ui
+          and "class Button(Label)" in ui and "class TextView(View)" in ui
+          and "class ListView(TextView)" in ui)
+    check("editor terminal and files share high-level view classes",
+          "class EditorView(TextView)" in editor
+          and "class TextWin(TextView)" in _read("apps/_textwin.py")
+          and "class _Browser(ListView)" in _read("apps/files/browser.py"))
+    run_gui = _read("tools/run_gui.py")
+    check("interactive x86 GUI binds HDA output to the host audiodev",
+          '"-audiodev", f"{audiodev},id=a"' in run_gui
+          and '"hda-output,audiodev=a"' in run_gui)
     check("C compiles emit -MMD dependencies",
           "DEPFLAGS = -MMD" in makefile)
+    for driver_path in ("kernel/drivers/net/virtio_net.py",
+                        "kernel/drivers/net/virtio_net_mmio.py"):
+        driver = _read(driver_path)
+        send_body = driver.split("def send_nowait", 1)[1].split("async def send", 1)[0]
+        check(f"{driver_path} reuses bounded TX DMA buffers",
+              "_tx_free" in driver and "_reclaim_tx" in send_body
+              and "dma_alloc" not in send_body)
+    pci_net = _read("kernel/drivers/net/virtio_net.py")
+    avail_body = pci_net.split("def avail_push", 1)[1].split(
+        "def used_has_entries", 1)[0]
+    check("PCI virtqueue writes packed avail fields without neighbor corruption",
+          "mmio_write8" in avail_body and "mmio_write32" not in avail_body)
 
     gitignore = _read(".gitignore")
     for name in ("build/", "build-arm64/", "pythonos.iso",

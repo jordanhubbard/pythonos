@@ -123,7 +123,15 @@ async def main(*args, **kwargs) -> None:
         bass.stop()
         zap.stop()
 
-    await run_view(v, tick, on_space=fire, on_exit=on_exit)
+    def demo(frame):
+        keys = {_gui_input.KEY_RIGHT if (frame // 90) % 2 == 0
+                else _gui_input.KEY_LEFT}
+        if frame % 10 == 0:
+            keys.add(_gui_input.KEY_SPACE)
+        return keys
+
+    await run_view(v, tick, on_space=fire, on_exit=on_exit, demo=demo,
+                   controls="ARROWS MOVE  SPACE FIRE")
 
 
 from apps._icons import raiders_icon

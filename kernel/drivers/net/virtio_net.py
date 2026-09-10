@@ -25,7 +25,7 @@ import struct
 from dataclasses import dataclass, field
 
 from kernel.bus.pci import PCIDevice, PCIDriver, config_read32
-from kernel.hal.io import mmio_read32, mmio_write32, mmio_read8
+from kernel.hal.io import mmio_read32, mmio_write32, mmio_read8, mmio_write8
 import kernel.log as log
 
 # ── VirtIO constants ──────────────────────────────────────────────────────────
@@ -52,6 +52,7 @@ VRING_DESC_F_WRITE    = 2   # device writes into this buffer
 
 PAGE_SIZE  = 4096
 QUEUE_SIZE = 256   # must be power of 2; virtio legacy limit = 256
+NET_BUFFER_SIZE = 1526
 
 
 # ── VirtIO PCI register accessors ─────────────────────────────────────────────
@@ -154,16 +155,18 @@ class Virtqueue:
     def avail_push(self, desc_idx: int) -> None:
         """Add descriptor to the available ring and advance the index."""
         ring_entry_addr = self._avail_phys + 4 + (self._avail_idx % self.n) * 2
-        # Write entry as 16-bit
-        from kernel.hal.io import outw
-        # Can't outw to MMIO — write via mmio_write32 (lower 16 bits)
-        mmio_write32(ring_entry_addr, desc_idx & 0xFFFF)
-        self._avail_idx += 1
-        # Write updated idx field (offset 2 in avail ring)
-        mmio_write32(self._avail_phys + 2, self._avail_idx & 0xFFFF)
+        # These are packed 16-bit fields. A 32-bit store corrupts the adjacent
+        # ring slot (and, for idx, ring[0]); that only became visible once TX
+        # descriptors started being reused rather than leaked.
+        mmio_write8(ring_entry_addr, desc_idx & 0xFF)
+        mmio_write8(ring_entry_addr + 1, (desc_idx >> 8) & 0xFF)
+        self._avail_idx = (self._avail_idx + 1) & 0xFFFF
+        mmio_write8(self._avail_phys + 2, self._avail_idx & 0xFF)
+        mmio_write8(self._avail_phys + 3, (self._avail_idx >> 8) & 0xFF)
 
     def used_has_entries(self) -> bool:
-        used_idx = mmio_read32(self._used_phys + 2) & 0xFFFF
+        used_idx = (mmio_read8(self._used_phys + 2)
+                    | (mmio_read8(self._used_phys + 3) << 8))
         return used_idx != self._last_used
 
     def used_pop(self) -> tuple[int, int]:
@@ -171,7 +174,7 @@ class Virtqueue:
         ring_base = self._used_phys + 4 + (self._last_used % self.n) * 8
         desc_idx  = mmio_read32(ring_base)
         length    = mmio_read32(ring_base + 4)
-        self._last_used += 1
+        self._last_used = (self._last_used + 1) & 0xFFFF
         return desc_idx, length
 
     @property
@@ -199,6 +202,8 @@ class VirtIONetDriver:
         self._txq: Virtqueue | None = None
         self._regs: VirtIORegs | None = None
         self._mac: bytes = bytes(6)
+        self._tx_bufs: dict[int, int] = {}
+        self._tx_free: list[int] = []
 
     def probe(self, dev: PCIDevice) -> bool:
         # BAR0 is an I/O port region
@@ -222,6 +227,7 @@ class VirtIONetDriver:
         # Set up RX queue (index 0) and TX queue (index 1)
         self._rxq = self._setup_queue(regs, 0)
         self._txq = self._setup_queue(regs, 1)
+        self._fill_tx_ring()
 
         regs.set_status(
             VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER |
@@ -251,14 +257,14 @@ class VirtIONetDriver:
         import _hal
         first_phys = None
         for _ in range(self._rxq.n // 2):
-            phys = _hal.dma_alloc(1526)   # max Ethernet frame + virtio header
+            phys = _hal.dma_alloc(NET_BUFFER_SIZE)
             if first_phys is None:
                 first_phys = phys
             idx = self._rxq.alloc_desc()
-            self._rxq._desc_bufs[idx] = (phys, 1526)  # record for later read-back
+            self._rxq._desc_bufs[idx] = (phys, NET_BUFFER_SIZE)
             desc = VirtqDesc(
                 addr=phys,
-                length=1526,
+                length=NET_BUFFER_SIZE,
                 flags=VRING_DESC_F_WRITE,
                 next=0,
             )
@@ -269,7 +275,28 @@ class VirtIONetDriver:
         if self._regs:
             self._regs.set_queue_notify(0)
 
-    def send_nowait(self, frame: bytes) -> None:
+    def _fill_tx_ring(self) -> None:
+        """Allocate one reusable buffer per TX descriptor.
+
+        ``dma_alloc`` is intentionally permanent, so allocating for every
+        packet eventually exhausted memory during repeated REPL sessions.
+        """
+        if not self._txq:
+            return
+        import _hal
+        for idx in range(self._txq.n):
+            self._tx_bufs[idx] = _hal.dma_alloc(NET_BUFFER_SIZE)
+        self._tx_free = list(reversed(range(self._txq.n)))
+
+    def _reclaim_tx(self) -> None:
+        if not self._txq:
+            return
+        while self._txq.used_has_entries():
+            idx, _length = self._txq.used_pop()
+            if idx in self._tx_bufs and idx not in self._tx_free:
+                self._tx_free.append(idx)
+
+    def send_nowait(self, frame: bytes) -> bool:
         """Transmit an Ethernet frame without yielding.
 
         The async wrapper below exists for the network stack's normal
@@ -278,10 +305,15 @@ class VirtIONetDriver:
         """
         if not self._txq or not self._regs:
             log.info("tx: no txq/regs — drop")
-            return
-        import _hal
+            return False
         payload = make_net_header() + frame
-        phys = _hal.dma_alloc(len(payload))
+        if len(payload) > NET_BUFFER_SIZE:
+            return False
+        self._reclaim_tx()
+        if not self._tx_free:
+            return False
+        idx = self._tx_free.pop()
+        phys = self._tx_bufs[idx]
         # Copy payload bytes into DMA buffer via MMIO writes
         for i in range(0, len(payload) - 3, 4):
             w = payload[i] | (payload[i+1] << 8) | (payload[i+2] << 16) | (payload[i+3] << 24)
@@ -294,15 +326,16 @@ class VirtIONetDriver:
                 tail |= payload[len(payload) - rem + j] << (j * 8)
             mmio_write32(phys + len(payload) - rem, tail)
 
-        idx = self._txq.alloc_desc()
         desc = VirtqDesc(addr=phys, length=len(payload), flags=0, next=0)
         self._txq.write_desc(idx, desc)
         self._txq.avail_push(idx)
         self._regs.set_queue_notify(1)   # kick TX queue
+        return True
 
     async def send(self, frame: bytes) -> None:
         """Transmit an Ethernet frame."""
-        self.send_nowait(frame)
+        while not self.send_nowait(frame):
+            await asyncio.sleep(0)
 
     def recv_nowait(self) -> bytes | None:
         """Return one Ethernet frame if RX has completed, else ``None``."""

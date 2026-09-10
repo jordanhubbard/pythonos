@@ -2,7 +2,7 @@
 
 The GUI is an opt-in layer over the bare-metal kernel — the default boot path is unchanged (`make run` / `make test` still go to a serial-only `>>>` prompt with no SDL window). When you opt in via `make run-gui`, the host bridge opens the display and the guest's stacking compositor auto-launches with mouse, keyboard, audio, and a full app dock.
 
-Everything below is implemented in Python on top of the same `_hal` extension and asyncio scheduler the rest of the kernel uses; there is no libSDL2 inside the guest. The `sdl2` Python package mimics PySDL2's surface so unmodified PySDL2 sample code can be copied in unchanged.
+Everything below is implemented in Python on top of the same `_hal` extension and asyncio scheduler the rest of the kernel uses; there is no libSDL2 inside the guest. Performance-critical chipset raster and frame encoding loops use `_hal`. The `sdl2` Python package mimics PySDL2's surface so unmodified PySDL2 sample code can be copied in unchanged.
 
 ## Launching the GUI
 
@@ -28,9 +28,42 @@ the older direct-framebuffer launch path.
 Inside the compositor:
 
 - `Tab` / `Shift-Tab` cycle focus between windows.
+- `F2` opens the focused application's source in a live editor pane. The
+  same action is available as **PythonOS → View Source**.
 - Click on a window's title bar to drag it; click in the body to focus + raise it.
 - Two-finger click, right-click, or control-click on empty wallpaper opens a **Demos** / **Games** launch menu. The same gesture on a dock icon offers **Keep in Dock** / **Remove from Dock**.
-- `ESC` typically closes the focused app and returns to the REPL.
+- `ESC` always exits a full-screen chipset app and returns to Workbench.
+
+### Live source panes
+
+PythonOS can compile and execute new code at runtime; it is not limited to the
+bytecode frozen into the boot image. Focus any application window and press
+`F2` (or choose **PythonOS → View Source**) to open the exact Python source
+that produced it. Its shared **File** and **Edit** menus provide **Save**,
+**Cancel Changes**, and **Close**; **Run → Reload Running App** applies the
+edited code. `Ctrl-S` is the save shortcut.
+
+Built-in source text travels with the frozen module and opens as an editable
+copy. Save writes its override to `/apps/<app-name>.py`; Reload compiles the
+current buffer, atomically replaces the module, closes the old window, and
+starts a fresh instance. A syntax/runtime error leaves the old module registered
+and reports the error in the pane instead. On x86's current tmpfs fallback these
+overrides last for the boot session; where `/apps` is backed by the ext2 disk,
+they persist across boots.
+
+The source pane and the standalone Editor (including files opened from Files)
+host the same `EditorView`, menu builder, persistence code, arrow navigation,
+and small Emacs key set: `C-a/e` line start/end, `C-b/f` left/right, `C-p/n`
+up/down, `C-d` delete, `C-k` kill to end of line, `C-s` save, and `C-q` close.
+`F2` was deliberately chosen for View Source so `C-e` keeps its conventional
+editor meaning.
+
+For teaching applications, `kernel.gui.ui` provides the hierarchy
+`UIElement → View → Container/Panel` and `View → Label → Button`, plus
+`TextView` and `ListView`. `CompositorWindow` is a `Container`; the editor,
+terminal, and file browser use the specialized views. A lesson can therefore
+start with ordinary Python classes and only drop to `kernel.gui.sdl2` for
+pixel-level work.
 
 ## Architecture
 
@@ -55,6 +88,22 @@ Inside the compositor:
         ▲               ▲                       ▲                          │
         └─── QEMU ──────┴───────────────────────┴── host SDL2 ─────────────┘
 ```
+
+The guest and SDL desktop remain separate-machine capable. Their
+length-prefixed protocol runs over TCP, negotiates optional capabilities, and
+uses adjustable 4 MiB socket buffers by default (`PYTHONOS_BRIDGE_SOCKET_BUFFER`
+overrides the byte count). Calls that do not need individual results are
+batched. Chipset games send native-resolution RLE frames as ordered one-way
+notifications; the next input poll acts as a barrier and bounds the queue, so
+a slow receiver applies backpressure instead of accumulating stale frames.
+Encoded wallpaper is decoded by the desktop rather than expanded and uploaded
+inside the guest. Older bridge implementations fall back to the original raw
+frame RPCs.
+
+`python3 tools/pythonos_debug.py perf` reports guest transport time and host
+service time separately. Slow samples stay in an in-memory ring; warning output
+is rate-limited to one line per second so monitoring does not become part of the
+rendering bottleneck.
 
 ## Display drivers
 
@@ -184,8 +233,11 @@ chipset.load_view(v)
 Demos: `desktop('sprites')` (sprites + copper + Paula; arrows move,
 space fires), `defender` (scrolling hills + landers), `pacmaze`
 (pellets and ghosts), `raiders` (Galaxian-style formation), and
-`desktop('toaster')` (dual playfields + wipe). ESC
-returns to Workbench. While the chipset clock runs, the compositor
+`desktop('toaster')` (dual playfields + wipe). Every game shows its active
+controls along the bottom: `D` toggles continuous self-playing demo mode and
+`ESC` (or `Q`) returns to Workbench. Demo mode drives the same input, gameplay,
+rendering, and Paula audio paths as a player, making it suitable for sustained
+performance tests. While the chipset clock runs, the compositor
 paints Workbench playfields (windows, dock, menubar) and does not call
 `fb.present` — the raster is the only present path. Host tests:
 `make test-chipset` (no QEMU).

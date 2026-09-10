@@ -129,6 +129,23 @@ class SDL_Surface:
         s._borrowed   = True
         return s
 
+    @classmethod
+    def from_image_bytes(cls, data: bytes) -> "SDL_Surface":
+        """Decode an encoded PNG/JPEG on the desktop host.
+
+        Keeping the asset encoded across the bridge avoids both a slow guest
+        decoder and a multi-megabyte raw pixel upload. The returned surface is
+        host-backed and otherwise behaves like one created normally.
+        """
+        if not _bridge_open():
+            raise RuntimeError("desktop bridge is not open")
+        from kernel.bridge import bridge as _br
+        result = _br.call("surface.load_image", {}, payload=bytes(data))
+        surface = cls.from_handle(int(result["handle"]),
+                                  int(result["w"]), int(result["h"]))
+        surface._borrowed = False
+        return surface
+
     @property
     def contents(self):
         return self

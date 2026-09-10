@@ -14,16 +14,23 @@ A File menu in the menu bar provides clickable Open / Save / Save As /
 Close — Save / Save As prompt for the path in a footer minibuffer when
 none is set on the current buffer. ESC cancels a prompt; Enter accepts.
 
+When opened as an application's source pane, the same File and Edit menus are
+used and a Run menu adds Reload Running App. Reload compiles the current buffer
+and starts a fresh instance, so experiments do not require rebooting.
+
 The buffer is a list of strings (one per line) — fine for the small
 files this kernel is realistically going to edit.
 """
 
 import asyncio
+import sys
+import types
 
 from kernel.fs.vfs import vfs, OpenFlags
 from kernel.gui.compositor import compositor, CompositorWindow
 from kernel.gui import input as _gui_input
 from kernel.gui.sdl2.surface import SDL_FillRect
+from kernel.gui.ui import TextView
 from kernel.display.font import GLYPH_W, GLYPH_H
 from apps import registry
 
@@ -37,9 +44,12 @@ _HEADER_H    = GLYPH_H + 4
 _FOOTER_H    = GLYPH_H + 4
 
 
-class _Editor:
-    def __init__(self, win: CompositorWindow, path: str | None) -> None:
+class EditorView(TextView):
+    def __init__(self, win: CompositorWindow, path: str | None,
+                 initial_text: str | None = None, reload_action=None) -> None:
+        super().__init__(0, 0, win.w, win.h, background=_BG, host=win)
         self.win = win
+        win.add(self)
         self.path = path
         self.lines: list[str] = [""]
         self.cy = 0      # buffer row
@@ -54,6 +64,14 @@ class _Editor:
         # = the user is typing a path; Enter accepts, ESC cancels.
         self.prompt_mode: str | None = None
         self.prompt_buf: str = ""
+        self.initial_text = initial_text
+        self.saved_text = initial_text if initial_text is not None else ""
+        self.reload_action = reload_action
+
+    def invalidate(self) -> None:
+        # ``dirty`` on this class means unsaved text; repaint state belongs to
+        # the containing compositor window.
+        self.win.dirty = True
 
     # ── Persistence ──────────────────────────────────────────────────────
 
@@ -67,9 +85,15 @@ class _Editor:
             self.lines = text.split("\n") if text else [""]
             if not self.lines:
                 self.lines = [""]
+            self.saved_text = text
             self.message = f"loaded {self.path} ({len(text)} bytes)"
         except FileNotFoundError:
-            self.message = f"(new file: {self.path})"
+            if self.initial_text is not None:
+                self.lines = self.initial_text.split("\n") or [""]
+                self.saved_text = self.initial_text
+                self.message = f"built-in source; Save writes {self.path}"
+            else:
+                self.message = f"(new file: {self.path})"
         except Exception as e:
             self.message = f"load failed: {e}"
 
@@ -82,10 +106,12 @@ class _Editor:
             text = "\n".join(self.lines).encode("utf-8")
             await _write_all(self.path, text)
             self.dirty = False
+            self.saved_text = text.decode("utf-8")
             self.message = f"saved {self.path} ({len(text)} bytes)"
             self._refresh_title()
         except Exception as e:
             self.message = f"save failed: {e}"
+        self.redraw()
 
     # ── Menu / prompt actions ───────────────────────────────────────────
 
@@ -107,6 +133,32 @@ class _Editor:
         """Schedule a save on the running event loop. If no path is set,
         save() detects that and switches to prompt_save_as()."""
         asyncio.get_event_loop().create_task(self.save())
+
+    def cancel_edits(self) -> None:
+        """Restore the last loaded/saved version without closing the pane."""
+        self.lines = self.saved_text.split("\n") or [""]
+        self.cy = self.cx = self.scroll = 0
+        self.dirty = False
+        self.message = "changes cancelled"
+        self.redraw()
+
+    async def reload(self) -> None:
+        if self.reload_action is None:
+            self.message = "reload is unavailable for this buffer"
+            return
+        try:
+            text = "\n".join(self.lines)
+            message = await self.reload_action(text)
+            self.saved_text = text
+            self.dirty = False
+            self.message = message or "reloaded"
+            self._refresh_title()
+        except Exception as e:
+            self.message = f"reload failed: {e}"
+        self.redraw()
+
+    def start_reload(self) -> None:
+        asyncio.get_event_loop().create_task(self.reload())
 
     def _refresh_title(self) -> None:
         """Update the window's title bar with the current path."""
@@ -264,18 +316,44 @@ class _Editor:
             self.message = "Quit"
             return True
 
-        if ctrl and ev.text:
+        if ctrl:
             byte = ord(ev.text[0]) if ev.text else 0
-            if byte == 24:   # C-x prefix
+            letter = chr(c).lower() if ord("A") <= c <= ord("z") else ""
+            if byte == 24 or letter == "x":   # C-x prefix
                 self.ctrl_x_pending = True
                 return True
-            if byte == 19:   # C-s
+            if byte == 19 or letter == "s":   # C-s
                 asyncio.get_event_loop().create_task(self.save())
                 return True
-            if byte == 17:   # C-q
+            if byte == 17 or letter == "q":   # C-q
                 return False
-            if byte == 7:    # C-g
+            if byte == 7 or letter == "g":    # C-g
                 self.message = "Cancel"
+                return True
+            if byte == 1 or letter == "a":    # C-a: beginning of line
+                self.cx = 0
+                return True
+            if byte == 5 or letter == "e":    # C-e: end of line
+                self.cx = len(self.lines[self.cy])
+                return True
+            if byte == 2 or letter == "b":    # C-b: backward char
+                c = _gui_input.KEY_LEFT
+            elif byte == 6 or letter == "f":  # C-f: forward char
+                c = _gui_input.KEY_RIGHT
+            elif byte == 16 or letter == "p": # C-p: previous line
+                c = _gui_input.KEY_UP
+            elif byte == 14 or letter == "n": # C-n: next line
+                c = _gui_input.KEY_DOWN
+            elif byte == 4 or letter == "d":  # C-d: delete char
+                self._delete()
+                return True
+            elif byte == 11 or letter == "k": # C-k: kill to line end
+                line = self.lines[self.cy]
+                if self.cx < len(line):
+                    self.lines[self.cy] = line[:self.cx]
+                    self.dirty = True
+                elif self.cy + 1 < len(self.lines):
+                    self._delete()
                 return True
 
         if c == _gui_input.KEY_LEFT:
@@ -355,26 +433,44 @@ async def _write_all(path: str, data: bytes) -> None:
         vfs.close(fd)
 
 
+def _editor_menus(ed: EditorView, win: CompositorWindow, *, source=False):
+    """One menu construction path for standalone and source-pane hosts."""
+    from kernel.gui.menubar import Menu, MenuItem
+    file_items = []
+    if not source:
+        file_items.append(MenuItem("Open…", action=ed.prompt_open))
+    file_items.append(MenuItem("Save (Ctrl-S)", action=ed.start_save))
+    if not source:
+        file_items.append(MenuItem("Save As…", action=ed.prompt_save_as))
+    file_items.extend([MenuItem.sep(), MenuItem("Close (Ctrl-Q)",
+                                                action=win.close)])
+    menus = [
+        Menu("File", file_items),
+        Menu("Edit", [
+            MenuItem("Cancel Changes", action=ed.cancel_edits),
+            MenuItem.sep(),
+            MenuItem("Arrows / C-b C-f C-p C-n", enabled=False),
+            MenuItem("C-a start / C-e end / C-k kill", enabled=False),
+        ]),
+    ]
+    if source:
+        menus.append(Menu("Run", [
+            MenuItem("Reload Running App", action=ed.start_reload),
+        ]))
+    return menus
+
+
 async def main(argv=None, *args, **kwargs) -> None:
     argv = list(argv) if argv else []
     path = argv[0] if argv else None
     title = "Editor: " + (path or "(no file)")
     win = CompositorWindow(title, x=120, y=120, w=720, h=480)
-    ed = _Editor(win, path)
+    ed = EditorView(win, path)
 
     # File menu actions are closures over this editor instance, so each
     # editor window gets its own bound File menu (Save acts on this open
     # file; Open replaces this buffer; Close closes this window).
-    from kernel.gui.menubar import Menu, MenuItem
-    win.menus = [
-        Menu("File", [
-            MenuItem("Open…",     action=ed.prompt_open),
-            MenuItem("Save",      action=ed.start_save),
-            MenuItem("Save As…",  action=ed.prompt_save_as),
-            MenuItem.sep(),
-            MenuItem("Close",     action=win.close),
-        ]),
-    ]
+    win.menus = _editor_menus(ed, win)
 
     compositor.add_window(win)
     await ed.load()
@@ -390,6 +486,115 @@ async def main(argv=None, *args, **kwargs) -> None:
 
     win.set_event_handler(on_event)
 
+    while running and not win._closed:
+        await asyncio.sleep(0.03)
+    win.close()
+
+
+def _source_key(module_name: str) -> str:
+    return "/src/" + module_name.replace(".", "/") + ".py"
+
+
+async def open_app_source(app_name: str, target_window=None) -> None:
+    """Open, edit, save and hot-reload a registered application's source.
+
+    Built-in modules are frozen bytecode, but their original text is embedded
+    in ``kernel.frozen_sources``. Saving creates a writable overlay in /apps;
+    Reload compiles the editor buffer, swaps the module atomically, and starts
+    a fresh instance of the application.
+    """
+    info = registry.get(app_name)
+    if info is None:
+        return
+    module_name = getattr(info.entry, "__module__", "")
+    try:
+        from kernel.frozen_sources import SOURCES
+        source = SOURCES.get(_source_key(module_name))
+        if source is None:
+            source = SOURCES.get("/src/" + module_name.replace(".", "/")
+                                 + "/__init__.py")
+    except Exception:
+        source = None
+    module = sys.modules.get(module_name)
+    module_path = getattr(module, "__file__", "") if module is not None else ""
+    if source is None and module_path.startswith("/"):
+        try:
+            source = (await _read_all(module_path)).decode("utf-8")
+        except Exception:
+            source = None
+    if source is None:
+        log_path = _source_key(module_name)
+        import kernel.log as _log
+        _log.warn(f"source: text unavailable for {log_path}")
+        return
+
+    overlay = "/apps/" + app_name.replace("/", "_") + ".py"
+    desk_w, desk_h = compositor._desktop_size()
+    w, h = min(760, desk_w - 40), min(560, desk_h - 90)
+    x = max(20, (desk_w - w) // 2)
+    y = max(30, (desk_h - h) // 2)
+    win = CompositorWindow("Source: " + app_name, x=x, y=y, w=w, h=h)
+    # The source pane belongs to the app it explains, but its own bound menus
+    # below take precedence over that app's static menu declarations.
+    win.app_name = app_name
+
+    async def reload_action(text: str) -> str:
+        old_module = sys.modules.get(module_name)
+        new_module = types.ModuleType(module_name)
+        new_module.__file__ = overlay
+        new_module.__package__ = module_name.rpartition(".")[0]
+        new_module.__builtins__ = __builtins__
+        sys.modules[module_name] = new_module
+        try:
+            runtime_text = text
+            # Match the shell/VFS importer workaround needed by the frozen
+            # 3.14 compiler while preserving the human-readable saved text.
+            for kw in ("None", "True", "False"):
+                runtime_text = runtime_text.replace("is not " + kw, "!= " + kw)
+                runtime_text = runtime_text.replace("is " + kw, "== " + kw)
+            code = compile(runtime_text, overlay, "exec", flags=0x2000)
+            result = eval(code, new_module.__dict__)
+            if asyncio.iscoroutine(result):
+                await result
+        except Exception:
+            if old_module is not None:
+                sys.modules[module_name] = old_module
+            else:
+                sys.modules.pop(module_name, None)
+            registry.register(
+                name=info.name, description=info.description,
+                entry=info.entry, icon_factory=info.icon_factory,
+                category=info.category, menus=info.menus)
+            raise
+        # Educational/user modules need not repeat the registry boilerplate:
+        # a newly-defined main() is enough to become the next launch entry.
+        if registry.get(app_name) is info and hasattr(new_module, "main"):
+            registry.register(
+                name=info.name, description=info.description,
+                entry=new_module.main, icon_factory=info.icon_factory,
+                category=info.category, menus=info.menus)
+        if target_window is not None and not target_window._closed:
+            target_window.close()
+            compositor.remove_window(target_window)
+        compositor.launch_app(app_name)
+        return "reloaded; a fresh app instance is starting"
+
+    ed = EditorView(win, overlay, initial_text=source,
+                    reload_action=reload_action)
+    win.menus = _editor_menus(ed, win, source=True)
+    compositor.add_window(win)
+    await ed.load()
+    ed.redraw()
+
+    running = True
+
+    def on_event(ev):
+        nonlocal running
+        if not ed.on_event(ev):
+            running = False
+        ed.redraw()
+
+    win.set_event_handler(on_event)
     while running and not win._closed:
         await asyncio.sleep(0.03)
     win.close()
