@@ -1,4 +1,9 @@
-"""Pure-Python prime number example."""
+"""Path: /examples/start_here/primes.py
+
+Pure-Python prime-number lesson with input validation, a small trial-division
+predicate, and a main loop. It is intentionally independent of kernel APIs so
+it is a comfortable first file to edit, save, and rerun.
+"""
 
 
 def _line(write, text=""):

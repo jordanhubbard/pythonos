@@ -15,9 +15,8 @@ Spec reference: virtio v1.2 §5.14 (Sound Device).
 Limitations:
     * No event-queue handler (we don't react to async device events)
     * No RX (input) path
-    * Buffer is single-shot per write_pcm call — fine for the corpus
-      audio_tone demo and Mix_PlayChannel; long playback would chain
-      multiple TX descriptors (a future improvement).
+    * One fixed 48 kHz stereo stream; a five-period DMA pool supports
+      continuous playback without allocating in the hot path.
 """
 
 import _hal
@@ -40,6 +39,8 @@ VRING_DESC_F_WRITE = 2
 
 PAGE_SIZE  = 4096
 QUEUE_SIZE = 16
+TX_PERIOD_BYTES = 48000                # 250 ms of 48 kHz stereo int16
+TX_PERIODS = QUEUE_SIZE // 3           # three descriptors per transfer
 
 # Control / event command codes
 VIRTIO_SND_R_PCM_INFO        = 0x0100
@@ -146,12 +147,19 @@ class VirtioMmioSound:
         # Reusable header / status buffers for control commands
         self._ctrl_req  = 0
         self._ctrl_resp = 0
-        # Reusable TX header/status buffers
-        self._tx_hdr    = 0
-        self._tx_status = 0
-        # Single output buffer (allocated lazily per call)
-        self._tx_buf    = 0
+        # A bounded pool prevents a continuous stream from consuming fresh
+        # DMA memory forever. Longer periods tolerate normal-GIL service jitter
+        # caused by synchronous remote-display transactions.
+        self._tx_headers: list[int] = []
+        self._tx_statuses: list[int] = []
+        self._tx_buffers: list[int] = []
+        self._tx_free: list[int] = []
+        self._tx_inflight: dict[int, int] = {}
         self._bytes_consumed = 0
+        self._tx_submitted = 0
+        self._tx_reclaimed = 0
+        self._tx_backpressure = 0
+        self._tx_high_water = 0
 
     # ── Probe + queue setup ─────────────────────────────────────────────
 
@@ -185,8 +193,11 @@ class VirtioMmioSound:
         # Pre-allocate small reusable buffers.
         self._ctrl_req  = _hal.dma_alloc(64)
         self._ctrl_resp = _hal.dma_alloc(64)
-        self._tx_hdr    = _hal.dma_alloc(4)    # virtio_snd_pcm_xfer = u32 stream_id
-        self._tx_status = _hal.dma_alloc(8)    # virtio_snd_pcm_status = 2x u32
+        self._tx_headers = [_hal.dma_alloc(4) for _ in range(TX_PERIODS)]
+        self._tx_statuses = [_hal.dma_alloc(8) for _ in range(TX_PERIODS)]
+        self._tx_buffers = [
+            _hal.dma_alloc(TX_PERIOD_BYTES) for _ in range(TX_PERIODS)]
+        self._tx_free = list(range(TX_PERIODS))
 
         _w32(self._base, 0x070,
              STATUS_ACK | STATUS_DRIVER | STATUS_FEATURES | STATUS_DRIVER_OK)
@@ -239,8 +250,10 @@ class VirtioMmioSound:
         # struct virtio_snd_pcm_hdr { u32 code; u32 stream_id; }
         # u32 buffer_bytes; u32 period_bytes; u32 features;
         # u8  channels; u8  format; u8  rate; u8  padding;
-        buf_bytes    = RATE * CHANNELS * (BIT_DEPTH // 8) // 4   # ~250 ms
-        period_bytes = buf_bytes // 4
+        # Advertise the same capacity and period size that write_pcm actually
+        # submits. A mismatch here makes QEMU consume with the wrong cadence.
+        buf_bytes = TX_PERIOD_BYTES * TX_PERIODS
+        period_bytes = TX_PERIOD_BYTES
         for off in range(28):
             _hal.mmio_write8(self._ctrl_req + off, 0)
         _put_le32(self._ctrl_req,  0, VIRTIO_SND_R_PCM_SET_PARAMS)
@@ -281,31 +294,73 @@ class VirtioMmioSound:
         on backend not-ready)."""
         if not self._txq:
             return 0
-        n = len(pcm)
+        # Reclaim exactly the descriptor heads returned through the used ring;
+        # this remains correct even if a transport completes out of order.
+        txq = self._txq
+        used = txq.used_idx()
+        while txq.last_used != used:
+            elem = txq.used_phys + 4 + (txq.last_used % QUEUE_SIZE) * 8
+            head = _hal.mmio_read32(elem)
+            slot = self._tx_inflight.pop(head, None)
+            if slot is not None:
+                self._tx_free.append(slot)
+                self._tx_reclaimed += 1
+            txq.last_used = (txq.last_used + 1) & 0xFFFF
+
+        n = min(len(pcm), TX_PERIOD_BYTES)
         if n == 0:
             return 0
+        if not self._tx_free:
+            self._tx_backpressure += 1
+            return 0
 
-        # Allocate a fresh buffer for these samples (single-shot v0).
-        self._tx_buf = _hal.dma_alloc(n)
+        slot = self._tx_free.pop()
+        tx_buf = self._tx_buffers[slot]
         for i, b in enumerate(pcm):
-            _hal.mmio_write8(self._tx_buf + i, b)
+            if i >= n:
+                break
+            _hal.mmio_write8(tx_buf + i, b)
 
         # Header: virtio_snd_pcm_xfer { u32 stream_id; }
-        _put_le32(self._tx_hdr, 0, 0)
+        tx_hdr = self._tx_headers[slot]
+        tx_status = self._tx_statuses[slot]
+        _put_le32(tx_hdr, 0, 0)
 
-        txq = self._txq
-        d0 = txq.next_desc; txq.next_desc = (txq.next_desc + 1) % QUEUE_SIZE
-        d1 = txq.next_desc; txq.next_desc = (txq.next_desc + 1) % QUEUE_SIZE
-        d2 = txq.next_desc; txq.next_desc = (txq.next_desc + 1) % QUEUE_SIZE
+        # Each pool slot owns a permanent three-descriptor chain.
+        d0, d1, d2 = slot * 3, slot * 3 + 1, slot * 3 + 2
 
-        txq.write_desc(d0, self._tx_hdr,    4, VRING_DESC_F_NEXT, d1)
-        txq.write_desc(d1, self._tx_buf,    n, VRING_DESC_F_NEXT, d2)
-        txq.write_desc(d2, self._tx_status, 8, VRING_DESC_F_WRITE, 0)
+        txq.write_desc(d0, tx_hdr,          4, VRING_DESC_F_NEXT, d1)
+        txq.write_desc(d1, tx_buf,          n, VRING_DESC_F_NEXT, d2)
+        txq.write_desc(d2, tx_status,        8, VRING_DESC_F_WRITE, 0)
+        self._tx_inflight[d0] = slot
+        self._tx_submitted += 1
+        self._tx_high_water = max(self._tx_high_water,
+                                  len(self._tx_inflight))
         txq.avail_push(d0)
         _w32(self._base, 0x050, TXQ)
 
         self._bytes_consumed += n
         return n
+
+    def audio_metrics(self, reset: bool = False) -> dict:
+        """Return bounded-queue diagnostics used by Top and the debugger."""
+        values = {
+            "period_bytes": TX_PERIOD_BYTES,
+            "periods": TX_PERIODS,
+            "submitted": self._tx_submitted,
+            "reclaimed": self._tx_reclaimed,
+            "backpressure": self._tx_backpressure,
+            "inflight": len(self._tx_inflight),
+            "free": len(self._tx_free),
+            "high_water": self._tx_high_water,
+            "bytes": self._bytes_consumed,
+        }
+        if reset:
+            self._tx_submitted = 0
+            self._tx_reclaimed = 0
+            self._tx_backpressure = 0
+            self._tx_high_water = len(self._tx_inflight)
+        return values
 
 
 # ── Public discovery / install ─────────────────────────────────────────

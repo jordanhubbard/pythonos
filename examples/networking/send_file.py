@@ -1,4 +1,9 @@
-"""Connect to a TCP server and send a TmpFS file."""
+"""Path: /examples/networking/send_file.py
+
+Read a virtual-filesystem file and send it to a TCP peer in bounded chunks.
+The helpers normalize paths and output; ``main`` validates arguments, opens
+the file and connection, transfers until EOF, then closes both resources.
+"""
 
 from kernel.fs.vfs import vfs
 from kernel.net.tcp import tcp

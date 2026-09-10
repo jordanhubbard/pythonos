@@ -205,6 +205,9 @@ class FileChooserView(ListView):
         return self.scroll_top + (y - _HEADER_H) // GLYPH_H
 
     def on_event(self, ev) -> bool:
+        if super().on_event(ev):
+            self.redraw()
+            return True
         if ev.kind == _gui_input.HOST_FILE_DROP and self.allow_transfer:
             self._schedule(self._receive_drop(ev))
             return True

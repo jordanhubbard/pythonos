@@ -1,6 +1,7 @@
-"""sdl_text — bitmap-font rendering example through the TTF-shaped API.
+"""Path: /examples/graphics/sdl/sdl_text.py
 
-Verifies the sdl2.sdlttf surface: open a font, render "PythonOS" to a
+Text-rendering example through the SDL_ttf-shaped API: open a font, render
+"PythonOS" to a
 surface, blit it into a window via the renderer, present, exit.
 """
 

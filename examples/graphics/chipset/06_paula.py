@@ -1,4 +1,9 @@
-"""Lesson 6: four Paula PCM voices demonstrate pitch, looping, and pan."""
+"""Path: /examples/graphics/chipset/06_paula.py
+
+Lesson 6 isolates the optional Paula-style sound laboratory. Four generated
+PCM voices demonstrate independent samples, pitch, volume, looping, and stereo
+pan while simple meters make the channel activity visible.
+"""
 
 import struct
 

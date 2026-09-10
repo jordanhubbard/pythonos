@@ -187,6 +187,19 @@ def main() -> int:
           popup.click(10, 10) is False and clicked == ["paint"]
           and popup.is_open is False)
 
+    long_popup = Popup()
+    long_popup.show(900, 740,
+                    [PopupItem(f"Item {index}") for index in range(40)],
+                    total_w=1024, total_h=768)
+    check("edge popup is clamped inside the desktop",
+          long_popup.anchor[0] + long_popup.anchor[2] <= 1024
+          and long_popup.anchor[1] + long_popup.anchor[3] <= 768)
+    check("oversize popup exposes scrollable hidden rows",
+          long_popup.has_more_below
+          and long_popup.scroll(5)
+          and long_popup.scroll_index == 5
+          and long_popup.has_more_above)
+
     seeded = Dock()
     seed_pinned_from_registry(seeded, apps)
     check("registry seed pins only category=app",

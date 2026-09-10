@@ -36,7 +36,9 @@ def main() -> int:
         TILE_POWER,
         TILE_WALL,
         aabb,
+        circular_delta,
         eat_tile,
+        flip_art_x,
         formation_xy,
         invader_formation_position,
         ghost_step,
@@ -83,6 +85,11 @@ def main() -> int:
 
     check("aabb overlap", aabb(0, 0, 8, 8, 4, 4, 8, 8))
     check("aabb miss", not aabb(0, 0, 8, 8, 20, 20, 8, 8))
+    check("circular delta takes short path across seam",
+          circular_delta(5, 95, 100) == 10)
+    check("non-square art flips one row at a time",
+          flip_art_x(bytes((1, 2, 3, 4, 5, 6)), 3, 2)
+          == bytes((3, 2, 1, 6, 5, 4)))
 
     x0, y0 = formation_xy(0, t=0, origin_x=40, origin_y=20, spacing=24)
     x1, y1 = formation_xy(1, t=0, origin_x=40, origin_y=20, spacing=24)

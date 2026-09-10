@@ -30,8 +30,8 @@ def seed_system_menus(compositor, registry) -> None:
     compositor._menubar.set_system_menus([
         Menu("PythonOS", [
             MenuItem("About PythonOS", action=_about),
-            MenuItem("View Source (F2)",
-                     action=compositor.open_focused_source),
+            MenuItem("View Window's Source (F2)",
+                     action=compositor.open_window_source),
             MenuItem("Keybindings… (F1)",
                      action=_launcher("keybindings")),
             MenuItem.sep(),

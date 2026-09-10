@@ -612,6 +612,32 @@ static PyObject *py_perf_frequency(PyObject *self, PyObject *args) {
 #endif
 }
 
+static PyObject *py_sleep_us(PyObject *self, PyObject *args) {
+    (void)self;
+    unsigned long long microseconds;
+    if (!PyArg_ParseTuple(args, "K", &microseconds)) return NULL;
+
+    // Audio and other real-time service threads must wait without retaining
+    // the GIL. The normal desktop event loop may be blocked in a TCP present.
+    Py_BEGIN_ALLOW_THREADS
+#ifdef ARCH_ARM64
+    uint64_t frequency;
+    __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
+    uint64_t started = perf_counter_read();
+    uint64_t ticks = (microseconds * frequency + 999999ULL) / 1000000ULL;
+    while (perf_counter_read() - started < ticks)
+        __asm__ volatile("yield");
+#else
+    extern volatile uint64_t _pit_ticks;
+    uint64_t started = _pit_ticks;
+    uint64_t ticks = (microseconds + 9999ULL) / 10000ULL;
+    while (_pit_ticks - started < ticks)
+        __asm__ volatile("pause");
+#endif
+    Py_END_ALLOW_THREADS
+    Py_RETURN_NONE;
+}
+
 // ── PIT tick counter (incremented on every timer interrupt before Python dispatch)
 extern void pit_tick(void);   // defined in src/libc/time.c (or main_arm64.c on arm64)
 
@@ -1293,6 +1319,8 @@ static PyMethodDef hal_methods[] = {
      "Return a monotonic hardware performance-counter value."},
     {"perf_frequency", py_perf_frequency, METH_NOARGS,
      "Return counter ticks/second when architecturally known, else 0."},
+    {"sleep_us", py_sleep_us, METH_VARARGS,
+     "Wait approximately N microseconds without holding the Python GIL."},
     {"inb",                  HAL_INB,                 METH_VARARGS, "Read byte from I/O port"},
     {"inw",                  HAL_INW,                 METH_VARARGS, "Read word from I/O port"},
     {"inl",                  HAL_INL,                 METH_VARARGS, "Read dword from I/O port"},

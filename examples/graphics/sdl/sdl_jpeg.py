@@ -1,7 +1,7 @@
-"""sdl_jpeg — JPEG decoding example.
+"""Path: /examples/graphics/sdl/sdl_jpeg.py
 
-Embeds a small 8x8 baseline JPEG as a bytes literal and decodes it
-through the full Huffman + IDCT + YCbCr→RGB pipeline.
+JPEG decoding example. It embeds a small 8x8 baseline JPEG and decodes it
+through the Huffman, IDCT, and YCbCr-to-RGB stages before checking the result.
 """
 
 from kernel.gui import image as _image

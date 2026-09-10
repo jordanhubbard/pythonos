@@ -68,6 +68,14 @@ class Chipset:
         """Request that the active full-screen View return to Workbench."""
         self.exit_requested = True
 
+    def release_to_workbench(self) -> None:
+        """End a chipset session before a normal desktop application opens."""
+        if self.workbench is not None:
+            self.active_view = self.workbench
+        self.on_event = None
+        self.exit_requested = False
+        self.stop()
+
     def tick(self) -> bytes:
         view = self.active_view
         native = (self._bridge_native_frames and view is not None
@@ -90,7 +98,7 @@ class Chipset:
         mixer = self._mixer
         if mixer is not None:
             try:
-                mixer.play_pcm(pcm, channels=2, fmt="int16")
+                mixer.play_pcm(pcm, channels=2, fmt="int16", source="chipset")
             except Exception:
                 pass
         cb = self._present

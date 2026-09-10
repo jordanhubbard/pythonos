@@ -30,8 +30,8 @@ the older direct-framebuffer launch path.
 Inside the compositor:
 
 - `Tab` / `Shift-Tab` cycle focus between windows.
-- `F2` opens the focused application's source in a live editor pane. The
-  same action is available as **PythonOS → View Source**.
+- `F2` opens the selected window's source in a live editor pane. The
+  same action is available as **PythonOS → View Window's Source**.
 - Click on a window's title bar to drag it; click in the body to focus + raise it.
 - Drop a desktop-host file into Files (or anywhere for `/home`) to import it.
   Drag a PythonOS file row to the Files **Export** target to stream it to the
@@ -68,7 +68,7 @@ so use a trusted/private interface or an SSH tunnel, never a public bind.
 
 PythonOS can compile and execute new code at runtime; it is not limited to the
 bytecode frozen into the boot image. Focus any application window and press
-`F2` (or choose **PythonOS → View Source**) to open the exact Python source
+`F2` (or choose **PythonOS → View Window's Source**) to open the exact Python source
 that produced it. Its shared **File** and **Edit** menus provide **Save**,
 **Cancel Changes**, and **Close**; **Run → Reload Running App** applies the
 edited code. `Ctrl-S` is the save shortcut.
@@ -78,6 +78,11 @@ seeded under `/lib/apps`, compiled on first import, and cached only while its
 source bytes remain unchanged; application bytecode is not pre-frozen into the
 kernel. Copies are easy to discover under `/examples/demos` and
 `/examples/games`.
+
+Examples are written for this modal workflow: each begins with a module
+docstring naming its exact `/examples/...` path, explaining its purpose, and
+giving a brief source tour. Functional blocks and non-obvious decisions are
+commented; routine individual statements are intentionally left uncluttered.
 
 Save writes an override to `/apps/<app-name>.py`; Reload compiles the current
 buffer, atomically replaces the module, closes the old window, and starts a
@@ -94,7 +99,7 @@ sentence, `M-{`/`M-}` by paragraph, `M-<`/`M->` to the buffer edges, and
 `C-l` to recenter. Both Alt/Option and Meta/Command supply `M-` bindings.
 Editing bindings include `C-d` delete, `C-k` kill to end of line, `C-s` save,
 and `C-q` close.
-`F2` was deliberately chosen for View Source so `C-e` keeps its conventional
+`F2` was deliberately chosen for View Window's Source so `C-e` keeps its conventional
 editor meaning.
 
 For teaching applications, `kernel.gui.ui` provides the hierarchy
@@ -260,10 +265,15 @@ The simplest demo is around 60 lines and exercises every half of the bridge. Use
 
 `apps/_icons.py` has `_new_icon`, `_border`, and per-app icon factories — copy and modify one for your dock icon.
 
-## Chipset (Amiga-class display and audio)
+## Optional chipset laboratory (Amiga-class display and audio)
 
-`kernel.chipset` is a software Agnus/Denise/Paula. It owns framebuffer
-presents while its clock is running. A **View** is copper + two
+The normal application interface is `CompositorWindow`, SDL-compatible
+surfaces and events, and `kernel.sound.mixer`. That path is intentionally
+plain: application authors do not need to understand simulated hardware.
+
+`kernel.chipset` is a software Agnus/Denise/Paula for first-principles graphics,
+audio, and demoscene lessons. It owns framebuffer presents only while its clock
+is running. A **View** is copper + two
 playfields + eight sprites + a palette. `chipset.load_view(view)` swaps
 the active View; Workbench is one View, games and the Video Toaster are
 others.
@@ -276,7 +286,7 @@ chipset.load_view(v)
 ```
 
 Demos: `desktop('sprites')` (sprites + copper + Paula; arrows move,
-space fires), `defender` (scrolling hills + landers), `pacmaze`
+space fires), `pacmaze`
 (pellets and ghosts), `raiders` (Galaxian-style formation), `invaders`
 (fixed-screen ranks, shields, UFO, all chipset units), and
 `desktop('toaster')` (dual playfields + wipe). Every game shows its active
@@ -288,11 +298,21 @@ paints Workbench playfields (windows, dock, menubar) and does not call
 `fb.present` — the raster is the only present path. Host tests:
 `make test-chipset` (no QEMU).
 
+`defender` deliberately sits on the other side of this boundary: it is a
+higher-resolution normal SDL-backed window with a circular world, scanner,
+rescue rules, and continuous music/effects sent through the common mixer. It
+is the reference for writing a game without accepting virtual-chipset limits.
+
 For first-principles study, `/examples/graphics/chipset/` separates the system
 into seven runnable lessons: indexed playfields and scrolling, Copper scanline
 lists, Blitter fills/copies, sprites, dual playfields, four-channel Paula, and
 the raster display window. Each source is intentionally short and uses Esc as
 the universal return-to-Workbench binding.
+
+Every Python file under `/examples` begins with a teaching docstring containing
+its exact virtual-filesystem path, purpose, and source tour. Functional blocks
+and design decisions are commented so the modal source pane remains useful
+without turning every individual statement into prose.
 
 See `docs/superpowers/specs/2026-09-08-chipset-multimedia-os-design.md`.
 

@@ -11,14 +11,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add seven focused virtual Amiga chipset teaching lessons.
 - Add persistent, configurable desktop keybindings with a docked control panel.
 - Promote System Monitor to Top with bounded guest/host RPC performance sampling.
+- Add mixer/producer/DMA audio profiling to Top and `pythonos_debug.py audio`.
+- Add self-locating teaching docstrings to every Python example.
 
 ### Changed
 - Route compositor fills and blits through the generic `sdl.call` dispatcher;
   legacy bridge operations remain protocol-compatibility shims only.
+- Rename F2 to **View Window's Source** and rebuild Defender as a native
+  SDL-backed game with a higher-resolution circular world, full rescue rules,
+  classic enemy roles and controls, continuous sound, and background music.
+- Feed Defender's bounded 250 ms virtio-sound periods from its already-scheduled
+  game loop, avoiding both render-cadence underruns and competing-thread GIL
+  starvation while retaining device backpressure.
 
 ### Fixed
 - Automatically reap completed TCP REPL and one-shot boot tasks so repeated
   monitoring connections do not accumulate zombie scheduler entries.
+- Clamp context menus to the desktop and scroll oversized menus with the wheel,
+  arrow keys, or Page Up/Page Down instead of clipping inaccessible rows.
+- Add shared trackpad/wheel and middle-button drag scrolling to text/list views,
+  including Files, file choosers, the Editor, and live source panes.
+- Release stale chipset views, input handlers, and Paula output when native
+  Defender starts; streaming audio has explicit priority over chipset audio.
 
 ## [0.3.3] - 2026-09-09
 

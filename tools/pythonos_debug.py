@@ -131,6 +131,8 @@ def main() -> int:
     p_mouse.add_argument("--button", type=int, default=1)
     p_perf = commands.add_parser("perf", help="fetch guest RTT and host bridge service metrics")
     p_perf.add_argument("--reset", action="store_true")
+    p_audio = commands.add_parser("audio", help="fetch mixer and audio-device metrics")
+    p_audio.add_argument("--reset", action="store_true")
     p_capture = commands.add_parser("capture", help="save the host SDL desktop as a BMP")
     p_capture.add_argument("path", nargs="?", default="build/pythonos-debug.bmp")
     p_desktop = commands.add_parser("desktop", help="inspect or attach to the host desktop co-process")
@@ -218,6 +220,10 @@ def main() -> int:
             elif args.command == "perf":
                 reply = dbg.execute(
                     "from kernel.bridge import bridge; print(bridge.performance_snapshot(reset=%s))"
+                    % bool(args.reset))
+            elif args.command == "audio":
+                reply = dbg.execute(
+                    "from kernel.sound.mixer import mixer; print(mixer.performance_snapshot(reset=%s))"
                     % bool(args.reset))
             elif args.command == "desktop":
                 reply = dbg.execute(

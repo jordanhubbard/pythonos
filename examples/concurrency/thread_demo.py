@@ -1,4 +1,9 @@
-"""Exercise CPython threads on AP-backed pthread workers."""
+"""Path: /examples/concurrency/thread_demo.py
+
+Contrast native CPython threads with cooperative asyncio tasks. The worker
+section records thread identities; ``main`` starts work on PythonOS's AP-backed
+pthread pool and waits without blocking the kernel event loop.
+"""
 
 import _thread
 import asyncio

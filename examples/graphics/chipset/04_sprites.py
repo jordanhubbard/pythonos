@@ -1,4 +1,9 @@
-"""Lesson 4: transparent sprite channels move over an untouched playfield."""
+"""Path: /examples/graphics/chipset/04_sprites.py
+
+Lesson 4 places indexed, transparent artwork in a hardware sprite channel.
+The background is painted once; ``tick`` moves only sprite coordinates so the
+lesson exposes independent sprite composition clearly.
+"""
 
 from apps.chipset_play import run_view
 from kernel.chipset import MODE_INDEXED, View

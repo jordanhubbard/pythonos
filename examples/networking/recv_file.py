@@ -1,4 +1,9 @@
-"""Receive one TCP connection and save its bytes into TmpFS."""
+"""Path: /examples/networking/recv_file.py
+
+Receive one TCP connection and save its bytes into the virtual filesystem.
+The helpers normalize paths and output; ``main`` binds a listener, accepts one
+peer, drains bounded chunks, persists them, and closes each resource.
+"""
 
 from kernel.fs.vfs import vfs, OpenFlags
 from kernel.net import stack

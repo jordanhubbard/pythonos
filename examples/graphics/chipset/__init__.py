@@ -1,1 +1,4 @@
-"""Small, ordered lessons for the PythonOS virtual Amiga chipset."""
+"""Path: /examples/graphics/chipset/__init__.py
+
+Package marker for the ordered virtual Amiga chipset curriculum.
+"""

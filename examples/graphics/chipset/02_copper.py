@@ -1,4 +1,9 @@
-"""Lesson 2: the Copper changes palette registers at raster scanlines."""
+"""Path: /examples/graphics/chipset/02_copper.py
+
+Lesson 2 shows a Copper program changing COLOR00 at selected scanlines. The
+playfield stays untouched: the Wait/Move instruction list alone creates the
+horizontal color bands during rasterization.
+"""
 
 from apps.chipset_play import run_view
 from kernel.chipset import MODE_INDEXED, Move, View, Wait

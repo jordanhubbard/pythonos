@@ -1,6 +1,9 @@
-# Internal round-trip write/read fixture for the ext2-backed /home mount.
-# wired up by ef6.4 is actually live. Prints a fixed marker on success
-# (matched by tests/smoke_test.py); anything else is a failure.
+"""Path: /examples/internals/check_home.py
+
+Internal round-trip fixture proving that the ext2-backed ``/home`` mount is
+live. The write, stat, and read sections emit fixed markers consumed by the
+host smoke tests; this file is contributor material rather than a lesson.
+"""
 
 from kernel.fs.vfs import vfs, OpenFlags
 

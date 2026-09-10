@@ -54,11 +54,13 @@ Use `Ctrl-A X` to exit QEMU.
 
 Opt-in graphical desktop with a stacking compositor, macOS-style menu bar (PythonOS / Apps / Demos / Games), a custom desktop background image, mouse + keyboard input, audio output, and bundled dock apps. Right-click (or two-finger / control-click) the wallpaper to launch demos and games. The default `make run` and `make test` paths are unchanged — they still boot serial-only with `-nographic`.
 
-A software **chipset** (`kernel.chipset`) owns the scan while the GUI
-clock runs: copper lists, dual playfields, eight sprites, a blitter, and
-four Paula audio channels — all pure Python. LoadView games:
-`desktop('sprites')`, `desktop('defender')`, `desktop('pacmaze')`,
-`desktop('raiders')`, and `desktop('toaster')`. ESC returns to Workbench.
+A software **chipset laboratory** (`kernel.chipset`) can take over the scan:
+copper lists, dual playfields, eight sprites, a blitter, and four Paula audio
+channels — all pure Python. It is an optional first-principles and demoscene
+API, not the normal application toolkit. Ordinary windows and games use the
+SDL-compatible surface/input API and common system mixer; `defender` is the
+reference game on that path. Chipset studies include `sprites`, `pacmaze`,
+`raiders`, `invaders`, and `toaster`. ESC returns to Workbench.
 `make test-chipset` runs the host-side chipset, arcade, and dock tests without QEMU.
 
 ```bash
@@ -96,7 +98,7 @@ name for the direct framebuffer backend.
 
 Inside the compositor:
 - **F1** opens Keybindings; choose a row and press Enter to replace a shortcut.
-- **F2** opens the focused application's live source. Both shortcuts are configurable.
+- **F2** opens the selected window's live source. Both shortcuts are configurable.
 - **Tab** / **Shift-Tab** cycles focus between windows.
 - Click a window's title bar to drag it; click in the body to focus + raise.
 - Drop a host file anywhere to import it into `/home`, or onto a directory in

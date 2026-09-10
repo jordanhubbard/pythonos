@@ -1,4 +1,9 @@
-"""Lesson 7: DIWSTART/DIWSTOP reveal a bounded raster display window."""
+"""Path: /examples/graphics/chipset/07_display_window.py
+
+Lesson 7 animates the DIWSTART and DIWSTOP raster registers. The full bitmap is
+always present, while ``tick`` changes which vertical range the display engine
+reveals, making display-window clipping distinct from drawing.
+"""
 
 from apps.chipset_play import run_view
 from kernel.chipset import MODE_INDEXED, View

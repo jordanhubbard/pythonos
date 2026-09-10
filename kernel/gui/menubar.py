@@ -458,6 +458,8 @@ class MenuBar:
             if i >= len(popup.item_rects):
                 break
             ix, iy, iw, ih = popup.item_rects[i]
+            if iw <= 0 or ih <= 0:
+                continue
             if it.separator:
                 surface._fill_rect(ix + 4, iy + ih // 2, iw - 8, 1, SEPARATOR_FG)
                 continue
@@ -471,3 +473,11 @@ class MenuBar:
             self._draw_text(surface, ix + DROPDOWN_PAD_X,
                              iy + max(0, (ih - th) // 2),
                              it.label, fg, bg)
+        # Small edge markers make the wheel/arrow affordance visible without
+        # spending a full menu row on permanent scroll buttons.
+        if popup.has_more_above:
+            self._draw_text(surface, x + w - 17, y + 3, "^",
+                            DROPDOWN_FG, DROPDOWN_BG)
+        if popup.has_more_below:
+            self._draw_text(surface, x + w - 17, y + h - 13, "v",
+                            DROPDOWN_FG, DROPDOWN_BG)

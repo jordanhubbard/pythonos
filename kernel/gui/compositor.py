@@ -595,8 +595,8 @@ class Compositor:
         loop.create_task(self._launch_dock_app(name,
                                                 lambda: info.entry(*args)))
 
-    def open_focused_source(self) -> None:
-        """Open an editable source pane for the focused registered app."""
+    def open_window_source(self) -> None:
+        """Open the registered source behind the selected desktop window."""
         win = self.focused_window
         if win is None or not win.app_name:
             log.info("source: focus an application window first")
@@ -767,7 +767,7 @@ class Compositor:
                 self._mark_chrome_dirty()
 
             items = dock_popup_items(pinned, on_keep=keep, on_remove=remove)
-            self._popup.show(x, y, items, desk_w)
+            self._popup.show(x, y, items, desk_w, desk_h)
             self._mark_chrome_dirty()
             return True
         if desktop_background_hit(x, y, desk_w, desk_h,
@@ -775,7 +775,7 @@ class Compositor:
             from apps import registry
             items = desktop_popup_items(registry.list_apps(),
                                         launch=self.launch_app)
-            self._popup.show(x, y, items, desk_w)
+            self._popup.show(x, y, items, desk_w, desk_h)
             self._mark_chrome_dirty()
             return True
         return False
@@ -794,7 +794,7 @@ class Compositor:
             self.launch_app("keybindings")
             return
         if action == "source":
-            self.open_focused_source()
+            self.open_window_source()
             return
         if action in ("next_window", "previous_window"):
             self.cycle_focus(-1 if action == "previous_window" else 1)
@@ -832,6 +832,26 @@ class Compositor:
             if self._popup.on_move(ev.x, ev.y):
                 self._mark_chrome_dirty()
             return
+        if ev.kind == _gui_input.MOUSE_WHEEL and self._popup.is_open:
+            amount = -1 if ev.dy > 0 else 1
+            if self._popup.scroll(amount):
+                self._mark_chrome_dirty()
+            return
+        if ev.kind == _gui_input.EVENT_KEY_DOWN and self._popup.is_open:
+            if ev.code in (_gui_input.KEY_UP, _gui_input.KEY_PAGE_UP):
+                amount = -5 if ev.code == _gui_input.KEY_PAGE_UP else -1
+                if self._popup.scroll(amount):
+                    self._mark_chrome_dirty()
+                return
+            if ev.code in (_gui_input.KEY_DOWN, _gui_input.KEY_PAGE_DOWN):
+                amount = 5 if ev.code == _gui_input.KEY_PAGE_DOWN else 1
+                if self._popup.scroll(amount):
+                    self._mark_chrome_dirty()
+                return
+            if ev.code == _gui_input.KEY_ESC:
+                self._popup.hide()
+                self._mark_chrome_dirty()
+                return
         if ev.kind == _gui_input.MOUSE_DOWN and self._popup.is_open:
             self._popup.click(ev.x, ev.y)
             self._mark_chrome_dirty()

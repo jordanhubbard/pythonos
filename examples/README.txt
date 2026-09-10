@@ -26,12 +26,18 @@ Tracks
   audio/        PCM synthesis and audio-device output
   networking/   TCP clients, servers, and file transfer
   demos/        Interactive desktop demonstrations and teaching programs
-  games/        Complete games built on the virtual Amiga chipset
+  games/        Complete SDL-backed games; chipset constraints are separate
   internals/    Test fixtures for kernel contributors, not beginner lessons
 
 Every subject directory contains its own README.txt with an ordered path and
 the important concepts demonstrated there. Use the Files app or Editor's
 File > Open command to browse and edit the source.
+
+Every Python example begins with a teaching docstring containing its exact
+/examples/... path, purpose, and a short source tour. This matters when the
+source editor is open: editing is modal, so the file remains self-locating
+after you leave the chooser or copy the lesson elsewhere. New examples should
+also comment functional blocks and design decisions, not narrate every line.
 
 Running examples
 ----------------

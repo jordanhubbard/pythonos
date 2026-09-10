@@ -1,6 +1,7 @@
-"""sdl_hello — minimal PySDL2-compatible "hello window" example.
+"""Path: /examples/graphics/sdl/sdl_hello.py
 
-Opens a window, fills it with blue, presents, then exits cleanly.
+Minimal SDL-compatible window example: initialize video, create a window,
+fill its surface, present it, and release resources in reverse order.
 Works on any boot that has a framebuffer up — that's the only
 graphics surface we have, regardless of -display sdl vs -display none.
 """

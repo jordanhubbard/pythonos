@@ -1,4 +1,9 @@
-"""Lesson 5: a keyed foreground playfield scrolls over a background one."""
+"""Path: /examples/graphics/chipset/05_dual_playfields.py
+
+Lesson 5 layers a color-keyed foreground playfield over a tiled background.
+The two scroll registers advance at different rates to demonstrate parallax
+and the BPLCON/key-color composition controls.
+"""
 
 from apps.chipset_play import run_view
 from kernel.chipset import MODE_INDEXED, View, blitter

@@ -162,7 +162,39 @@ class Button(Label):
 
 
 class TextView(View):
-    """Fixed-pitch text view shared by editors and terminals."""
+    """Fixed-pitch text view shared by editors and terminals.
+
+    Subclasses implement :meth:`scroll_by` to inherit trackpad/wheel scrolling
+    and middle-button drag scrolling through one common event path.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._middle_scroll_y = None
+
+    def scroll_by(self, lines: int) -> bool:
+        """Move the viewport by logical lines; return True when it changed."""
+        return False
+
+    def on_event(self, event) -> bool:
+        kind = getattr(event, "kind", 0)
+        if kind == 6:  # MOUSE_WHEEL; positive dy conventionally means up.
+            delta = getattr(event, "dy", 0) or getattr(event, "dx", 0)
+            return self.scroll_by(-3 if delta > 0 else 3)
+        if kind == 4 and getattr(event, "code", 0) == 2:
+            self._middle_scroll_y = getattr(event, "y", 0)
+            return True
+        if kind == 3 and self._middle_scroll_y is not None:
+            y = getattr(event, "y", 0)
+            lines = int((self._middle_scroll_y - y) / 8)
+            if lines:
+                self._middle_scroll_y = y
+                self.scroll_by(lines)
+            return True
+        if kind == 5 and getattr(event, "code", 0) == 2:
+            self._middle_scroll_y = None
+            return True
+        return False
 
     def text_at(self, x: int, y: int, text: str, *, color: int = 0xCCCCCC,
                 background: int = 0x101820) -> None:
@@ -186,3 +218,13 @@ class ListView(TextView):
             self.selected = max(0, min(len(self.items) - 1,
                                        self.selected + delta))
             self.invalidate()
+
+    def scroll_by(self, lines: int) -> bool:
+        rows = max(1, int(getattr(self, "list_rows", 1)))
+        maximum = max(0, len(self.items) - rows)
+        old = self.scroll_top
+        self.scroll_top = max(0, min(maximum, self.scroll_top + lines))
+        if self.scroll_top != old:
+            self.invalidate()
+            return True
+        return False

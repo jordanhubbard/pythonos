@@ -13,6 +13,7 @@ from kernel.gui import input as _gui_input
 from kernel.gui.sdl2.surface import SDL_FillRect, SDL_Rect
 from kernel.scheduler import scheduler
 from kernel.bridge import bridge
+from kernel.sound.mixer import mixer
 from apps import registry
 from apps._icons import _new_icon, _border, ICON_SIZE
 
@@ -75,9 +76,10 @@ async def _run(win: CompositorWindow) -> None:
     sample_number = 0
 
     while not closed and not win._closed:
+        reset_now = reset_requested
         if not paused:
-            if sample_number % 4 == 0 or reset_requested:
-                snapshot = bridge.performance_snapshot(reset=reset_requested)
+            if sample_number % 4 == 0 or reset_now:
+                snapshot = bridge.performance_snapshot(reset=reset_now)
                 reset_requested = False
             else:
                 snapshot["guest"] = bridge.metrics()
@@ -126,7 +128,27 @@ async def _run(win: CompositorWindow) -> None:
                 for name, values in slow[:3])
             surface.draw_text(8, y + 2, summary[:90], fg=_DIM, bg=_BG)
 
-        pid_y = 236
+        audio = mixer.performance_snapshot(reset=reset_now)
+        stream = audio.get("stream", {})
+        device = audio.get("device", {})
+        audio_y = 224
+        surface.draw_text(
+            8, audio_y,
+            ("AUDIO " + str(audio.get("backend") or "none")
+             + " accepted/expected " + str(stream.get("accepted_periods", 0))
+             + "/" + str(stream.get("expected_periods", 0))
+             + " shortfall " + str(stream.get("delivery_shortfall", 0))
+             + " retry " + str(stream.get("backpressure", 0))),
+            fg=_ACCENT, bg=_BG)
+        surface.draw_text(
+            8, audio_y + 14,
+            ("      DMA inflight/free " + str(device.get("inflight", 0))
+             + "/" + str(device.get("free", 0))
+             + " high " + str(device.get("high_water", 0))
+             + " device-retry " + str(device.get("backpressure", 0))),
+            fg=_DIM, bg=_BG)
+
+        pid_y = 258
         surface.draw_text(8, pid_y,
                           " PID  STATE       TICKS  NAME",
                           fg=_FG, bg=_BG)

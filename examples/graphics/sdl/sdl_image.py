@@ -1,6 +1,6 @@
-"""sdl_image — PNG decoding example.
+"""Path: /examples/graphics/sdl/sdl_image.py
 
-Embeds a 16x16 RGBA gradient as a bytes literal, writes it to /tmp/test.png
+PNG decoding example. It embeds a 16x16 RGBA gradient, writes it to /tmp/test.png
 in the guest tmpfs, then decodes via kernel.gui.image.load() and asserts
 specific pixel values to prove the deflate + filter + RGBA path round-trips.
 """

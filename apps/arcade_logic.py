@@ -108,6 +108,19 @@ def scroll_wrap(pos: int, delta: int, width: int) -> int:
     return (pos + delta) % width
 
 
+def circular_delta(target: float, origin: float, circumference: float) -> float:
+    """Shortest signed distance from ``origin`` to ``target`` on a ring."""
+    half = circumference / 2
+    return (target - origin + half) % circumference - half
+
+
+def flip_art_x(source: bytes, width: int, height: int) -> bytes:
+    """Mirror row-major indexed artwork without requiring square sprites."""
+    return bytes(value
+                 for y in range(height)
+                 for value in reversed(source[y * width:(y + 1) * width]))
+
+
 def aabb(ax: int, ay: int, aw: int, ah: int,
          bx: int, by: int, bw: int, bh: int) -> bool:
     return ax < bx + bw and ax + aw > bx and ay < by + bh and ay + ah > by

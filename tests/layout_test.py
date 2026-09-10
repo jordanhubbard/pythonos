@@ -124,10 +124,10 @@ def main() -> int:
     compositor = _read("kernel/gui/compositor.py")
     desktop = _read("kernel/gui/desktop.py")
     editor = _read("apps/editor/edwin.py")
-    check("focused app source has shortcut and menubar entry",
-          "open_focused_source" in compositor
+    check("window source has shortcut and menubar entry",
+          "open_window_source" in compositor
           and "KEY_F2" in _read("kernel/gui/keybindings.py")
-          and "View Source (F2)" in desktop)
+          and "View Window's Source (F2)" in desktop)
     check("source pane supports save cancel and runtime reload",
           'MenuItem("Save (Ctrl-S)"' in editor
           and 'MenuItem("Cancel Changes"' in editor
@@ -225,6 +225,44 @@ def main() -> int:
     check("interactive x86 GUI binds HDA output to the host audiodev",
           '"-audiodev", f"{audiodev},id=a"' in run_gui
           and '"hda-output,audiodev=a"' in run_gui)
+    virtio_sound = _read("kernel/drivers/sound/virtio_snd.py")
+    sound_write = virtio_sound.split("def write_pcm", 1)[1].split(
+        "# ── Public discovery", 1)[0]
+    check("arm64 continuous audio reuses completed bounded DMA periods",
+          "TX_PERIODS = QUEUE_SIZE // 3" in virtio_sound
+          and "_tx_inflight.pop" in sound_write
+          and "_tx_free.append" in sound_write
+          and "dma_alloc" not in sound_write)
+    defender = _read("apps/demos/defender.py")
+    check("Defender uses the normal desktop API with independent audio",
+          "CompositorWindow" in defender
+          and "from kernel.chipset import chipset" in defender
+          and "chipset.load_view" not in defender
+          and "class GameAudio" in defender
+          and "mixer.start_stream(" in defender
+          and "period_ms=250, prebuffer=1, threaded=False" in defender
+          and "audio_stream.pump()" in defender
+          and "chipset.release_to_workbench()" in defender
+          and 'ord("r") in pressed' in defender
+          and 'human["state"] = "aboard"' in defender)
+    mixer_source = _read("kernel/sound/mixer.py")
+    hal_source = _read("src/hal/hal.c")
+    check("PCM stream service runs independently of display asyncio",
+          "class PCMStream" in mixer_source
+          and "_thread.start_new_thread" in mixer_source
+          and "_hal.sleep_us" in mixer_source
+          and "Py_BEGIN_ALLOW_THREADS" in hal_source
+          and '"sleep_us", py_sleep_us' in hal_source)
+    check("audio profiling spans mixer driver Top and debug CLI",
+          "def performance_snapshot" in mixer_source
+          and "def audio_metrics" in virtio_sound
+          and 'commands.add_parser("audio"' in _read("tools/pythonos_debug.py")
+          and '"AUDIO "' in _read("apps/sysmon/sysmon.py"))
+    check("normal Defender cannot inherit chipset input or Paula audio",
+          "def release_to_workbench" in _read("kernel/chipset/__init__.py")
+          and 'source="chipset"' in _read("kernel/chipset/__init__.py")
+          and 'source == "chipset"' in mixer_source
+          and 'source="stream"' in mixer_source)
     check("C compiles emit -MMD dependencies",
           "DEPFLAGS = -MMD" in makefile)
     for driver_path in ("kernel/drivers/net/virtio_net.py",

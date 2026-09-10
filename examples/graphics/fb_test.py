@@ -1,5 +1,8 @@
-"""
-Framebuffer drawing demo. Draws color bands and a centered banner.
+"""Path: /examples/graphics/fb_test.py
+
+Framebuffer drawing demo. Draws color bands and a centered banner using the
+lowest-level native framebuffer API. The guard section handles serial-only
+boots; the drawing section demonstrates bulk fills and simple text.
 
 Run from the kernel REPL after booting in GUI mode (`make run-gui`):
 

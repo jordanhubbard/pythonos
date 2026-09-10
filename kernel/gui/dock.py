@@ -208,6 +208,9 @@ class Popup:
         self.item_rects: list[tuple[int, int, int, int]] = []
         self.anchor: tuple[int, int, int, int] | None = None
         self.hot_index: int = -1
+        self.scroll_index = 0
+        self.has_more_above = False
+        self.has_more_below = False
         self._open = False
 
     @property
@@ -220,9 +223,12 @@ class Popup:
         self.item_rects = []
         self.anchor = None
         self.items = []
+        self.scroll_index = 0
+        self.has_more_above = False
+        self.has_more_below = False
 
     def show(self, x: int, y: int, items: list[PopupItem],
-             total_w: int) -> None:
+             total_w: int, total_h: int | None = None) -> None:
         self.items = list(items)
         self.hot_index = -1
         text_w = 0
@@ -238,15 +244,46 @@ class Popup:
             h += POPUP_SEPARATOR_H if it.separator else POPUP_ITEM_H
         if x + w > total_w:
             x = max(0, total_w - w - 4)
-        y = max(0, y)
+        if total_h is not None:
+            h = min(h, max(POPUP_ITEM_H + POPUP_PAD_Y * 2, total_h - 8))
+            y = min(y, total_h - h - 4)
+        y = max(4, y)
         self.anchor = (x, y, w, h)
+        self.scroll_index = 0
+        self._layout_visible_rows()
+        self._open = True
+
+    def _layout_visible_rows(self) -> None:
+        """Lay out only rows that fit inside the clamped popup viewport."""
+        if self.anchor is None:
+            return
+        x, y, w, h = self.anchor
         self.item_rects = []
         cy = y + POPUP_PAD_Y
-        for it in self.items:
+        bottom = y + h - POPUP_PAD_Y
+        for index, it in enumerate(self.items):
             row_h = POPUP_SEPARATOR_H if it.separator else POPUP_ITEM_H
+            if index < self.scroll_index or cy + row_h > bottom:
+                self.item_rects.append((-1, -1, 0, 0))
+                continue
             self.item_rects.append((x, cy, w, row_h))
             cy += row_h
-        self._open = True
+        self.has_more_above = self.scroll_index > 0
+        self.has_more_below = any(
+            rect[2] == 0 for rect in self.item_rects[self.scroll_index:])
+
+    def scroll(self, rows: int) -> bool:
+        """Scroll a clamped popup by logical rows; return whether it moved."""
+        if not self._open or not self.items or rows == 0:
+            return False
+        old = self.scroll_index
+        self.scroll_index = max(0, min(len(self.items) - 1,
+                                       self.scroll_index + rows))
+        if self.scroll_index == old:
+            return False
+        self.hot_index = -1
+        self._layout_visible_rows()
+        return True
 
     def contains(self, x: int, y: int) -> bool:
         if not self._open or self.anchor is None:

@@ -1,4 +1,9 @@
-"""Create a TmpFS file, read it back, and inspect its metadata."""
+"""Path: /examples/storage/vfs_demo.py
+
+Virtual-filesystem lesson: normalize a path, create and write a TmpFS file,
+reopen it for reading, then inspect metadata. Each stage mirrors the familiar
+open/write/read/stat lifecycle without relying on a host filesystem.
+"""
 
 from kernel.fs.vfs import vfs, OpenFlags
 

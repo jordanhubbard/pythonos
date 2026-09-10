@@ -1,4 +1,9 @@
-"""Small first example for the PythonOS kernel shell."""
+"""Path: /examples/start_here/hello_kernel.py
+
+First tour of the PythonOS kernel shell. Small helpers format output; ``main``
+reads the virtual filesystem and scheduler so learners see that ordinary
+Python objects expose live operating-system state.
+"""
 
 from kernel.fs.vfs import vfs
 from kernel.scheduler import scheduler

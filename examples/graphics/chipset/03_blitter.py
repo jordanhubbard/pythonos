@@ -1,4 +1,9 @@
-"""Lesson 3: the Blitter fills and copies rectangular bitmap regions."""
+"""Path: /examples/graphics/chipset/03_blitter.py
+
+Lesson 3 introduces clipped Blitter rectangle operations. ``tick`` clears the
+playfield, fills moving shapes, and copies a source region, demonstrating how
+bulk bitmap work replaces per-pixel application loops.
+"""
 
 from apps.chipset_play import run_view
 from kernel.chipset import MODE_INDEXED, View, blitter

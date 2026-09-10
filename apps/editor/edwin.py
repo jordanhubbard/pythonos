@@ -382,10 +382,20 @@ class EditorView(TextView):
         self.scroll = max(0, self.cy - self.rows // 2)
         self.message = "Recenter"
 
+    def scroll_by(self, lines: int) -> bool:
+        """Scroll the viewport without moving point; the next key recenters it."""
+        maximum = max(0, len(self.lines) - self.rows)
+        old = self.scroll
+        self.scroll = max(0, min(maximum, self.scroll + lines))
+        return self.scroll != old
+
     # ── Event handling ──────────────────────────────────────────────────
 
     def on_event(self, ev) -> bool:
         """Returns True if the editor should keep running."""
+        if super().on_event(ev):
+            self.redraw()
+            return True
         if ev.kind != _gui_input.EVENT_KEY_DOWN:
             return True
 

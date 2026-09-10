@@ -1,4 +1,9 @@
-"""Lesson 1: an indexed playfield, palette, View, and scroll register."""
+"""Path: /examples/graphics/chipset/01_playfield.py
+
+Lesson 1 introduces an indexed playfield, its palette, a display View, and the
+horizontal scroll register. Setup paints a tiled bitmap; ``tick`` changes only
+the register so learners can separate stored pixels from displayed pixels.
+"""
 
 from apps.chipset_play import run_view
 from kernel.chipset import MODE_INDEXED, View

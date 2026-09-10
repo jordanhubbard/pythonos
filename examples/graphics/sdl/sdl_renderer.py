@@ -1,6 +1,6 @@
-"""sdl_renderer — software-renderer drawing example.
+"""Path: /examples/graphics/sdl/sdl_renderer.py
 
-Opens a window, creates a renderer, fills with red, draws a green
+Software-renderer example. It opens a window, creates a renderer, fills red, draws a green
 rectangle, presents, and exits cleanly. Verifies the PySDL2-shaped
 SDL_CreateRenderer/SetRenderDrawColor/RenderClear/RenderFillRect/
 RenderPresent path works end-to-end.

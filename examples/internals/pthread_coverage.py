@@ -1,4 +1,5 @@
-"""
+"""Path: /examples/internals/pthread_coverage.py
+
 PythonOS pthread substrate coverage fixture.
 
 Exercises the no-GIL critical-path surface defined in beads epic

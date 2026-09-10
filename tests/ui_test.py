@@ -68,6 +68,19 @@ def main() -> int:
     listing.move_selection(2)
     listing.move_selection(9)
     check("list selection is bounded", listing.selected == 2)
+    listing.items = list(range(20))
+    listing.list_rows = 4
+    wheel = types.SimpleNamespace(kind=6, dx=0, dy=-1)
+    check("list views inherit trackpad wheel scrolling",
+          listing.on_event(wheel) and listing.scroll_top == 3)
+    middle_down = types.SimpleNamespace(kind=4, code=2, y=40)
+    middle_move = types.SimpleNamespace(kind=3, code=0, y=16)
+    middle_up = types.SimpleNamespace(kind=5, code=2, y=16)
+    check("text views inherit middle-button drag scrolling",
+          listing.on_event(middle_down)
+          and listing.on_event(middle_move)
+          and listing.scroll_top == 6
+          and listing.on_event(middle_up))
     check("specialized views retain the common base",
           isinstance(listing, TextView) and isinstance(label, View))
 

@@ -1,4 +1,9 @@
-"""Generate a tiny PCM tone buffer for the HDA audio driver when available."""
+"""Path: /examples/audio/tone.py
+
+Generate a small square-wave PCM buffer and send it through PythonOS's common
+sound mixer. The helper builds signed 16-bit stereo samples; ``main`` selects
+the attached HDA or virtio-sound backend and reports how much it accepted.
+"""
 
 import kernel.sound as sound
 

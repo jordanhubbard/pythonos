@@ -21,7 +21,7 @@ class Binding:
 
 _DEFAULTS = (
     Binding("keybindings", "Open Keybindings", gui_input.KEY_F1),
-    Binding("source", "View focused source", gui_input.KEY_F2),
+    Binding("source", "View window's source", gui_input.KEY_F2),
     Binding("next_window", "Next window", gui_input.KEY_TAB),
     Binding("previous_window", "Previous window", gui_input.KEY_TAB,
             gui_input.MOD_SHIFT),

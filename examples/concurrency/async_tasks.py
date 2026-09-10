@@ -1,4 +1,9 @@
-"""Run two cooperative asyncio tasks through a bounded queue."""
+"""Path: /examples/concurrency/async_tasks.py
+
+Introduce cooperative asyncio scheduling with one producer, one consumer,
+and a bounded queue. Read the two worker coroutines first, then ``main`` to see
+how tasks are started together and how their results are collected.
+"""
 
 import asyncio
 
