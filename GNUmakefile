@@ -436,6 +436,18 @@ cleanall: clean
 # ── Docker image (rebuild when the Dockerfile is newer than the stamp) ───────
 # Previously this stamp depended on a FORCE target, which marked every
 # ISO/ELF out of date on every `make`. Depend on the Dockerfile instead.
+#
+# The stamp only proves the image was built at some point in the past; it
+# doesn't prove the image still exists in the local Docker daemon (e.g. after
+# `docker system prune` or a fresh machine/context). Detect that case at
+# parse time and drop the stale stamp so the image gets rebuilt.
+ifneq ($(wildcard .docker-image),)
+ifneq ($(shell command -v docker 2>/dev/null),)
+ifeq ($(shell docker image inspect $(DOCKER_IMG) >/dev/null 2>&1 && echo yes),)
+$(shell rm -f .docker-image)
+endif
+endif
+endif
 
 .docker-image: tools/Dockerfile
 	docker build --platform $(DOCKER_PLATFORM) --load -t $(DOCKER_IMG) -f tools/Dockerfile .
