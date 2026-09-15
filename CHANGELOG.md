@@ -10,6 +10,18 @@ personality than a categorized ledger should legally possess, see
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-15
+
+### Added
+- Add macOS release gate and validated DGX Spark media for 0.4.1
+
+### Fixed
+- Fix duplicate PythonOS 0.4.0 changelog heading
+
+### Other
+- Document fresh release audit and repair checkout setup guidance
+
+
 ## [0.4.0] - 2026-09-15
 
 ### Added
