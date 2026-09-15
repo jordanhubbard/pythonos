@@ -334,6 +334,7 @@ $(DISK_IMG): tools/build_disk.sh .docker-image
 # ── RemoteOS-SDL (shared host service linking SDL2) ──────────────────────────
 
 bridge:
+	@test -f services/remoteos-sdl/Makefile || { echo "Initialize the display service: git submodule update --init --recursive" >&2; exit 1; }
 	$(MAKE) -C services/remoteos-sdl
 
 bridge-clean:

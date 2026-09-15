@@ -10,15 +10,30 @@ Run `make help` at any time for the top-level target listing.
 
 ### Prerequisites
 
+Clone with the shared display service included:
+
+```sh
+git clone --recurse-submodules https://github.com/jordanhubbard/pythonos.git
+cd pythonos
+# For an existing clone:
+git submodule update --init --recursive
+```
+
 - Docker (for cross-compilation toolchain)
 - QEMU (`brew install qemu` on macOS)
 - CPython 3.14 source tree (fetched by the build)
+
+For the SDL desktop on Debian/Ubuntu (including WSL2), install
+`build-essential pkg-config libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev`.
+On macOS, run `brew install pkg-config sdl2 sdl2_image sdl2_ttf`.
+Windows builds run inside WSL2 with Docker available to the distribution;
+a visible desktop also requires WSLg or another working display server.
 
 ### First-time build (~10 min to cross-compile CPython)
 
 ```bash
 make docker-build   # build the Docker cross-compilation image once
-make                # cross-compile libpython + kernel, produce build/pythonos.iso
+make                # host architecture: build-arm64/pythonos-arm64.elf or build/pythonos.iso
 ```
 
 ### Subsequent builds (fast — libpython is cached)
