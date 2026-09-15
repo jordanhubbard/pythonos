@@ -754,7 +754,8 @@ See `deps/Modules.Setup.local` for the complete list and `tools/setup_cpython.sh
 
 ### The continuing adventures of Jordan Hubbard and Sir Reginald von Fluffington III
 
-> *Part 6 of an ongoing chronicle.  [← Part 5: WebMux](https://github.com/jordanhubbard/webmux#the-totally-true-and-not-at-all-embellished-history-of-webmux)*
+> *Part 17 of an ongoing chronicle. [← Part 16: agentos_gui](https://github.com/jordanhubbard/agentos_gui#the-totally-true-and-not-at-all-embellished-history-of-agentos_gui) | [Part 18: mac →](https://github.com/jordanhubbard/mac#the-totally-true-and-not-at-all-embellished-history-of-mac)*
+> *[Chronicle index](https://github.com/jordanhubbard/ai-template/blob/main/CHRONICLE.md) · Ordered by first recorded AI-assisted commit.*
 > *Sir Reginald von Fluffington III appears throughout.  He does not endorse any of it.*
 
 It began, as many of the programmer's projects do, with a sentence that sounded completely reasonable at the time.
@@ -787,7 +788,7 @@ Sir Reginald walked across the keyboard. The shell printed `TypeError: unsupport
 
 The smoke test was added last, as things tend to be when the thing being tested is a kernel that takes forty-five seconds to compile and requires QEMU to run. `tests/smoke_test.py` boots the ISO as a subprocess, waits for the TCP REPL to become reachable, connects, and verifies that `1 + 1` returns `2`, that `vfs is not None` returns `True`, that `1 / 0` raises `ZeroDivisionError`, and that the kernel's scheduler and filesystem are alive and accessible from a remote TCP session. If any of these fail, `make test` exits non-zero. Sir Reginald has never run `make test`. He has, however, sat on the test output twice, which the programmer is counting as a code review.
 
-As of this writing, PythonOS has been used in production by exactly one person, who also wrote it. Sir Reginald continues to withhold his endorsement across all 6 projects, citing "procedural concerns," "insufficient tuna," "a general atmosphere of hubris," and, now, "the fundamental unseriousness of an operating system that can be interrupted by the garbage collector."
+As of this writing, PythonOS has been used in production by exactly one person, who also wrote it. Sir Reginald continues to withhold his endorsement across the chronicle, citing "procedural concerns," "insufficient tuna," "a general atmosphere of hubris," and, now, "the fundamental unseriousness of an operating system that can be interrupted by the garbage collector."
 
 ---
 
