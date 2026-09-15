@@ -1,8 +1,8 @@
 """
-kernel.bridge.tcp_transport — native TCP byte stream for pythonos_bridge.
+kernel.bridge.tcp_transport — native TCP byte stream for RemoteOS-SDL.
 
 PythonOS GUI bridge calls are currently synchronous. This transport accepts
-a host-side ``pythonos_bridge --connect-tcp`` connection through the in-kernel
+a host-side ``remoteos-sdl --connect-tcp`` connection through the in-kernel
 TCP stack, then pumps the NIC synchronously while bridge callers wait for
 responses. That keeps the existing ``bridge.call(...)`` API intact while
 removing the QEMU chardev/virtconsole dependency from native GUI mode.

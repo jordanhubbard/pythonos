@@ -1,5 +1,5 @@
 """
-kernel.bridge.uart — byte-stream transport for pythonos_bridge.
+kernel.bridge.uart — byte-stream transport for RemoteOS-SDL.
 
 PythonOS already uses one UART for the kernel REPL (PL011 #0 on arm64,
 COM1 on x86). On x86 the bridge runs on COM2. QEMU arm64 ``virt`` only

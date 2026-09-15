@@ -103,7 +103,7 @@ Inside the compositor:
 - Click a window's title bar to drag it; click in the body to focus + raise.
 - Drop a host file anywhere to import it into `/home`, or onto a directory in
   Files to import it there. Drag a PythonOS file row onto **Export** to copy it
-  to the display machine's Downloads directory (`PYTHONOS_EXPORT_DIR` changes it).
+  to the display machine's Downloads directory (`REMOTEOS_SDL_EXPORT_DIR` changes it).
 - **ESC** typically closes the focused app and returns to the REPL.
 
 Image Viewer starts in `/examples/images`, which contains three original
@@ -112,6 +112,8 @@ styles. The focused chipset curriculum is under `/examples/graphics/chipset`.
 
 See **`docs/gui.md`** for the full feature reference (compositor, chipset,
 sdl2 API surface, image decoders, audio backends, apps).
+The [RemoteOS alignment guide](docs/remoteos-alignment.md) describes the shared
+service and the intentionally different PythonOS and RubyOS layers above it.
 
 ### Remote display: kernel on X, desktop on Y
 
@@ -133,12 +135,12 @@ make bridge
 PYTHONOS_DISPLAY_SERVER=192.0.2.10 make connect-display
 
 # Optional destination for files dragged out of PythonOS:
-PYTHONOS_EXPORT_DIR="$HOME/Desktop/PythonOS" \
+REMOTEOS_SDL_EXPORT_DIR="$HOME/Desktop/PythonOS" \
   PYTHONOS_DISPLAY_SERVER=192.0.2.10 make connect-display
 ```
 
 This is analogous to a network display, though the connection direction is
-currently desktop-to-kernel: PythonOS listens and `pythonos_bridge` connects.
+currently desktop-to-kernel: PythonOS listens and `remoteos-sdl` connects.
 The protocol presently has no authentication or encryption. Use it only on a
 trusted network, bind it to a private interface, or forward port 17010 through
 SSH; do not expose it directly to the public Internet.

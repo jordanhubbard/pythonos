@@ -159,7 +159,7 @@ class Compositor:
         # a full frame to this and then presenting in one bulk MMIO write
         # eliminates the clear→paint flicker.
         self._back: 'Surface | None' = None
-        # Bridge presenter: when the host pythonos_bridge companion is
+        # Bridge presenter: when the host RemoteOS-SDL service is
         # reachable, push draw commands directly to it instead of
         # composing in-guest. Set lazily in start().
         self._bridge_present = False
@@ -396,7 +396,10 @@ class Compositor:
             self._menubar.set_right_text(uptime_text or self._uptime_str())
             self._menubar.render(fb_surf, self._bridge_w)
             self._menubar.paint_popup(fb_surf, self._popup)
-            _br.call("display.present", {})
+            if "oneway" in _br.features:
+                _br.notify("display.present", {})
+            else:
+                _br.call("display.present", {})
         except BridgeError as e:
             log.warn(f"compositor: bridge frame failed ({e}); "
                      f"falling back to local framebuffer")
@@ -1023,7 +1026,7 @@ class Compositor:
             self._bg_surface = None
 
     async def _open_bridge_window(self) -> None:
-        """Probe the host pythonos_bridge with a hello + display.open.
+        """Probe RemoteOS-SDL with a hello + display.open.
         On success, switch the redraw path to issue draw commands
         directly to the host AND start the input forwarder so SDL
         events from the host window land in kernel.gui.input.queue."""

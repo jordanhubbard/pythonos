@@ -177,7 +177,7 @@ def main() -> int:
         # 1c. TTF used to render via the bundled bitmap font, but the
         # mirror-SDL refactor now routes TTF through the host bridge
         # process — this kernel-only smoke can't exercise that path
-        # because it boots without spawning pythonos_bridge. The
+        # because it boots without spawning RemoteOS-SDL. The
         # bridge round-trip itself is covered by a future bridge-aware
         # smoke; here we just confirm `sdl2.TTF_Init` is importable.
         out = _send(s, "callable(__import__('sdl2').TTF_Init)", wait=2.5)

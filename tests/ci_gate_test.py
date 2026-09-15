@@ -103,7 +103,7 @@ def main() -> int:
           and "cat RELEASE-NOTES.md" in release)
     release_notes = _read("RELEASE-NOTES.md")
     check("release notes identify the current release",
-          release_notes.startswith("# PythonOS v0.3.4"))
+          release_notes.startswith("# PythonOS v0.4.0"))
     check("README and changelog link the release notes",
           "[RELEASE-NOTES.md](RELEASE-NOTES.md)" in _read("README.md")
           and "[RELEASE-NOTES.md](RELEASE-NOTES.md)" in _read("CHANGELOG.md"))

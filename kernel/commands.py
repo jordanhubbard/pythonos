@@ -507,7 +507,7 @@ async def pythonos_gui(argv: list[str], cwd: str, write) -> None:
 
 
 async def bridge_ping(argv: list[str], cwd: str, write) -> None:
-    """Round-trip a hello + ping through the host pythonos_bridge
+    """Round-trip a hello + ping through the host RemoteOS-SDL service
     companion. bridge.call is synchronous now."""
     from kernel import bridge as br
     try:

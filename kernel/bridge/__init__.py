@@ -1,6 +1,5 @@
 """
-kernel.bridge — guest-side client for the pythonos_bridge host
-companion.
+kernel.bridge — PythonOS client for the shared RemoteOS-SDL host service.
 
 Calls are SYNCHRONOUS: the bulk-read C primitive (kernel.hal.io
 pl011_read_buf / uart16550_read_buf) blocks the kernel scheduler for
@@ -12,10 +11,8 @@ QEMU's MMIO trap cost, which an async-yield wouldn't help. Apps call
 Wire format (mirrors NanoVM/pybridge):
   4-byte big-endian length, then UTF-8 JSON payload.
 
-Frame schemas:
-    request:  {"v":1, "id":<int>, "op":<str>, "params":{...}}
-    response: {"v":1, "id":<int>, "ok":true,  "result":{...}}
-    error:    {"v":1, "id":<int>, "ok":false, "error":{"code":..., "msg":...}}
+Frame schemas use RemoteOS protocol v2. The first request negotiates the
+shared, language-neutral service before any resources can be created.
 
 When `params` carries `payload_len: N`, exactly N raw bytes follow the
 JSON envelope (binary trailer). The bridge uses this for one-shot
@@ -39,7 +36,7 @@ def _json():
     return json
 
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2
 
 
 def _counter() -> tuple[int, int]:
@@ -77,6 +74,7 @@ class Bridge:
     def __init__(self) -> None:
         self._next_id = 1
         self._opened  = False
+        self._hello_result: dict = {}
         # Queue of fire-and-forget ops accumulated by cast(). A subsequent
         # call() or explicit flush() drains it as one batch.
         self._pending: list = []
@@ -121,17 +119,23 @@ class Bridge:
         """Combine guest round-trip and host service metrics in one sample."""
         guest = self.metrics(reset=reset)
         try:
-            host = self.call("debug.metrics", {"reset": bool(reset)})
+            host = self.call("telemetry.snapshot", {"reset": bool(reset)})
         except Exception as e:
             host = {"error": str(e)}
         return {"guest": guest, "host": host}
 
     def hello(self, timeout_ms: int | None = 2000) -> dict:
         """Handshake. Returns the host's hello result."""
-        r = self.call("hello", {"protocol": PROTOCOL_VERSION},
+        if self._opened:
+            return dict(self._hello_result)
+        r = self.call("hello", {
+            "protocol": PROTOCOL_VERSION,
+            "client": "pythonos",
+        },
                       timeout_ms=timeout_ms)
         self._opened = True
         self.features = set(r.get("features") or ())
+        self._hello_result = dict(r)
         return r
 
     @property
@@ -151,7 +155,7 @@ class Bridge:
             return
         ops = self._pending
         self._pending = []
-        self._send("batch", {"ops": ops}, b"")
+        self._send("render.batch", {"ops": ops}, b"")
 
     def call(self, op: str, params: dict | None = None,
               payload: bytes = b"",
@@ -163,7 +167,7 @@ class Bridge:
         if self._pending:
             ops = self._pending
             self._pending = []
-            self._send("batch", {"ops": ops}, b"", timeout_ms=timeout_ms)
+            self._send("render.batch", {"ops": ops}, b"", timeout_ms=timeout_ms)
         return self._send(op, params, payload, timeout_ms=timeout_ms)
 
     def notify(self, op: str, params: dict | None = None,
@@ -250,6 +254,8 @@ class Bridge:
             rx_bytes = 4 + length
             env = json.loads(body.decode("utf-8"))
 
+            if env.get("v") != PROTOCOL_VERSION:
+                raise BridgeError(-5, f"protocol mismatch in response: {env.get('v')}")
             if env.get("id") != frame_id:
                 raise BridgeError(-2, f"id mismatch (sent {frame_id}, got {env.get('id')})")
             if not env.get("ok"):
@@ -274,12 +280,12 @@ def open_bridge() -> bool:
     except Exception as e:
         log.warn(f"bridge: hello failed ({e})")
         return False
-    log.info(f"bridge: ready, agent={r.get('agent')} sdl={r.get('sdl_ver')}")
+    log.info(f"bridge: ready, service={r.get('service')} sdl={r.get('sdl_ver')}")
     return True
 
 
 def py_desktop(app_name: str | None = None):
-    """Open the PythonOS desktop on the host pythonos_bridge. Returns
+    """Open the PythonOS desktop on the host RemoteOS-SDL service. Returns
     the compositor instance on success or ``None`` if no bridge is
     reachable.
 

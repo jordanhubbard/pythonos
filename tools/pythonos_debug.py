@@ -227,7 +227,7 @@ def main() -> int:
                     % bool(args.reset))
             elif args.command == "desktop":
                 reply = dbg.execute(
-                    "from kernel.bridge import bridge; print(bridge.call('debug.metrics', {'reset': False}))")
+                    "from kernel.bridge import bridge; print(bridge.call('telemetry.snapshot', {'reset': False}))")
             elif args.command == "capture":
                 reply = dbg.execute(
                     "from kernel.bridge import bridge; print(bridge.call('debug.capture', {'path': %r}))"

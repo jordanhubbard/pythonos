@@ -200,8 +200,8 @@ help:
 	@echo "    make build              Build the kernel ISO/ELF only"
 	@echo "    make run                Boot in QEMU; serial REPL on stdio"
 	@echo ""
-	@echo "  Full GUI (kernel + pythonos_bridge host companion):"
-	@echo "    make build-gui          Build kernel AND pythonos_bridge"
+	@echo "  Full GUI (kernel + RemoteOS-SDL host service):"
+	@echo "    make build-gui          Build kernel AND RemoteOS-SDL"
 	@echo "    make run-gui            Boot kernel + spawn bridge + open SDL"
 	@echo "                              desktop with full app dock"
 	@echo "    make run-display-server Boot kernel and expose its display endpoint"
@@ -254,14 +254,14 @@ help:
 	@echo "                                  sprites | defender | pacmaze | raiders)"
 	@echo "  PYTHONOS_DESKTOP_MODE=<mode>   interactive (visible, default) or headless"
 	@echo "                                 (hidden SDL surface for agent capture/tests)"
-	@echo "  PYTHONOS_BRIDGE_HOST=<addr>    bridge listen address (default: 127.0.0.1)"
-	@echo "  PYTHONOS_BRIDGE_PORT=<port>    bridge TCP port (default: 17010)"
-	@echo "  PYTHONOS_BRIDGE_GUEST_PORT=<p> native guest bridge port (default: 5001)"
-	@echo "  PYTHONOS_BRIDGE_TRANSPORT=<m>  native-tcp (default) or chardev"
-	@echo "  PYTHONOS_BRIDGE_EXTERNAL=1     use an already-running remote bridge"
+	@echo "  REMOTEOS_SDL_HOST=<addr>       service listen address (default: 127.0.0.1)"
+	@echo "  REMOTEOS_SDL_PORT=<port>       service TCP port (default: 17010)"
+	@echo "  REMOTEOS_SDL_GUEST_PORT=<p>    native guest service port (default: 5001)"
+	@echo "  REMOTEOS_SDL_TRANSPORT=<m>     native-tcp (default) or chardev"
+	@echo "  REMOTEOS_SDL_EXTERNAL=1        use an already-running RemoteOS-SDL"
 	@echo "  PYTHONOS_DISPLAY_BIND=<addr>   run-display-server bind (default: 0.0.0.0)"
 	@echo "  PYTHONOS_DISPLAY_SERVER=<addr> kernel host for connect-display"
-	@echo "  PYTHONOS_EXPORT_DIR=<path>     host directory for dragged-out files"
+	@echo "  REMOTEOS_SDL_EXPORT_DIR=<path> host directory for dragged-out files"
 	@echo "  PYTHONOS_GOLDEN_REFRESH=1      regenerate test screendump goldens"
 	@echo ""
 	@echo "TCP REPL access (host → guest forwarded ports):"
@@ -277,7 +277,7 @@ help:
 # defaults to the host arch). Explicit per-arch targets are listed below.
 #
 #   build / run        — minimal text-REPL kernel.
-#   build-gui / run-gui — kernel + pythonos_bridge + host SDL desktop.
+#   build-gui / run-gui — kernel + RemoteOS-SDL host service.
 #   run-fb              — legacy: QEMU's own framebuffer window (no bridge).
 ifeq ($(TARGET_ARCH),arm64)
 all:         arm64
@@ -308,15 +308,15 @@ PYTHONOS_DISPLAY_BIND ?= 0.0.0.0
 PYTHONOS_DISPLAY_PORT ?= 17010
 
 run-display-server: build-gui
-	PYTHONOS_BRIDGE_EXTERNAL=1 \
-	PYTHONOS_BRIDGE_ADDR=$(PYTHONOS_DISPLAY_BIND):$(PYTHONOS_DISPLAY_PORT) \
+	REMOTEOS_SDL_EXTERNAL=1 \
+	REMOTEOS_SDL_ADDR=$(PYTHONOS_DISPLAY_BIND):$(PYTHONOS_DISPLAY_PORT) \
 	$(MAKE) run-gui
 
 connect-display: bridge
 	@test -n "$(PYTHONOS_DISPLAY_SERVER)" || \
 	  (echo "Set PYTHONOS_DISPLAY_SERVER to the kernel machine IP"; exit 2)
-	PYTHONOS_DESKTOP_MODE=interactive \
-	tools/pythonos_bridge/pythonos_bridge \
+	REMOTEOS_SDL_MODE=interactive \
+	services/remoteos-sdl/remoteos-sdl \
 	  --connect-tcp $(PYTHONOS_DISPLAY_SERVER):$(PYTHONOS_DISPLAY_PORT) \
 	  --connect-timeout-ms -1
 
@@ -331,20 +331,16 @@ $(DISK_IMG): tools/build_disk.sh .docker-image
 	@mkdir -p $(BUILD)
 	$(DOCKER_RUN) $(DOCKER_IMG) bash tools/build_disk.sh $(DISK_IMG) $(DISK_SIZE_MB)
 
-# ── pythonos_bridge (host-side companion linking SDL2) ───────────────────────
-# See tools/pythonos_bridge/main.c. The bridge is a host program — entirely
-# separate from the kernel build. Slice 1 ships the protocol loop + a
-# --selftest mode that opens an SDL2 window directly. Later slices add the
-# display/audio/input ops that PythonOS apps will drive.
+# ── RemoteOS-SDL (shared host service linking SDL2) ──────────────────────────
 
 bridge:
-	$(MAKE) -C tools/pythonos_bridge
+	$(MAKE) -C services/remoteos-sdl
 
 bridge-clean:
-	$(MAKE) -C tools/pythonos_bridge clean
+	$(MAKE) -C services/remoteos-sdl clean
 
 test-bridge: bridge
-	python3 tools/pythonos_bridge/test_client.py
+	$(MAKE) -C services/remoteos-sdl test
 
 # Explicit x86_64 targets (also reachable as the dispatch default on x86 hosts).
 x86_64: $(ISO_OUT)
@@ -358,9 +354,9 @@ run-x86_64: $(ISO_OUT) $(DISK_IMG)
 run-fb-x86_64: $(ISO_OUT) $(DISK_IMG)
 	qemu-system-x86_64 $(QEMU_GUI_FLAGS)
 
-# Bridge desktop mode for x86_64: supervises pythonos_bridge as a sibling
+# Remote desktop mode for x86_64: supervises RemoteOS-SDL as a sibling
 # process. Default transport is native guest TCP; set
-# PYTHONOS_BRIDGE_TRANSPORT=chardev to use the older COM2 path.
+# REMOTEOS_SDL_TRANSPORT=chardev to use the COM2 path.
 run-gui-x86_64: $(ISO_OUT) $(DISK_IMG) bridge
 	QEMU_DISPLAY=$(QEMU_DISPLAY) QEMU_AUDIODEV=$(QEMU_AUDIODEV) \
 	    PYTHONOS_DISK=$(DISK_IMG) \
@@ -660,9 +656,9 @@ run-fb-arm64: $(ARM64_ELF) $(ARM64_DISK)
 	    -device virtio-blk-device,drive=hd0 \
 	    -kernel $(ARM64_ELF)
 
-# Bridge desktop mode for arm64: supervises pythonos_bridge as a sibling
+# Remote desktop mode for arm64: supervises RemoteOS-SDL as a sibling
 # process. Default transport is native guest TCP; set
-# PYTHONOS_BRIDGE_TRANSPORT=chardev to use the older virtconsole path.
+# REMOTEOS_SDL_TRANSPORT=chardev to use the virtconsole path.
 run-gui-arm64: $(ARM64_ELF) $(ARM64_DISK) bridge
 	PYTHONOS_GUI_ARCH=arm64 PYTHONOS_ARM64_DISK=$(ARM64_DISK) \
 	    PYTHONOS_DISK=$(ARM64_DISK) \

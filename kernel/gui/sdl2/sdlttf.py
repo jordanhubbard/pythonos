@@ -83,7 +83,7 @@ def TTF_OpenDefaultFont(size: int) -> TTF_Font:
     """Open whatever monospace font the host can find. Convenience for
     apps that don't ship their own font assets — the host walks a small
     list of system paths and picks the first that exists."""
-    r = sdl_call("pyo.default_font_path")
+    r = sdl_call("host.default_font_path")
     return TTF_OpenFont(r["path"], size)
 
 

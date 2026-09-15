@@ -10,6 +10,22 @@ personality than a categorized ledger should legally possess, see
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-14
+
+### Changed
+
+- Replace the copied `pythonos_bridge` implementation with the pinned,
+  independently released RemoteOS-SDL service.
+- Move the guest to strict RemoteOS protocol v2 negotiation, safe render
+  batches, ordered one-way presentation, and unified host telemetry.
+- Update GUI, debugging, remote-display, CI, and release documentation for the
+  coordinated PythonOS/RubyOS/RemoteOS-SDL architecture.
+
+### Removed
+
+- Remove the language-branded C bridge and its duplicate vendored SDL/cJSON
+  implementation.
+
 ## [0.3.4] - 2026-09-10
 
 ### Fixed

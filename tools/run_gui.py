@@ -4,12 +4,12 @@ Boot PythonOS in supervised GUI mode.
 
 Used by `make run-gui-x86_64` / `make run-gui-arm64` /
 `make run-gui`. Foregrounds QEMU; Ctrl-C terminates both QEMU and
-the host-side pythonos_bridge companion.
+the shared RemoteOS-SDL service.
 
 The default bridge transport is native guest TCP: PythonOS listens on a
-guest TCP port, and the host pythonos_bridge process connects to it. For
-debugging the older QEMU chardev path remains available with
-PYTHONOS_BRIDGE_TRANSPORT=chardev.
+guest TCP port, and the host RemoteOS-SDL process connects to it. For
+debugging the QEMU chardev path remains available with
+REMOTEOS_SDL_TRANSPORT=chardev.
 """
 
 import os
@@ -78,50 +78,39 @@ def _qemu_cpu(arch: str, accel: str, fallback: str) -> str:
 
 def _bridge_bin() -> str:
     return os.environ.get(
-        "PYTHONOS_BRIDGE_BIN",
+        "REMOTEOS_SDL_BIN",
         os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                     "pythonos_bridge", "pythonos_bridge"))
+                     "..", "services", "remoteos-sdl", "remoteos-sdl"))
 
 
 def _bridge_endpoint() -> tuple[str, int]:
-    addr = os.environ.get("PYTHONOS_BRIDGE_ADDR")
+    addr = os.environ.get("REMOTEOS_SDL_ADDR")
     if addr:
         host, sep, port_s = addr.rpartition(":")
         if not sep:
             host, port_s = "127.0.0.1", addr
     else:
-        host = os.environ.get("PYTHONOS_BRIDGE_HOST", "127.0.0.1")
-        port_s = os.environ.get("PYTHONOS_BRIDGE_PORT", "17010")
+        host = os.environ.get("REMOTEOS_SDL_HOST", "127.0.0.1")
+        port_s = os.environ.get("REMOTEOS_SDL_PORT", "17010")
     port = int(port_s)
     if not (0 < port < 65536):
-        raise ValueError(f"invalid PYTHONOS_BRIDGE_PORT={port!r}")
+        raise ValueError(f"invalid REMOTEOS_SDL_PORT={port!r}")
     return host or "127.0.0.1", port
 
 
 def _bridge_guest_port() -> int:
-    port = int(os.environ.get("PYTHONOS_BRIDGE_GUEST_PORT", "5001"))
+    port = int(os.environ.get("REMOTEOS_SDL_GUEST_PORT", "5001"))
     if not (0 < port < 65536):
-        raise ValueError(f"invalid PYTHONOS_BRIDGE_GUEST_PORT={port!r}")
+        raise ValueError(f"invalid REMOTEOS_SDL_GUEST_PORT={port!r}")
     return port
 
 
 def _bridge_transport() -> str:
-    mode = (os.environ.get("PYTHONOS_BRIDGE_TRANSPORT")
-            or os.environ.get("PYTHONOS_BRIDGE_MODE")
-            or "native-tcp").strip().lower()
-    aliases = {
-        "tcp": "native-tcp",
-        "native": "native-tcp",
-        "guest-tcp": "native-tcp",
-        "tcp-listener": "native-tcp",
-        "serial": "chardev",
-        "virtconsole": "chardev",
-        "tcp-chardev": "chardev",
-    }
-    mode = aliases.get(mode, mode)
+    mode = os.environ.get(
+        "REMOTEOS_SDL_TRANSPORT", "native-tcp").strip().lower()
     if mode not in ("native-tcp", "chardev"):
         raise ValueError(
-            "PYTHONOS_BRIDGE_TRANSPORT must be native-tcp or chardev")
+            "REMOTEOS_SDL_TRANSPORT must be native-tcp or chardev")
     return mode
 
 
@@ -134,7 +123,7 @@ def _desktop_mode() -> str:
 
 def _qemu_connect_host(listen_host: str) -> str:
     return os.environ.get(
-        "PYTHONOS_BRIDGE_CONNECT_HOST",
+        "REMOTEOS_SDL_CONNECT_HOST",
         "127.0.0.1" if listen_host in ("", "*", "0.0.0.0") else listen_host)
 
 
@@ -291,29 +280,29 @@ def _wait_tcp_listener(host: str, port: int, proc: subprocess.Popen,
     while time.time() < deadline:
         if proc.poll() is not None:
             raise RuntimeError(
-                f"pythonos_bridge exited early with rc={proc.returncode}")
+                f"remoteos-sdl exited early with rc={proc.returncode}")
         try:
             s = socket.create_connection((host, port), timeout=0.2)
             s.close()
             return
         except OSError:
             time.sleep(0.05)
-    raise RuntimeError(f"pythonos_bridge did not listen on {host}:{port}")
+    raise RuntimeError(f"remoteos-sdl did not listen on {host}:{port}")
 
 
 def _spawn_bridge_listen(listen_host: str, port: int,
                          log_path: str | None = None,
                          desktop_mode: str = "interactive") -> subprocess.Popen:
-    """Spawn pythonos_bridge --listen-tcp and wait for the listener."""
+    """Spawn RemoteOS-SDL --listen-tcp and wait for the listener."""
     bridge_bin = _bridge_bin()
     if not os.path.isfile(bridge_bin):
-        raise RuntimeError(f"pythonos_bridge binary not found at {bridge_bin} "
+        raise RuntimeError(f"remoteos-sdl binary not found at {bridge_bin} "
                            "(run `make bridge`)")
     endpoint = f"{listen_host}:{port}"
     print(f"[run-gui] spawning {bridge_bin} on tcp {endpoint}",
           file=sys.stderr)
     stream = open(log_path, "ab", buffering=0) if log_path else None
-    env = dict(os.environ, PYTHONOS_DESKTOP_MODE=desktop_mode)
+    env = dict(os.environ, REMOTEOS_SDL_MODE=desktop_mode)
     proc = subprocess.Popen([bridge_bin, "--listen-tcp", endpoint], env=env,
                             stdout=stream, stderr=subprocess.STDOUT)
     try:
@@ -333,14 +322,14 @@ def _spawn_bridge_connect(host: str, port: int,
                           desktop_mode: str = "interactive") -> subprocess.Popen:
     bridge_bin = _bridge_bin()
     if not os.path.isfile(bridge_bin):
-        raise RuntimeError(f"pythonos_bridge binary not found at {bridge_bin} "
+        raise RuntimeError(f"remoteos-sdl binary not found at {bridge_bin} "
                            "(run `make bridge`)")
     endpoint = f"{host}:{port}"
-    timeout_ms = os.environ.get("PYTHONOS_BRIDGE_CONNECT_TIMEOUT_MS", "120000")
+    timeout_ms = os.environ.get("REMOTEOS_SDL_CONNECT_TIMEOUT_MS", "120000")
     print(f"[run-gui] spawning {bridge_bin} connecting to tcp {endpoint}",
           file=sys.stderr)
     stream = open(log_path, "ab", buffering=0) if log_path else None
-    env = dict(os.environ, PYTHONOS_DESKTOP_MODE=desktop_mode)
+    env = dict(os.environ, REMOTEOS_SDL_MODE=desktop_mode)
     return subprocess.Popen([
         bridge_bin,
         "--connect-tcp", endpoint,
@@ -445,14 +434,9 @@ def main() -> int:
         return 1
     debug_session = _debug_session(image, arch, port)
 
-    # Bridge mode is the normal run-gui path. Set PYTHONOS_BRIDGE=0
-    # (or the old PYTHONOS_BRIDGE_SOCKET= compatibility knob to empty)
-    # to fall back to QEMU's native framebuffer path.
-    bridge_disabled = (
-        _truthy(os.environ.get("PYTHONOS_BRIDGE_DISABLE"))
-        or os.environ.get("PYTHONOS_BRIDGE") == "0"
-        or os.environ.get("PYTHONOS_BRIDGE_SOCKET") == ""
-    )
+    # RemoteOS-SDL is the normal run-gui path. Disable it explicitly to use
+    # QEMU's native framebuffer path.
+    bridge_disabled = _truthy(os.environ.get("REMOTEOS_SDL_DISABLE"))
     if bridge_disabled:
         bridge_endpoint = None
         listen_host = ""
@@ -466,7 +450,7 @@ def main() -> int:
         bridge_endpoint = (_qemu_connect_host(listen_host), listen_port)
 
     bridge_proc = None
-    if bridge_endpoint and not _truthy(os.environ.get("PYTHONOS_BRIDGE_EXTERNAL")):
+    if bridge_endpoint and not _truthy(os.environ.get("REMOTEOS_SDL_EXTERNAL")):
         try:
             if bridge_transport == "native-tcp":
                 bridge_proc = _spawn_bridge_connect(bridge_endpoint[0],

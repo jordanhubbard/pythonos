@@ -15,7 +15,7 @@ import kernel.gui.input as _gui
 from kernel.bridge import bridge as _bridge, BridgeError
 
 
-# SDL event "kind" values (see tools/pythonos_bridge/main.c).
+# RemoteOS-SDL event kind values (see services/remoteos-sdl/src/main.c).
 _BR_KEY_DOWN   = 1
 _BR_KEY_UP     = 2
 _BR_MOUSE_MOVE = 3

@@ -8,7 +8,7 @@ Everything below is implemented in Python on top of the same `_hal` extension an
 
 | Command | What it does |
 |---|---|
-| `make run-gui` | Boot **and** auto-launch the desktop with the full app dock. Host-side `tools/run_gui.py` supervises QEMU and `pythonos_bridge`; the guest starts the desktop when the bridge connects. `PYTHONOS_DESKTOP_MODE=interactive` (default) requests a visible host SDL window; `headless` uses a hidden surface for agent capture and automation. |
+| `make run-gui` | Boot **and** auto-launch the desktop with the full app dock. Host-side `tools/run_gui.py` supervises QEMU and the shared `remoteos-sdl` service; the guest starts the desktop when the service connects. `PYTHONOS_DESKTOP_MODE=interactive` (default) requests a visible host SDL window; `headless` uses a hidden surface for agent capture and automation. |
 | `make run-gui PYTHONOS_GUI_APP=<name>` | Same, but pre-launch a specific full app, demo, or game. Use `desktop('help')` inside the REPL for the live catalog. |
 | `make run-gui-x86_64` / `make run-gui-arm64` | Explicit per-arch forms. |
 | `make run-display-server` | Boot PythonOS on machine X and expose its display endpoint on TCP port 17010. |
@@ -43,7 +43,7 @@ Inside the compositor:
 
 The guest's native TCP bridge listener is the display endpoint. In the normal
 single-machine launcher, QEMU forwards it to loopback and supervises a sibling
-`pythonos_bridge`. Remote mode separates those roles:
+`remoteos-sdl`. Remote mode separates those roles:
 
 ```bash
 # Machine X: kernel/QEMU
@@ -54,7 +54,7 @@ PYTHONOS_DISPLAY_SERVER=192.0.2.10 make connect-display
 ```
 
 `PYTHONOS_DISPLAY_PORT` changes the default 17010 port on both commands.
-`PYTHONOS_EXPORT_DIR` on Y controls where guest files are exported (default:
+`REMOTEOS_SDL_EXPORT_DIR` on Y controls where guest files are exported (default:
 Y's `~/Downloads`). Host drops are represented inside the protocol by opaque,
 short-lived tokens; the guest never receives an arbitrary host pathname.
 Imports and exports are streamed in 32 KiB pieces and yield between chunks.
@@ -139,15 +139,14 @@ directory or accept a file, a typed filename in Save mode, and footer actions.
 ```
 
 The guest and SDL desktop remain separate-machine capable. Their
-length-prefixed protocol runs over TCP, negotiates optional capabilities, and
-uses adjustable 4 MiB socket buffers by default (`PYTHONOS_BRIDGE_SOCKET_BUFFER`
-overrides the byte count). Calls that do not need individual results are
-batched. Chipset games send native-resolution RLE frames as ordered one-way
+length-prefixed v2 protocol runs over TCP and negotiates capabilities. Calls
+that do not need individual results are batched. Chipset games send
+native-resolution RLE frames as ordered one-way
 notifications; the next input poll acts as a barrier and bounds the queue, so
 a slow receiver applies backpressure instead of accumulating stale frames.
 Encoded wallpaper is decoded by the desktop rather than expanded and uploaded
-inside the guest. Older bridge implementations fall back to the original raw
-frame RPCs.
+inside the guest. Protocol v1 implementations are rejected rather than
+silently adapted.
 
 `python3 tools/pythonos_debug.py perf` reports guest transport time and host
 service time separately. Slow samples stay in an in-memory ring; warning output

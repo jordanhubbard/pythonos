@@ -2,7 +2,7 @@
 
 Surfaces have two backings:
 
-* HOST-backed (default when the pythonos_bridge companion is up): the
+* HOST-backed (default when the RemoteOS-SDL service is up): the
   pixel buffer lives in the host process; `self.handle` is an integer
   the bridge uses to identify the SDL_Surface. SDL_FillRect /
   SDL_BlitSurface become bridge ops with NO pixel data on the wire.

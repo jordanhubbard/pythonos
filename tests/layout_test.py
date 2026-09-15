@@ -190,7 +190,8 @@ def main() -> int:
           "HOST_FILE_DROP" in _read("kernel/gui/input.py")
           and 'bridge.call("host.file.read"' in _read("kernel/gui/filetransfer.py")
           and 'bridge.call("host.export.chunk"' in _read("kernel/gui/filetransfer.py")
-          and "FILE_CHUNK_MAX" in _read("tools/pythonos_bridge/main.c"))
+          and "REMOTEOS_FILE_CHUNK_BYTES"
+              in _read("services/remoteos-sdl/src/protocol.h"))
     about = _read("apps/about/about.py")
     check("About derives Python version from version_info",
           "sys.version_info" in about and "sys.version.split()" not in about)

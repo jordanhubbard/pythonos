@@ -1,0 +1,3 @@
+[submodule "services/remoteos-sdl"]
+	path = services/remoteos-sdl
+	url = https://github.com/jordanhubbard/RemoteOS-SDL.git
