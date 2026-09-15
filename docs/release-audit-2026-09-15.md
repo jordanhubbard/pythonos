@@ -21,7 +21,8 @@ this is a fresh-checkout audit, not a clean-machine dependency installation.
 | RubyOS macOS released runtime and bundled SDL protocol test | Pass |
 | Standalone macOS RemoteOS-SDL release protocol test | Pass |
 | Released PythonOS ELF with released SDL on Linux and macOS | Pass; 1024x768 captures inspected |
-| macOS PythonOS Docker source build | Blocked by Docker Desktop Keychain access over SSH |
+| macOS PythonOS Docker source build | Pass; ARM64 ELF built on puck |
+| macOS fresh PythonOS ARM64 serial gate | 37 passed, 0 failed |
 | Windows WSL2 | Not tested; no accessible WSL2 host |
 
 The Linux ARM64 SDL binary was taken from the RubyOS release bundle. The
@@ -56,6 +57,13 @@ Linux logs, clones, release downloads, and inspected captures are retained at
 `/Users/jkh/Src/release-audit.BzPSER/` on puck. Desktop captures were taken in
 headless SDL mode; this does not test physical mouse/keyboard interaction or
 audible playback.
+
+The macOS Docker build completed in `python-macos-anonymous.log`. Docker
+Desktop's credential helper rejected SSH access even with the login Keychain
+unlocked. A task-local anonymous Docker configuration bypassed that helper
+for the public base image; the user's Docker configuration was not changed.
+The freshly built ELF passed all 37 serial checks in
+`python-macos-fresh-boot.log`; the desktop result above used the published ELF.
 
 mac task `task_62fe904dad7f4a9bb420a89ee4023019` tracks this audit.
 `task_cb3d67092e494d1f9ce9136790fc5076` tracks actual WSL2 verification.

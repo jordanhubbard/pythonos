@@ -174,8 +174,10 @@ def wait_for_port(port: int, timeout: float, proc: subprocess.Popen) -> bool:
     return False
 
 
-def recv_until_prompt(sock: socket.socket, prompt: bytes = b">>> ") -> str:
+def recv_until_prompt(sock: socket.socket, prompt: bytes = b">>> ",
+                      completion_marker: bytes | None = None) -> str:
     buf = b""
+    marker_seen = completion_marker is None
     sock.settimeout(RECV_TIMEOUT)
     deadline = time.monotonic() + RECV_TIMEOUT
     while time.monotonic() < deadline:
@@ -190,8 +192,14 @@ def recv_until_prompt(sock: socket.socket, prompt: bytes = b">>> ") -> str:
         # ``>>> sh('examples')``.  Only the trailing shell prompt completes a
         # response; stopping at an embedded example leaves every subsequent
         # assertion one command behind.
-        if buf.endswith(prompt):
+        # A TCP chunk can end at a literal prompt inside help output. For
+        # commands, also require the separately printed synchronization line.
+        marker_seen = completion_marker is None or any(
+            line.strip(b"\r") == completion_marker for line in buf.split(b"\n"))
+        if buf.endswith(prompt) and marker_seen:
             break
+    if completion_marker is not None and not (marker_seen and buf.endswith(prompt)):
+        raise RuntimeError("REPL response ended before its completion marker and prompt")
     return buf.decode("utf-8", errors="replace")
 
 
@@ -287,9 +295,10 @@ def run() -> int:
                     print(f"       got: {banner!r}")
                     failed += 1
 
-            for expr, expected in TEST_CASES:
-                sock.sendall(expr.encode())
-                response = recv_until_prompt(sock)
+            for sequence, (expr, expected) in enumerate(TEST_CASES):
+                marker = f"__pythonos_smoke_complete_{sequence}__"
+                sock.sendall((expr + f"print({marker!r})\n").encode())
+                response = recv_until_prompt(sock, completion_marker=marker.encode())
                 if expected in response:
                     print(f"[PASS] {expr.strip()!r:45s} → found {expected!r}")
                     passed += 1

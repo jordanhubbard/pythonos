@@ -67,6 +67,29 @@ def main() -> int:
                     ci) is not None)
     check("CI installs qemu-system-x86",
           "qemu_pkg: qemu-system-x86" in ci)
+    check("CI includes a required macOS build in the aggregate matrix",
+          "runner: macos-15-intel" in ci
+          and "artifact: pythonos-macos-x86_64" in ci
+          and "needs: validate" in ci
+          and "continue-on-error" not in ci)
+    check("CI sets up Docker and GNU make on macOS",
+          "if: runner.os == 'macOS'" in ci
+          and "colima start --runtime docker" in ci
+          and "docker info" in ci
+          and "libexec/gnubin" in ci
+          and "docker-buildx" in ci)
+    check("CI limits apt dependencies to Linux",
+          "name: Install host dependencies\n        if: runner.os == 'Linux'" in ci)
+    check("CI always stops the macOS Docker VM",
+          "if: always() && runner.os == 'macOS'" in ci
+          and "run: colima stop" in ci)
+    check("local packaging validates the selected target without publishing",
+          'PYTHONOS_VALIDATE_ARCH=$(TARGET_ARCH) ./scripts/validate-release.sh' in makefile
+          and 'bash scripts/package-release.sh $(TARGET_ARCH)' in makefile)
+    package = _read("scripts/package-release.sh")
+    check("local media packaging includes checksums and provenance, not user disks",
+          'BUILD-INFO.txt' in package and '.sha256' in package
+          and 'disk.img' not in package and 'gh release' not in package)
 
     check("validate-release.sh is executable",
           os.stat(os.path.join(ROOT, "scripts", "validate-release.sh")).st_mode
@@ -103,7 +126,7 @@ def main() -> int:
           and "cat RELEASE-NOTES.md" in release)
     release_notes = _read("RELEASE-NOTES.md")
     check("release notes identify the current release",
-          release_notes.startswith("# PythonOS v0.4.0"))
+          release_notes.startswith("# PythonOS v0.4.1"))
     check("README and changelog link the release notes",
           "[RELEASE-NOTES.md](RELEASE-NOTES.md)" in _read("README.md")
           and "[RELEASE-NOTES.md](RELEASE-NOTES.md)" in _read("CHANGELOG.md"))

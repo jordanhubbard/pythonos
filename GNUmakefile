@@ -231,6 +231,7 @@ help:
 	@echo "  make test-gui             Run headless GUI smoke tests"
 	@echo "                            (x86: 26+5+6 tests; arm64: 8 tests)"
 	@echo "  make validate-release     Host-arch build + smoke (CI runs each arch)"
+	@echo "  make package              Validate + package local boot media (no publishing)"
 	@echo ""
 	@echo "Per-arch explicit forms (run-x86_64, run-arm64, run-gui-x86_64, etc.)"
 	@echo "exist for every dispatched target above — useful when both archs are"
@@ -378,6 +379,7 @@ test-chipset:
 	python3 tests/examples_teaching_test.py
 	python3 tests/layout_test.py
 	python3 tests/ci_gate_test.py
+	python3 tests/smoke_framing_test.py
 
 test-x86_64: test-chipset $(ISO_OUT) $(DISK_IMG)
 	PYTHONOS_HOST_PORT=$(REPL_HOST_PORT) PYTHONOS_FILE_PORT=$(FILE_HOST_PORT) PYTHONOS_SMP_CPUS=$(SMP_CPUS) PYTHONOS_FREE_THREADING=$(PYTHONOS_FREE_THREADING) python3 tests/smoke_test.py $(ISO_OUT)
@@ -405,7 +407,11 @@ endif
 # scripts/release.sh accepts `major`, `minor`, `patch`, or an explicit X.Y.Z;
 # the Makefile wrappers are sugar so users can type `make release-minor`
 # instead of `./scripts/release.sh minor`.
-.PHONY: release release-major release-minor release-patch validate-release
+.PHONY: release release-major release-minor release-patch validate-release package
+package:
+	PYTHONOS_VALIDATE_ARCH=$(TARGET_ARCH) ./scripts/validate-release.sh
+	bash scripts/package-release.sh $(TARGET_ARCH)
+
 release: release-patch
 
 release-patch:

@@ -37,6 +37,13 @@ jobs:
             qemu_bin: qemu-system-aarch64
             artifact: pythonos-arm64
             artifact_path: build-arm64/pythonos-arm64.elf
+          # Intel supports the Linux VM needed by our Docker build. Do not
+          # replace with macos-latest (Apple Silicon) without validating Docker.
+          - name: macos-x86_64
+            runner: macos-15-intel
+            qemu_bin: qemu-system-x86_64
+            artifact: pythonos-macos-x86_64
+            artifact_path: build/pythonos.iso
 
     steps:
       - name: Checkout
@@ -45,6 +52,7 @@ jobs:
           submodules: recursive
 
       - name: Install host dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -58,6 +66,18 @@ jobs:
             libsdl2-image-dev \
             libsdl2-mixer-dev \
             libsdl2-ttf-dev
+
+      - name: Install macOS dependencies and start Docker
+        if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: "1"
+        run: |
+          brew install make python qemu pkg-config sdl2 sdl2_image sdl2_mixer sdl2_ttf colima docker docker-buildx
+          echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
+          mkdir -p "$HOME/.docker/cli-plugins"
+          ln -s "$(brew --prefix docker-buildx)/bin/docker-buildx" "$HOME/.docker/cli-plugins/docker-buildx"
+          colima start --runtime docker --cpu 3 --memory 6 --disk 40
+          docker info
 
       - name: Show platform
         run: |
@@ -82,6 +102,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - name: Stop macOS Docker VM
+        if: always() && runner.os == 'macOS'
+        run: colima stop
+
   # One named check that is red unless every matrix cell passed. Branch
   # protection and `gh run watch --exit-status` can key off this.
   ci-ok:
@@ -92,7 +116,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Require every architecture job
+      - name: Require every host and architecture job
         run: |
           if [ "${{ needs.validate.result }}" != "success" ]; then
             echo "architecture matrix failed: ${{ needs.validate.result }}"

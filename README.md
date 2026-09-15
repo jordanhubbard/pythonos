@@ -29,6 +29,27 @@ On macOS, run `brew install pkg-config sdl2 sdl2_image sdl2_ttf`.
 Windows builds run inside WSL2 with Docker available to the distribution;
 a visible desktop also requires WSLg or another working display server.
 
+### Automated build and release validation
+
+GitHub CI runs the documented `make` build and `scripts/validate-release.sh`
+on Linux x86_64, Linux ARM64, and macOS Intel (`macos-15-intel`). Each job
+builds the kernel and native SDL service, runs serial and headless GUI smoke
+tests, and uploads its bootable image. macOS uses Colima for the Docker builder
+and Homebrew QEMU/SDL on the host. The `all-arches` check requires every job;
+the release script waits for the complete CI workflow before publishing.
+Apple Silicon macOS has manual audit coverage, not a hosted CI job. WSL2/WSLg
+remains unverified; Linux CI is not a substitute for a Windows-host test.
+
+`make package` validates and packages boot media for the host architecture in
+`dist/`, with documentation, build provenance and a SHA-256 checksum. Use
+`make package TARGET_ARCH=x86_64` or `TARGET_ARCH=arm64` to select the guest.
+This does not publish a GitHub release or change the version. The archive is
+boot media, not a standalone desktop installer: QEMU, the SDL service, and a
+fresh persistent disk are still set up using the instructions below. Existing
+development disks (which may contain personal data) are never packaged.
+See the [DGX Spark validation report](docs/dgx-spark-validation-2026-09-15.md)
+for local Linux/ARM64 results across PythonOS, RubyOS, and RemoteOS-SDL.
+
 ### First-time build (~10 min to cross-compile CPython)
 
 ```bash

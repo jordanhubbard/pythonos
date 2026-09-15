@@ -78,15 +78,15 @@ def _send(s: socket.socket, line: str, wait: float = 2.5) -> str:
     _SEND_SEQUENCE += 1
     marker = f"__PYTHONOS_DONE_{_SEND_SEQUENCE}__"
     # The TCP shell uses linenoise, so the next prompt can be echoed while a
-    # command is still running.  Queue a second command whose output marker is
-    # not present literally in the input stream; seeing it proves the first
-    # command completed.  Wait for the following prompt as well so no response
-    # bytes leak into the next assertion.
-    marker_expr = "+".join(f"chr({ord(ch)})" for ch in marker)
-    s.sendall((line + "\nprint(" + marker_expr + ")\n").encode())
+    # command is still running. Queue a second command and require its exact
+    # output line, not its input echo. Keep the command short for emulated CPUs.
+    s.sendall((line + f"\nprint({marker!r})\n").encode())
     chunks = []
-    deadline = time.time() + wait
+    # Cross-architecture TCG can exceed the old 1-2.5 second budgets. This is
+    # a deadline, not a sleep: successful commands still return immediately.
+    deadline = time.time() + max(wait, float(os.environ.get("PYTHONOS_GUI_COMMAND_TIMEOUT", "15")))
     marker_seen = False
+    complete = False
     while time.time() < deadline:
         s.settimeout(min(0.4, max(0.01, deadline - time.time())))
         try:
@@ -97,12 +97,14 @@ def _send(s: socket.socket, line: str, wait: float = 2.5) -> str:
             break
         chunks.append(data)
         response = b"".join(chunks)
-        marker_pos = response.find(marker.encode())
-        if marker_pos >= 0:
-            marker_seen = True
-        if marker_seen and response.find(b">>> ", marker_pos) >= 0:
+        marker_seen = any(part.strip(b"\r") == marker.encode()
+                          for part in response.split(b"\n"))
+        if marker_seen and response.endswith(b">>> "):
+            complete = True
             break
     s.settimeout(8)
+    if not complete:
+        raise RuntimeError(f"GUI REPL command did not complete: {line!r}")
     return b"".join(chunks).decode("utf-8", errors="replace")
 
 
@@ -320,10 +322,11 @@ def main() -> int:
                 _send(s, "_c = __import__('kernel.gui.compositor', fromlist=['compositor','CompositorWindow'])", wait=2.0)
                 _send(s, "_w = _c.CompositorWindow('SmokeDesk', x=200, y=150, w=320, h=200)", wait=1.5)
                 _send(s, "_c.compositor.add_window(_w)", wait=1.5)
-                _send(s, "_c.compositor.start()", wait=1.5)
                 # The first redraw decodes the desktop PNG in the guest.  That
                 # is quick with KVM but can take tens of seconds under TCG, so
-                # synchronize on the dirty flag instead of using a host sleep.
+                # allow the startup completion marker the same redraw budget.
+                _send(s, "_c.compositor.start()", wait=60.0)
+                # Synchronize on the dirty flag instead of using a host sleep.
                 out = _send(s, "_w.dirty", wait=60.0)
                 redraw_done = "False" in out
                 redraw_detail = (out.strip().splitlines()[-1]

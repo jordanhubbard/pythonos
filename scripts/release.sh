@@ -172,7 +172,7 @@ release_notes() {
         cat RELEASE-NOTES.md
         printf '\n## Release validation\n\n'
         printf -- '- Local validation: `scripts/validate-release.sh` (host arch)\n'
-        printf -- '- CI: x86_64 ISO + arm64 ELF gates green for `%s`\n' "$(git rev-parse --short HEAD)"
+        printf -- '- CI: Linux x86_64, Linux ARM64 and macOS Intel gates green for `%s`\n' "$(git rev-parse --short HEAD)"
         printf -- '- Commits since v%s: %s\n' "$previous" "$commit_count"
     } > "$notes_file"
 }

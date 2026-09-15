@@ -2,8 +2,8 @@
 # Release validation gate for PythonOS.
 #
 # Builds and smokes the architecture of *this* machine (or PYTHONOS_VALIDATE_ARCH).
-# GitHub Actions runs the script once per arch (ubuntu-24.04 and ubuntu-24.04-arm)
-# so both images are tested before `make release` publishes them.
+# GitHub Actions runs this on Linux x86_64/ARM64 and macOS Intel, so both
+# images and the macOS host path are tested before `make release` publishes.
 
 set -euo pipefail
 
