@@ -13,13 +13,8 @@ personality than a categorized ledger should legally possess, see
 ## [0.4.0] - 2026-09-15
 
 ### Added
-- Add narrative release notes workflow
 
-### Other
-- Adopt shared RemoteOS-SDL protocol v2
-
-
-## [0.4.0] - 2026-09-14
+- Add the narrative release notes workflow.
 
 ### Changed
 
