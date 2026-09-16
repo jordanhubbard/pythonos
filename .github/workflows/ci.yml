@@ -76,7 +76,10 @@ jobs:
           echo "$(brew --prefix make)/libexec/gnubin" >> "$GITHUB_PATH"
           mkdir -p "$HOME/.docker/cli-plugins"
           ln -s "$(brew --prefix docker-buildx)/bin/docker-buildx" "$HOME/.docker/cli-plugins/docker-buildx"
-          colima start --runtime docker --cpu 3 --memory 6 --disk 40
+          # VZ repeatedly crashed GCC in different CPython translation units
+          # on hosted Intel runners. Keep the full gate, isolate the VM backend.
+          colima start --runtime docker --vm-type qemu --mount-type 9p --cpu 3 --memory 6 --disk 40
+          colima status
           docker info
 
       - name: Show platform

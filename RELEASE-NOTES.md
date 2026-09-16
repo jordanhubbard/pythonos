@@ -37,6 +37,11 @@ Acquiring a video encoder does not magically acquire authentication.
 
 ## Release gates and artifacts
 
+macOS Intel CI selects Colima's QEMU backend explicitly after repeated GCC
+crashes under the default VZ backend. This changes the build VM, not the
+compiler optimization level or the acceptance tests. Release retries also
+preserve the prepared changelog instead of growing a second identical heading.
+
 Publication requires the normal local gate and Linux x86_64, Linux ARM64,
 and macOS Intel CI. The release includes the CI-produced x86_64 ISO and ARM64
 ELF. Existing serial, GUI, bridge and chipset checks remain mandatory.

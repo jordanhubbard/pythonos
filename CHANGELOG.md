@@ -16,6 +16,8 @@ personality than a categorized ledger should legally possess, see
 - Align PythonOS with shared RemoteOS multimedia service 0.2.1, including
   explicit offscreen framebuffers verified on NVIDIA GB10.
 - Make release retries preserve the existing changelog entry without duplication.
+- Select Colima QEMU/9p explicitly for macOS Intel CI after repeated compiler
+  crashes under VZ; retain the documented installation and full release gates.
 - docs: connect the project narrative to the chronological AI chronicle
 
 

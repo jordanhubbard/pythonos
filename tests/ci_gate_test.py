@@ -83,6 +83,8 @@ def main() -> int:
     check("CI always stops the macOS Docker VM",
           "if: always() && runner.os == 'macOS'" in ci
           and "run: colima stop" in ci)
+    check("macOS compiler gate uses an explicit QEMU VM backend",
+          "--vm-type qemu --mount-type 9p" in ci)
     check("local packaging validates the selected target without publishing",
           'PYTHONOS_VALIDATE_ARCH=$(TARGET_ARCH) ./scripts/validate-release.sh' in makefile
           and 'bash scripts/package-release.sh $(TARGET_ARCH)' in makefile)
