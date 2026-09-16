@@ -13,7 +13,9 @@ personality than a categorized ledger should legally possess, see
 ## [0.4.2] - 2026-09-15
 
 ### Other
-- Align PythonOS with shared RemoteOS multimedia service 0.2.0
+- Align PythonOS with shared RemoteOS multimedia service 0.2.1, including
+  explicit offscreen framebuffers verified on NVIDIA GB10.
+- Make release retries preserve the existing changelog entry without duplication.
 - docs: connect the project narrative to the chronological AI chronicle
 
 

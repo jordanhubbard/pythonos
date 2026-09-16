@@ -1,7 +1,7 @@
 # PythonOS, RubyOS, and RemoteOS-SDL alignment
 
 PythonOS 0.4.2 and RubyOS 0.3.0 pin the same
-[RemoteOS-SDL 0.2.0](https://github.com/jordanhubbard/RemoteOS-SDL) repository
+[RemoteOS-SDL 0.2.1](https://github.com/jordanhubbard/RemoteOS-SDL) repository
 at `services/remoteos-sdl`. The former language-branded C companion has been
 removed; protocol and host-device behavior now have one owner.
 

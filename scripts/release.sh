@@ -138,6 +138,10 @@ update_changelog() {
     local range="$2"
     local file="CHANGELOG.md"
     [ -f "$file" ] || { info "no $file — skipping changelog update"; return 0; }
+    if grep -Fq "## [$version] - " "$file"; then
+        info "CHANGELOG.md already contains [$version]; preserving prepared entry"
+        return 0
+    fi
 
     # macOS awk (BWK) rejects newlines in -v values, so stage the
     # entry through a tempfile and getline it inside awk.

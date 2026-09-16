@@ -2,7 +2,7 @@
 
 ## The family has acquired a studio
 
-PythonOS now pins RemoteOS-SDL 0.2.0, the same service used by RubyOS 0.3.0.
+PythonOS now pins RemoteOS-SDL 0.2.1, the same service used by RubyOS 0.3.0.
 The shared host layer gains depth-buffered 3D, FFmpeg video decoding,
 audio-clocked clip playback and bounded audiovisual export. We have boldly
 concluded that duplicating a codec stack for each programming language is
