@@ -1,49 +1,50 @@
-# PythonOS v0.4.1: The Mac Is Invited to CI This Time
+# PythonOS v0.4.2: One Media Service, Two Very Opinionated Siblings
 
-An operating system written in Python deserves an installation story that
-requires fewer archaeological qualifications. This patch release turns the
-fresh-checkout audit into repeatable checks, ships a local packaging command,
-and makes macOS a required participant in the release gate. Revolutionary:
-testing the platform we said we supported.
+## The family has acquired a studio
 
-## Three build hosts, two bootable images
+PythonOS now pins RemoteOS-SDL 0.2.0, the same service used by RubyOS 0.3.0.
+The shared host layer gains depth-buffered 3D, FFmpeg video decoding,
+audio-clocked clip playback and bounded audiovisual export. We have boldly
+concluded that duplicating a codec stack for each programming language is
+not, in fact, a compelling systems architecture.
 
-GitHub CI now runs the documented build and full release gate on Linux x86_64,
-Linux ARM64, and macOS Intel. The Mac job uses Colima's Docker builder plus
-native Homebrew QEMU and SDL. Every matrix cell contributes to the required
-`all-arches` result. Published media remain `pythonos.iso` and
-`pythonos-arm64.elf`: guest architecture is not the same thing as host OS,
-despite how much easier the marketing spreadsheet would be if it were.
+This is a service-alignment release for PythonOS. Its Python compositor,
+asyncio behavior, retro games and chipset teaching model are unchanged.
+RubyOS's new scene/recording classes belong to RubyOS; PythonOS does not
+suddenly acquire a Ruby API because a release note was feeling ambitious.
 
-Apple Silicon was separately built and boot-tested on puck. WSL2/WSLg is still
-unverified. A green Linux badge does not confer honorary Windows citizenship.
+## What changes for builders
 
-## Packages without publishing by accident
+Install the FFmpeg development libraries, including swresample, and OpenGL
+alongside SDL on Linux/WSL2; Homebrew users add ffmpeg. The README and automated
+Linux/macOS setup now reflect these dependencies. Both guests pin the canonical
+service instead of carrying separate implementations.
 
-`make package` validates the selected architecture and produces local boot
-media, documentation, provenance and a checksum. Existing development disks
-are excluded; your private files are not release-note Easter eggs. This is
-boot media, not a dependency-free desktop installer.
+The new media operations are advertised additions to protocol v2. Existing
+desktop drawing, input, audio and telemetry retain their contract. All the new
+host operations remain language-neutral and available through the protocol.
 
-Fresh-clone instructions now initialize the shared SDL submodule and list SDL
-dependencies. Both OSes pin RemoteOS-SDL 0.1.1, whose standalone packages now
-include Linux ARM64 and whose checksums work beside the downloaded archive.
+## The boundaries are still real
 
-## Tests that wait for the answer
+RemoteOS-SDL exports short Matroska movies with MPEG-4 video and optional
+48 kHz stereo PCM. Encoded clips cap at 16 MiB; export and audio predecode cap
+at 60 seconds. OpenGL rendering includes readback and a software fallback.
+This is not a claim that PythonOS now ships a nonlinear editor or a native
+Windows desktop. Windows continues to mean WSL2.
 
-Cross-building on DGX Spark exposed fragmented REPL output being mistaken for
-a completed command. Serial and GUI tests now use explicit completion lines,
-reject incomplete responses, and budget compositor startup for emulated CPUs.
-Six regression tests cover framing. The local x86_64 checks passed 59 serial,
-26 GUI, 5 desktop and 6 audio assertions; ARM64 passed 37 serial and 8 GUI
-checks. The audio check accepted a header-only WAV, not proof of audible PCM.
-No invented latency victory lap is included.
+The service endpoint still requires loopback or an authenticated tunnel.
+Acquiring a video encoder does not magically acquire authentication.
+
+## Release gates and artifacts
+
+Publication requires the normal local gate and Linux x86_64, Linux ARM64,
+and macOS Intel CI. The release includes the CI-produced x86_64 ISO and ARM64
+ELF. Existing serial, GUI, bridge and chipset checks remain mandatory.
 
 ## Executive summary
 
-Required macOS CI, honest platform coverage, local release media, and tests
-that read the whole response. Python still owns the kernel; the shared SDL
-service still owns host devices. Protocol v2 still requires a trusted network
-or authenticated tunnel.
+PythonOS keeps its Python personality and its games. RubyOS develops its own
+creative language. Both use one tested host media service. Revolutionary
+synergy, achieved by deleting the part where we maintain everything twice.
 
-[PythonOS v0.4.1](https://github.com/jordanhubbard/pythonos/releases/tag/v0.4.1)
+[PythonOS v0.4.2](https://github.com/jordanhubbard/pythonos/releases/tag/v0.4.2)

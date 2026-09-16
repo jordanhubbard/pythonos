@@ -24,8 +24,8 @@ git submodule update --init --recursive
 - CPython 3.14 source tree (fetched by the build)
 
 For the SDL desktop on Debian/Ubuntu (including WSL2), install
-`build-essential pkg-config libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev`.
-On macOS, run `brew install pkg-config sdl2 sdl2_image sdl2_ttf`.
+`build-essential pkg-config libsdl2-dev libsdl2-image-dev libsdl2-ttf-dev libavformat-dev libavcodec-dev libavutil-dev libswscale-dev libswresample-dev libgl-dev ffmpeg`.
+On macOS, run `brew install pkg-config sdl2 sdl2_image sdl2_ttf ffmpeg`.
 Windows builds run inside WSL2 with Docker available to the distribution;
 a visible desktop also requires WSLg or another working display server.
 

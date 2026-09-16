@@ -1,7 +1,7 @@
 # PythonOS, RubyOS, and RemoteOS-SDL alignment
 
-PythonOS 0.4.x and RubyOS 0.2.x pin the same
-[RemoteOS-SDL 0.1.x](https://github.com/jordanhubbard/RemoteOS-SDL) repository
+PythonOS 0.4.2 and RubyOS 0.3.0 pin the same
+[RemoteOS-SDL 0.2.0](https://github.com/jordanhubbard/RemoteOS-SDL) repository
 at `services/remoteos-sdl`. The former language-branded C companion has been
 removed; protocol and host-device behavior now have one owner.
 
@@ -26,3 +26,11 @@ its widget hierarchy, applications, and teaching curriculum. RubyOS keeps
 Fibers, Modules, class DSLs, object graphs, and Rack-shaped services. Convergence
 below that line removes duplicated systems code without flattening either
 language into a least-common-denominator API.
+
+The shared service now provides depth-buffered 3D, FFmpeg decoding, audio-clocked
+short-clip playback, and bounded Matroska export (MPEG-4 plus optional stereo PCM).
+These are additive protocol-v2 capabilities. RubyOS exposes them through its
+scene, resource and recording APIs; PythonOS's existing compositor and retro
+graphics APIs remain unchanged. Both host builds now require FFmpeg development
+libraries and OpenGL alongside SDL. Media limits and security policy live in
+the pinned service's `PROTOCOL.md`, not in duplicated language-specific servers.
