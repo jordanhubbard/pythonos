@@ -10,6 +10,13 @@ personality than a categorized ledger should legally possess, see
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-15
+
+### Other
+- Align PythonOS with shared RemoteOS multimedia service 0.2.0
+- docs: connect the project narrative to the chronological AI chronicle
+
+
 ## [0.4.1] - 2026-09-15
 
 ### Added
