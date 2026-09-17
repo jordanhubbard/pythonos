@@ -12,6 +12,8 @@ debugging the older QEMU chardev path remains available with
 PYTHONOS_BRIDGE_TRANSPORT=chardev.
 """
 
+from __future__ import annotations
+
 import os
 import platform
 import socket
@@ -348,8 +350,39 @@ def _spawn_bridge_connect(host: str, port: int,
     ], env=env, stdout=stream, stderr=subprocess.STDOUT)
 
 
-def _launch_qemu(cmd: list) -> int:
-    return _wait_proc(subprocess.Popen(cmd))
+def _launch_qemu(cmd: list,
+                 bridge_proc: subprocess.Popen | None = None) -> int:
+    """Run QEMU until it or the managed desktop bridge exits.
+
+    The bridge owns the visible GUI window.  Treating only QEMU as the
+    foreground process leaves the wrapper stuck after that window is closed,
+    because QEMU deliberately runs with ``-no-shutdown``.  A managed bridge
+    and QEMU therefore form one supervised session: when either exits, stop
+    the other and return the process that initiated shutdown's status.
+    """
+    qemu_proc = subprocess.Popen(cmd)
+    if bridge_proc is None:
+        return _wait_proc(qemu_proc)
+
+    try:
+        while True:
+            qemu_rc = qemu_proc.poll()
+            if qemu_rc is not None:
+                _stop_proc(bridge_proc, timeout=2)
+                return qemu_rc
+
+            bridge_rc = bridge_proc.poll()
+            if bridge_rc is not None:
+                print("[run-gui] desktop window closed; stopping QEMU",
+                      file=sys.stderr)
+                _stop_proc(qemu_proc)
+                return bridge_rc
+
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        _stop_proc(qemu_proc)
+        _stop_proc(bridge_proc, timeout=2)
+        return 130
 
 
 def _debug_session(image: str, arch: str, repl_port: int) -> dict | None:
@@ -413,15 +446,22 @@ def _add_debug_qemu_args(cmd: list, session: dict) -> None:
         cmd.append("-S")
 
 
+def _stop_proc(proc: subprocess.Popen, timeout: float = 4) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+
+
 def _wait_proc(proc: subprocess.Popen) -> int:
     try:
         proc.wait()
     except KeyboardInterrupt:
-        proc.terminate()
-        try:
-            proc.wait(timeout=4)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        _stop_proc(proc)
         return 130
     return proc.returncode or 0
 
@@ -509,19 +549,17 @@ def main() -> int:
                                   guest_bridge_port)
             if debug_session:
                 _add_debug_qemu_args(cmd, debug_session)
-            return _launch_qemu(cmd)
+            return _launch_qemu(cmd, bridge_proc)
         cmd = _qemu_cmd_x86_64(image, port, display, audiodev,
                                bridge_endpoint, gui_app,
                                bridge_transport, listen_host,
                                guest_bridge_port)
         if debug_session:
             _add_debug_qemu_args(cmd, debug_session)
-        return _launch_qemu(cmd)
+        return _launch_qemu(cmd, bridge_proc)
     finally:
-        if bridge_proc is not None and bridge_proc.poll() is None:
-            bridge_proc.terminate()
-            try: bridge_proc.wait(timeout=2)
-            except subprocess.TimeoutExpired: bridge_proc.kill()
+        if bridge_proc is not None:
+            _stop_proc(bridge_proc, timeout=2)
 
 
 if __name__ == "__main__":
