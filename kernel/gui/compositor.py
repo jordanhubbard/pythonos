@@ -1070,7 +1070,11 @@ class Compositor:
             _bridge_input.stop_forwarder()
             from kernel.bridge import bridge as _bridge
             if self._bridge_present:
-                _bridge.call("display.close", {})
+                # The host window represents the whole run-gui session.  Ask
+                # the bridge process to exit so its host-side supervisor can
+                # also stop QEMU; merely closing the SDL display leaves both
+                # processes alive after the user closes the window.
+                _bridge.call("shutdown", {})
         except Exception:
             pass
         self._bridge_present = False
