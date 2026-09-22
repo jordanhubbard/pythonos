@@ -128,7 +128,7 @@ def main() -> int:
           and "cat RELEASE-NOTES.md" in release)
     release_notes = _read("RELEASE-NOTES.md")
     check("release notes identify the current release",
-          release_notes.startswith("# PythonOS v0.4.2"))
+          release_notes.startswith("# PythonOS v0.4.3"))
     check("release retries preserve the prepared changelog entry",
           'grep -Fq "## [$version] - " "$file"' in release)
     check("README and changelog link the release notes",
