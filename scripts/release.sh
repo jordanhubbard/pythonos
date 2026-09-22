@@ -235,6 +235,34 @@ collect_ci_images() {
     info "arm64 ELF:  $RELEASE_ELF"
 }
 
+# Wrap a CI image in the versioned, checksummed bundle the sibling projects
+# publish. RubyOS and RemoteOS-SDL ship <name>-<version>-<platform>.tar.gz plus
+# a .sha256; PythonOS was attaching bare pythonos.iso / pythonos-arm64.elf with
+# no version in the name and nothing to verify them against. The images here are
+# guest media rather than host runtimes, so the platform field is the guest
+# architecture and there are two of them, not three.
+package_release_image() {
+    local image="$1" arch="$2" version="$3" dest="$4"
+    local bundle="pythonos-${version}-${arch}"
+    local stage
+    stage="$(mktemp -d "${TMPDIR:-/tmp}/pythonos-bundle.XXXXXX")"
+    mkdir -p "$stage/$bundle"
+    cp -f "$image" README.md LICENSE RELEASE-NOTES.md "$stage/$bundle/"
+    printf 'version=%s\ntarget=%s\nimage=%s\n' \
+        "$version" "$arch" "$(basename "$image")" > "$stage/$bundle/BUILD-INFO.txt"
+    tar -czf "$dest/$bundle.tar.gz" -C "$stage" "$bundle"
+    (
+        cd "$dest"
+        if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$bundle.tar.gz"
+        else
+            shasum -a 256 "$bundle.tar.gz"
+        fi
+    ) > "$dest/$bundle.tar.gz.sha256"
+    rm -rf "$stage"
+    printf '%s/%s.tar.gz\n' "$dest" "$bundle"
+}
+
 main() {
     local bump="${1:-patch}"
     local previous
@@ -291,9 +319,17 @@ main() {
 
     info "creating GitHub release $tag"
     info "attaching CI images: $RELEASE_ISO $RELEASE_ELF"
+    local bundle_dir="$ASSET_DIR/bundles"
+    mkdir -p "$bundle_dir"
+    local x86_bundle arm_bundle
+    x86_bundle="$(package_release_image "$RELEASE_ISO" x86_64 "$version" "$bundle_dir")"
+    arm_bundle="$(package_release_image "$RELEASE_ELF" arm64 "$version" "$bundle_dir")"
+    info "packaged $x86_bundle"
+    info "packaged $arm_bundle"
+
     gh release create "$tag" --title "$tag" --notes-file "$notes_file" \
-        "$RELEASE_ISO#pythonos.iso" \
-        "$RELEASE_ELF#pythonos-arm64.elf"
+        "$x86_bundle" "$x86_bundle.sha256" \
+        "$arm_bundle" "$arm_bundle.sha256"
 
     info "release complete: $tag"
 }

@@ -119,9 +119,15 @@ def main() -> int:
           "did not upload pythonos.iso" in release)
     check("release.sh requires the arm64 ELF",
           "did not upload pythonos-arm64.elf" in release)
-    check("release.sh attaches both images",
-          '"$RELEASE_ISO#pythonos.iso"' in release
-          and '"$RELEASE_ELF#pythonos-arm64.elf"' in release)
+    check("release.sh packages both images as versioned bundles",
+          'package_release_image "$RELEASE_ISO" x86_64' in release
+          and 'package_release_image "$RELEASE_ELF" arm64' in release
+          and 'bundle="pythonos-${version}-${arch}"' in release)
+    check("release.sh attaches a checksum beside every bundle",
+          '"$x86_bundle" "$x86_bundle.sha256"' in release
+          and '"$arm_bundle" "$arm_bundle.sha256"' in release)
+    check("release bundles carry the docs the other projects ship",
+          'cp -f "$image" README.md LICENSE RELEASE-NOTES.md' in release)
     check("release requires current long-form release notes",
           "validate_release_notes" in release
           and "# PythonOS v$version" in release
