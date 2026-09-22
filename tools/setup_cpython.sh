@@ -404,7 +404,16 @@ if [[ "$BUILD_REQUESTED" == "1" ]]; then
     #   PYTHON_FOR_FREEZE            — use python3.14 for non-bootstrap freeze
     # -W Makefile -W Modules/config.c: additionally tell make both are up-to-date
     # so the self-regen recipe is skipped if possible.
-    make -j"$(nproc)" "$LIBPYTHON_ARCHIVE" \
+    # PYTHONOS_BUILD_JOBS caps parallelism for hosts that cannot feed nproc
+    # compilers at once. The macOS Intel runner builds inside a 6 GB colima VM,
+    # where three concurrent cc1 processes on CPython's larger generated
+    # translation units crash the compiler -- a different file each time.
+    jobs="${PYTHONOS_BUILD_JOBS:-$(nproc)}"
+    case "$jobs" in
+        ''|*[!0-9]*|0) jobs="$(nproc)" ;;
+    esac
+    echo "[setup_cpython] building libpython with -j$jobs"
+    make -j"$jobs" "$LIBPYTHON_ARCHIVE" \
         -W Makefile \
         -W Modules/config.c \
         'FREEZE_MODULE_BOOTSTRAP=python3.14 ./Programs/_freeze_module.py' \

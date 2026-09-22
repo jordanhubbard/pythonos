@@ -21,6 +21,9 @@ jobs:
       PYTHONOS_QEMU_ACCEL: tcg
       PYTHONOS_GUI_BOOT_TIMEOUT: "90"
       PYTHONOS_AUDIO_BOOT_TIMEOUT: "90"
+      # Empty everywhere except the macOS Intel runner, where setup_cpython.sh
+      # falls back to nproc.
+      PYTHONOS_BUILD_JOBS: ${{ matrix.build_jobs }}
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +44,8 @@ jobs:
           # replace with macos-latest (Apple Silicon) without validating Docker.
           - name: macos-x86_64
             runner: macos-15-intel
+            # One compiler at a time: see PYTHONOS_BUILD_JOBS below.
+            build_jobs: "1"
             qemu_bin: qemu-system-x86_64
             artifact: pythonos-macos-x86_64
             artifact_path: build/pythonos.iso

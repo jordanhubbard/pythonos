@@ -464,7 +464,8 @@ docker-build:
 # ── CPython library (slow, cached — only rebuild if missing) ─────────────────
 
 $(LIBPYTHON): tools/setup_cpython.sh .docker-image
-	$(DOCKER_RUN) -e PYTHONOS_FREE_THREADING=$(PYTHONOS_FREE_THREADING) $(DOCKER_IMG) \
+	$(DOCKER_RUN) -e PYTHONOS_FREE_THREADING=$(PYTHONOS_FREE_THREADING) \
+	  -e PYTHONOS_BUILD_JOBS=$(PYTHONOS_BUILD_JOBS) $(DOCKER_IMG) \
 	  ./tools/setup_cpython.sh --build
 
 # ── Source file sets ($(wildcard) is evaluated by Make, not a subshell) ──────
