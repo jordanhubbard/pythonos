@@ -10,6 +10,19 @@ personality than a categorized ledger should legally possess, see
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-09-21
+
+### Fixed
+- Fix build failure from stale .docker-image stamp
+
+### Other
+- Prepare PythonOS 0.4.3
+- Bump RemoteOS-SDL to 0.3.0
+- Give the macOS Intel GUI smoke a budget it can meet
+- Build libpython one compiler at a time on macOS Intel
+- Stop run-gui when desktop window closes
+
+
 ## [0.4.2] - 2026-09-15
 
 ### Other
