@@ -22,7 +22,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from qmp_helper import (
     QemuMonitor, parse_ppm, sample_pixel, color_close,
-    tile_hashes, golden_check_or_refresh,
+    tile_hashes, golden_check_or_refresh, env_seconds,
 )
 
 
@@ -31,7 +31,12 @@ PORT = int(os.environ.get("PYTHONOS_GUI_HOST_PORT", "5560"))
 MON  = "/tmp/pythonos-desktop.mon.sock"
 PPM  = "/tmp/pythonos-desktop.ppm"
 LOG  = "/tmp/pythonos-desktop.log"
-BOOT_TIMEOUT = float(os.environ.get("PYTHONOS_GUI_BOOT_TIMEOUT", "30"))
+BOOT_TIMEOUT = env_seconds("PYTHONOS_GUI_BOOT_TIMEOUT", 30.0)
+# How long to wait for the desktop's signature pixels to appear. Startup
+# imports the app registry and decodes the background inside the guest, which
+# under TCG on a VM-hosted runner can take several times what it costs on a
+# Linux host.
+FRAME_TIMEOUT = env_seconds("PYTHONOS_GUI_FRAME_TIMEOUT", 60.0)
 
 
 def _qemu_cmd():
@@ -99,7 +104,7 @@ def main() -> int:
             # background in the guest.  Under TCG that takes much longer than
             # under KVM, so wait for the window's signature pixels instead of
             # assuming a fixed four-second startup time.
-            frame_deadline = time.time() + 60.0
+            frame_deadline = time.time() + FRAME_TIMEOUT
             w = h = 0
             rgb = b""
             while time.time() < frame_deadline:

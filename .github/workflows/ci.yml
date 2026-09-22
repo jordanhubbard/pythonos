@@ -25,6 +25,7 @@ jobs:
       # back to their defaults.
       PYTHONOS_BUILD_JOBS: ${{ matrix.build_jobs }}
       PYTHONOS_GUI_COMMAND_TIMEOUT: ${{ matrix.gui_command_timeout }}
+      PYTHONOS_GUI_FRAME_TIMEOUT: ${{ matrix.gui_frame_timeout }}
     strategy:
       fail-fast: false
       matrix:
@@ -51,6 +52,7 @@ jobs:
             # Linux hosts.
             build_jobs: "1"
             gui_command_timeout: "240"
+            gui_frame_timeout: "240"
             qemu_bin: qemu-system-x86_64
             artifact: pythonos-macos-x86_64
             artifact_path: build/pythonos.iso

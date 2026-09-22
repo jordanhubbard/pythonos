@@ -20,6 +20,22 @@ import socket
 import time
 
 
+def env_seconds(name: str, default: float) -> float:
+    """Read a timeout from the environment, falling back on anything unusable.
+
+    A workflow that sets one of these from a matrix key defined for only some
+    entries passes an empty string to the rest rather than leaving the variable
+    out, and bare float("") raises. Empty, non-numeric and non-positive values
+    all mean "not configured" here, so a typo cannot turn a timeout into a
+    crash -- or into zero.
+    """
+    try:
+        value = float(os.environ.get(name, ""))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 class QemuMonitor:
     """Connection to a QEMU HMP monitor exposed at a Unix socket.
 
