@@ -31,9 +31,26 @@ from qmp_helper import (
     QemuMonitor, parse_ppm, sample_pixel, color_close,
 )
 
+def _env_seconds(name: str, default: float) -> float:
+    """Read a timeout from the environment, falling back on anything unusable.
+
+    A workflow that sets this from an unset matrix key passes an empty string
+    rather than leaving the variable out, and bare float("") raises. Treat
+    empty, non-numeric and non-positive values as "not configured" so a typo
+    cannot turn a timeout into a crash -- or into zero.
+    """
+    raw = os.environ.get(name, "")
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
 ISO = sys.argv[1] if len(sys.argv) > 1 else "build/pythonos.iso"
 PORT = int(os.environ.get("PYTHONOS_GUI_HOST_PORT", "5559"))
-BOOT_TIMEOUT = float(os.environ.get("PYTHONOS_GUI_BOOT_TIMEOUT", "30"))
+BOOT_TIMEOUT = _env_seconds("PYTHONOS_GUI_BOOT_TIMEOUT", 30.0)
+COMMAND_TIMEOUT = _env_seconds("PYTHONOS_GUI_COMMAND_TIMEOUT", 15.0)
 
 SERIAL_LOG = "/tmp/pythonos-gui-smoke.log"
 MONITOR_SOCK = "/tmp/pythonos-gui-smoke.mon.sock"
@@ -84,7 +101,7 @@ def _send(s: socket.socket, line: str, wait: float = 2.5) -> str:
     chunks = []
     # Cross-architecture TCG can exceed the old 1-2.5 second budgets. This is
     # a deadline, not a sleep: successful commands still return immediately.
-    deadline = time.time() + max(wait, float(os.environ.get("PYTHONOS_GUI_COMMAND_TIMEOUT", "15")))
+    deadline = time.time() + max(wait, COMMAND_TIMEOUT)
     marker_seen = False
     complete = False
     while time.time() < deadline:

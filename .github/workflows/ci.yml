@@ -21,9 +21,10 @@ jobs:
       PYTHONOS_QEMU_ACCEL: tcg
       PYTHONOS_GUI_BOOT_TIMEOUT: "90"
       PYTHONOS_AUDIO_BOOT_TIMEOUT: "90"
-      # Empty everywhere except the macOS Intel runner, where setup_cpython.sh
-      # falls back to nproc.
+      # Both empty except on the macOS Intel runner, where the readers fall
+      # back to their defaults.
       PYTHONOS_BUILD_JOBS: ${{ matrix.build_jobs }}
+      PYTHONOS_GUI_COMMAND_TIMEOUT: ${{ matrix.gui_command_timeout }}
     strategy:
       fail-fast: false
       matrix:
@@ -44,8 +45,12 @@ jobs:
           # replace with macos-latest (Apple Silicon) without validating Docker.
           - name: macos-x86_64
             runner: macos-15-intel
-            # One compiler at a time: see PYTHONOS_BUILD_JOBS below.
+            # One compiler at a time, and a longer GUI command budget: this
+            # runner builds and boots inside a QEMU-backed colima VM, so both
+            # the cross compiler and the guest are markedly slower than the
+            # Linux hosts.
             build_jobs: "1"
+            gui_command_timeout: "240"
             qemu_bin: qemu-system-x86_64
             artifact: pythonos-macos-x86_64
             artifact_path: build/pythonos.iso
