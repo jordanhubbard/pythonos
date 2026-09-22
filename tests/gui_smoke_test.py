@@ -28,29 +28,13 @@ import time
 # Allow `python3 tests/gui_smoke_test.py` from the repo root or anywhere.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from qmp_helper import (
-    QemuMonitor, parse_ppm, sample_pixel, color_close,
+    QemuMonitor, parse_ppm, sample_pixel, color_close, env_seconds,
 )
-
-def _env_seconds(name: str, default: float) -> float:
-    """Read a timeout from the environment, falling back on anything unusable.
-
-    A workflow that sets this from an unset matrix key passes an empty string
-    rather than leaving the variable out, and bare float("") raises. Treat
-    empty, non-numeric and non-positive values as "not configured" so a typo
-    cannot turn a timeout into a crash -- or into zero.
-    """
-    raw = os.environ.get(name, "")
-    try:
-        value = float(raw)
-    except ValueError:
-        return default
-    return value if value > 0 else default
-
 
 ISO = sys.argv[1] if len(sys.argv) > 1 else "build/pythonos.iso"
 PORT = int(os.environ.get("PYTHONOS_GUI_HOST_PORT", "5559"))
-BOOT_TIMEOUT = _env_seconds("PYTHONOS_GUI_BOOT_TIMEOUT", 30.0)
-COMMAND_TIMEOUT = _env_seconds("PYTHONOS_GUI_COMMAND_TIMEOUT", 15.0)
+BOOT_TIMEOUT = env_seconds("PYTHONOS_GUI_BOOT_TIMEOUT", 30.0)
+COMMAND_TIMEOUT = env_seconds("PYTHONOS_GUI_COMMAND_TIMEOUT", 15.0)
 
 SERIAL_LOG = "/tmp/pythonos-gui-smoke.log"
 MONITOR_SOCK = "/tmp/pythonos-gui-smoke.mon.sock"
