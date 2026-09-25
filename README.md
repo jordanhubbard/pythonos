@@ -7,6 +7,8 @@ Boots directly to a `>>>` prompt on the serial console. The interactive prompt i
 An experimental [message desktop](docs/message-desktop.md) moves retained views,
 layout, and interaction into a host service. Run `make run-message-desktop` for
 a text/button/live-plot demo driven entirely by content messages.
+`make test-message-desktop` also verifies standalone windowing, semantic controls,
+retained 3D, and host-driven audio/video with independent Python and Ruby clients.
 
 Run `make help` at any time for the top-level target listing.
 

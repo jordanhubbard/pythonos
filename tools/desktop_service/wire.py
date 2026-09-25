@@ -17,9 +17,9 @@ async def read(reader, limit=MAX_FRAME):
     return value
 
 
-async def write(writer, value):
+async def write(writer, value, payload=b""):
     data = json.dumps(value, allow_nan=False, separators=(",", ":")).encode()
-    writer.write(struct.pack("!I", len(data)) + data)
+    writer.write(struct.pack("!I", len(data)) + data + payload)
     await asyncio.wait_for(writer.drain(), 5)
 
 
@@ -29,11 +29,15 @@ class RemoteOS:
         self.lock = asyncio.Lock()
         self.serial = 0
 
-    async def call(self, op, **params):
+    async def call(self, op, payload=b"", **params):
         async with self.lock:
             self.serial += 1
-            await write(self.writer, dict(v=2, id=self.serial, op=op, params=params))
+            if payload:
+                params["payload_len"] = len(payload)
+            await write(self.writer, dict(v=2, id=self.serial, op=op, params=params), payload)
             reply = await asyncio.wait_for(read(self.reader, 16 * 1024 * 1024), 5)
-            if reply.get("v") != 2 or reply.get("id") != self.serial or not reply.get("ok"):
+            if reply.get("v") != 2 or reply.get("id") != self.serial:
                 raise RuntimeError("RemoteOS request failed: " + repr(reply))
+            if not reply.get("ok"):
+                raise ValueError("RemoteOS rejected operation: " + str(reply.get("error")))
             return reply.get("result") or {}

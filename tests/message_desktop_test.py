@@ -74,7 +74,7 @@ class ModelTests(unittest.TestCase):
         self.assertEqual((s.views["v"]["x"], s.views["v"]["y"]), (280, 176))
         d.input(dict(kind=1, code=9))
         d.input(dict(kind=1, code=13))
-        self.assertEqual(len(s.events), 2)
+        self.assertEqual([e["event"] for e in s.events], ["activate", "configured", "activate"])
         d.sessions.remove(s)
         d.sync()
         self.assertEqual(d.stack, [])
@@ -196,7 +196,8 @@ class SDLTests(unittest.IsolatedAsyncioTestCase):
             await backend.call("debug.event.inject", kind=4, button=1, x=820, y=148)
             await eventually(lambda: not idle.views)
             await write(writer, dict(v=1, id=3, op="poll"))
-            self.assertEqual((await read(reader))["result"]["events"], [dict(event="closed", view="v", revision=1)])
+            events = (await read(reader))["result"]["events"]
+            self.assertEqual([e for e in events if e["event"] == "closed"], [dict(event="closed", view="v", revision=1)])
             writer.close()
             await writer.wait_closed()
         finally:

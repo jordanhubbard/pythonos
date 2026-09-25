@@ -352,6 +352,7 @@ run-message-desktop: bridge
 
 test-message-desktop: bridge
 	python3 tests/message_desktop_test.py --sdl
+	python3 tests/message_desktop_e2e_test.py
 
 # Explicit x86_64 targets (also reachable as the dispatch default on x86 hosts).
 x86_64: $(ISO_OUT)

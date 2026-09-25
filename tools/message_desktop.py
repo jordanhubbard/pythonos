@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import importlib.util
 import os
+import signal
 from pathlib import Path
 
 from desktop_service.server import Service
@@ -63,13 +64,17 @@ async def run(args):
         reader, writer = await asyncio.wait_for(accepted, 10)
         backend = RemoteOS(reader, writer)
         listener.close()
-        service = Service(backend)
+        service = Service(backend, args.automation_dir)
         # Open before advertising readiness to application clients.
         await service.renderer.open()
         endpoint = await asyncio.start_server(service.client, args.host, args.port)
         port = endpoint.sockets[0].getsockname()[1]
         print(f"Message desktop listening on {args.host}:{port}", flush=True)
         tasks.append(asyncio.create_task(service.run(open_display=False)))
+        # Supervisors use SIGTERM, including the standalone E2E harness.
+        stop = asyncio.Event()
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, stop.set)
+        tasks.append(asyncio.create_task(stop.wait()))
         if args.demo:
             tasks.append(asyncio.create_task(run_demo("127.0.0.1" if args.host == "0.0.0.0" else args.host, port, args.frames)))
         done, _ = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
@@ -112,7 +117,14 @@ def main():
     parser.add_argument("--demo", action="store_true", help="also launch the example application")
     parser.add_argument("--client", action="store_true", help="run only the example against an existing desktop")
     parser.add_argument("--frames", type=int, help="stop example after this many iterations")
+    parser.add_argument("--automation-dir", type=Path,
+                        help="enable test input/capture in headless loopback mode; captures stay in this directory")
     args = parser.parse_args()
+    if args.automation_dir:
+        if not args.headless or args.host not in ("127.0.0.1", "::1", "localhost"):
+            parser.error("automation requires --headless and a loopback --host")
+        args.automation_dir = args.automation_dir.resolve()
+        args.automation_dir.mkdir(parents=True, exist_ok=True)
     try:
         asyncio.run(run(args))
     except KeyboardInterrupt:
