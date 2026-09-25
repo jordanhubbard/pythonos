@@ -4,6 +4,10 @@ A bare-metal operating system where CPython 3.14 **is** the kernel — not a pro
 
 Boots directly to a `>>>` prompt on the serial console. The interactive prompt is a real Python REPL — define functions and classes, `import` files written to `/examples` or `/home`, recall history with up-arrow (persisted across reboots on the ext2 mount). An opt-in **GUI desktop** with a stacking compositor, PySDL2-compatible Python API, PNG/JPEG decoders, audio mixer, configurable keybindings, a `top` performance monitor, a macOS-style menu bar (PythonOS / Apps / Demos / Games), a polished desktop background, and a dock of bundled apps is one make target away — see **GUI Mode** below. Demos and games launch from a two-finger / control-click on the wallpaper (or the Demos and Games menus); they appear in the dock only while running, unless you Keep in Dock.
 
+An experimental [message desktop](docs/message-desktop.md) moves retained views,
+layout, and interaction into a host service. Run `make run-message-desktop` for
+a text/button/live-plot demo driven entirely by content messages.
+
 Run `make help` at any time for the top-level target listing.
 
 ## Quick Start

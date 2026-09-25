@@ -16,3 +16,12 @@ Send a PythonOS file to the host:
 
 Notice that recv_file accepts a connection and writes collected bytes, while
 send_file connects outward and streams an already-open VFS file.
+
+Drive the retained host desktop with content messages:
+
+  host: python3 tools/message_desktop.py
+  sh('/examples/networking/message_desktop.py 10.0.2.2 17020')
+
+The example sends text, a Pause button, and live plot samples. The host owns
+layout, rendering, dragging, and focus; the application receives button actions.
+See docs/message-desktop.md in the source checkout for the protocol and host demo.

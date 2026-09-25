@@ -226,6 +226,8 @@ help:
 	@echo ""
 	@echo "Test:"
 	@echo "  make test-chipset         Host-side chipset, arcade, dock, layout, and CI-gate tests (no QEMU)"
+	@echo "  make run-message-desktop Run the retained message desktop and live-plot demo"
+	@echo "  make test-message-desktop Test the retained protocol against the SDL service"
 	@echo "  make test                 Boot in QEMU, run TCP-REPL smoke tests"
 	@echo "                            (x86: 55 tests, arm64: 37 tests)"
 	@echo "  make test-gui             Run headless GUI smoke tests"
@@ -344,6 +346,13 @@ bridge-clean:
 test-bridge: bridge
 	$(MAKE) -C services/remoteos-sdl test
 
+.PHONY: run-message-desktop test-message-desktop
+run-message-desktop: bridge
+	python3 tools/message_desktop.py --demo
+
+test-message-desktop: bridge
+	python3 tests/message_desktop_test.py --sdl
+
 # Explicit x86_64 targets (also reachable as the dispatch default on x86 hosts).
 x86_64: $(ISO_OUT)
 
@@ -368,6 +377,7 @@ stop-x86_64:
 	@pkill -f "[q]emu-system-x86_64.*$(ISO_OUT)" || echo "No x86_64 QEMU running."
 
 test-chipset:
+	python3 tests/message_desktop_test.py
 	python3 tests/chipset_test.py
 	python3 tests/arcade_test.py
 	python3 tests/dock_test.py
